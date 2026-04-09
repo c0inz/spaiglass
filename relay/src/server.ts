@@ -11,7 +11,7 @@ import { getRequestListener } from "@hono/node-server";
 import { createServer } from "node:http";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { getCookie } from "hono/cookie";
-import { initDb, cleanExpiredSessions, getUserBySessionToken, getConnectorById } from "./db.ts";
+import { initDb, cleanExpiredSessions, getUserBySessionToken, getConnectorById, getConnectorBySlug } from "./db.ts";
 import { authRoutes, SESSION_COOKIE } from "./auth.ts";
 import { connectorRoutes } from "./connectors.ts";
 import { agentKeyRoutes } from "./agent-keys.ts";
@@ -145,8 +145,10 @@ app.get("/setup", (c) => {
         ],
       },
       step6_report_url: {
-        description: "Tell the user their VM is live. Replace <CONNECTOR_ID> with the id from step 2.",
-        userUrl: PUBLIC_URL + "/vm/<CONNECTOR_ID>/",
+        description: "Tell the user their VM is live. The URL uses their GitHub login and VM name from step 2.",
+        userUrl: PUBLIC_URL + "/vm/<githubLogin>.<vmName>/",
+        example: PUBLIC_URL + "/vm/octocat.dev-server/",
+        note: "The slug is case-insensitive. You can also append project/role for bookmarkable URLs: /vm/<login>.<vm>/<project>/<role>/",
       },
     },
 
@@ -157,7 +159,7 @@ app.get("/setup", (c) => {
         "POST /api/connectors with a new name and the same agent key — each VM gets its own connector ID and token",
         "GET /api/connectors/:id/config to download that VM's config",
         "Install and start the connector on the new VM",
-        "Report the new URL to the user: " + PUBLIC_URL + "/vm/<NEW_CONNECTOR_ID>/",
+        "Report the new URL to the user: " + PUBLIC_URL + "/vm/<githubLogin>.<vmName>/",
       ],
       createMoreKeys: {
         description: "An agent key can also create additional agent keys for other agents or automation systems.",
@@ -181,8 +183,8 @@ app.get("/setup", (c) => {
 
     // --- SHORTCUT: ALREADY HAVE A CONFIG ---
     ifYouAlreadyHaveAConfig: {
-      description: "If someone gave you a connector .env file with RELAY_URL, CONNECTOR_TOKEN, and CONNECTOR_ID, you already have everything needed. Skip authentication and registration — go straight to step 4 (install) above.",
-      userUrl: PUBLIC_URL + "/vm/<CONNECTOR_ID from your .env>/",
+      description: "If someone gave you a connector .env file with RELAY_URL, CONNECTOR_TOKEN, and CONNECTOR_ID, you already have everything needed. Skip authentication and registration — go straight to step 4 (install) above. The URL uses the GitHub login of the account that created the connector and the VM name.",
+      userUrl: PUBLIC_URL + "/vm/<githubLogin>.<vmName>/",
     },
   });
 });
@@ -381,7 +383,7 @@ app.get("/", (c) => {
   <pre>RELAY_URL=${PUBLIC_URL}
 CONNECTOR_TOKEN=&lt;from registration&gt;</pre>
   <p><strong>3.</strong> Start SpAIglass backend — it connects to the relay automatically.</p>
-  <p><strong>4.</strong> Access your VM at <code>${PUBLIC_URL}/vm/&lt;connectorId&gt;/</code></p>
+  <p><strong>4.</strong> Access your VM at <code>${PUBLIC_URL}/vm/${user.github_login}.&lt;vmName&gt;/</code></p>
 </div>
 
 <script>
@@ -401,7 +403,7 @@ async function loadConnectors() {
       </div>
       <div style="font-size: 0.85em; color: #666; margin-top: 4px;">ID: \${c.id}</div>
       <div class="actions">
-        \${c.online ? \`<button class="btn-primary" onclick="window.open('/vm/\${c.id}/')">Open</button>\` : ''}
+        \${c.online ? \`<button class="btn-primary" onclick="window.open('/vm/${user.github_login}.' + c.name + '/')">Open</button>\` : ''}
         <a href="/api/connectors/\${c.id}/config" class="btn-secondary" style="text-decoration: none; padding: 8px 16px; border-radius: 6px;">Download Config</a>
         <button class="btn-danger" onclick="deleteConnector('\${c.id}')">Delete</button>
       </div>
@@ -497,12 +499,24 @@ app.get("/connector", upgradeWebSocket(() => ({
   onError(_event, ws) { connectorHandler.onError(ws); },
 })));
 
-// Browser → VM WebSocket tunnel
-app.get("/vm/:connectorId/ws", upgradeWebSocket((c) => {
-  const connectorId = c.req.param("connectorId")!;
+// Resolve VM slug (githubLogin.vmName) or raw connector ID to a connector
+function resolveVmSlug(slug: string): ReturnType<typeof getConnectorById> {
+  // Try slug format: githubLogin.vmName
+  const dotIndex = slug.indexOf(".");
+  if (dotIndex > 0) {
+    const login = slug.slice(0, dotIndex);
+    const name = slug.slice(dotIndex + 1);
+    return getConnectorBySlug(login, name);
+  }
+  // Fallback: raw connector ID (for backwards compat)
+  return getConnectorById(slug);
+}
+
+// Browser → VM WebSocket tunnel (must be before wildcard VM page route)
+app.get("/vm/:slug/ws", upgradeWebSocket((c) => {
+  const slug = c.req.param("slug")!;
   const sessionToken = getCookie(c, SESSION_COOKIE);
 
-  // Must be authenticated
   const user = sessionToken ? getUserBySessionToken(sessionToken) : undefined;
   if (!user) {
     return {
@@ -513,8 +527,7 @@ app.get("/vm/:connectorId/ws", upgradeWebSocket((c) => {
     };
   }
 
-  // Validate ownership
-  const connector = getConnectorById(connectorId);
+  const connector = resolveVmSlug(slug);
   if (!connector || connector.user_id !== user.id) {
     return {
       onOpen(_event, ws) {
@@ -524,7 +537,7 @@ app.get("/vm/:connectorId/ws", upgradeWebSocket((c) => {
     };
   }
 
-  const handler = createBrowserWsHandler(connectorId!, user.id);
+  const handler = createBrowserWsHandler(connector.id, user.id);
   return {
     onOpen(event, ws) { handler.onOpen(ws); },
     onMessage(event, ws) { handler.onMessage(ws, event); },
@@ -532,6 +545,138 @@ app.get("/vm/:connectorId/ws", upgradeWebSocket((c) => {
     onError() { handler.onError(); },
   };
 }));
+
+// VM page — serves a minimal page that connects via WebSocket
+// Supports: /vm/:slug/ and /vm/:slug/:project/:role/ for bookmarkable URLs
+app.get("/vm/:slug", (c) => {
+  return c.redirect(`/vm/${c.req.param("slug")}/`);
+});
+
+app.get("/vm/:slug/*", (c) => {
+  const slug = c.req.param("slug")!;
+  // Parse optional project/role from remaining path
+  const fullPath = c.req.path;
+  const afterSlug = fullPath.replace(`/vm/${slug}/`, "").replace(/\/$/, "");
+  const parts = afterSlug ? afterSlug.split("/") : [];
+  const project = parts[0] || "";
+  const role = parts[1] || "";
+
+  const sessionToken = getCookie(c, SESSION_COOKIE);
+  const user = sessionToken ? getUserBySessionToken(sessionToken) : undefined;
+
+  if (!user) {
+    return c.redirect(`/auth/github?redirect=${encodeURIComponent(fullPath)}`);
+  }
+
+  const connector = resolveVmSlug(slug);
+  if (!connector || connector.user_id !== user.id) {
+    return c.html(`<!DOCTYPE html>
+<html><head><title>VM Not Found</title>
+<style>body{font-family:system-ui;max-width:600px;margin:80px auto;padding:0 20px;color:#1a1a2e;background:#f0f0f5;}</style>
+</head><body>
+<h1>VM not found</h1>
+<p>No VM matching "${slug}" was found on your account.</p>
+<p><a href="/">Back to dashboard</a></p>
+</body></html>`, 404);
+  }
+
+  const cm = getChannelManager();
+  const online = cm.isOnline(connector.id);
+  const pageTitle = [connector.name, project, role].filter(Boolean).join(" / ");
+
+  return c.html(`<!DOCTYPE html>
+<html><head><title>${pageTitle} — SpAIglass</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { font-family: system-ui; margin: 0; padding: 0; background: #0f172a; color: #e2e8f0; height: 100vh; display: flex; flex-direction: column; }
+  #header { padding: 12px 20px; background: #1e293b; display: flex; align-items: center; gap: 12px; font-size: 0.9em; flex-wrap: wrap; }
+  #header .name { font-weight: bold; font-size: 1.1em; }
+  #header .context { color: #94a3b8; font-size: 0.95em; }
+  #header .status { padding: 2px 8px; border-radius: 4px; font-size: 0.85em; }
+  .online { background: #22c55e; color: #000; }
+  .offline { background: #ef4444; color: #fff; }
+  #messages { flex: 1; overflow-y: auto; padding: 20px; }
+  .msg { margin: 8px 0; padding: 12px 16px; border-radius: 8px; max-width: 80%; white-space: pre-wrap; word-wrap: break-word; }
+  .msg.system { color: #94a3b8; font-style: italic; text-align: center; max-width: 100%; }
+  .msg.user { background: #3b82f6; color: white; margin-left: auto; }
+  .msg.assistant { background: #1e293b; color: #e2e8f0; }
+  #input-area { padding: 16px 20px; background: #1e293b; display: flex; gap: 8px; }
+  #input-area input { flex: 1; padding: 10px 14px; border: 1px solid #334155; border-radius: 8px; background: #0f172a; color: #e2e8f0; font-size: 1em; }
+  #input-area button { padding: 10px 20px; background: #3b82f6; color: white; border: none; border-radius: 8px; font-size: 1em; cursor: pointer; }
+  #input-area button:disabled { opacity: 0.5; }
+  a { color: #60a5fa; }
+</style>
+</head><body>
+<div id="header">
+  <a href="/" style="color: #94a3b8; text-decoration: none;">&larr;</a>
+  <span class="name">${connector.name}</span>
+  ${project ? `<span class="context">/ ${project}${role ? ` / ${role}` : ''}</span>` : ''}
+  <span id="statusBadge" class="status ${online ? 'online' : 'offline'}" style="margin-left: auto;">${online ? 'Online' : 'Offline'}</span>
+</div>
+<div id="messages"></div>
+<div id="input-area">
+  <input id="msgInput" placeholder="${online ? 'Send a message...' : 'VM is offline'}" ${online ? '' : 'disabled'} onkeydown="if(event.key==='Enter')sendMsg()" />
+  <button id="sendBtn" onclick="sendMsg()" ${online ? '' : 'disabled'}>Send</button>
+</div>
+<script>
+const connectorId = "${connector.id}";
+const slug = "${slug}";
+const project = "${project}";
+const role = "${role}";
+const wsUrl = location.protocol.replace('http','ws') + '//' + location.host + '/vm/' + slug + '/ws';
+const messages = document.getElementById('messages');
+
+function addMsg(cls, text) {
+  const d = document.createElement('div');
+  d.className = 'msg ' + cls;
+  d.textContent = text;
+  messages.appendChild(d);
+  messages.scrollTop = messages.scrollHeight;
+}
+
+let ws;
+function connect() {
+  addMsg('system', 'Connecting to ' + slug + (project ? ' (' + project + (role ? '/' + role : '') + ')' : '') + '...');
+  ws = new WebSocket(wsUrl);
+  ws.onopen = () => {
+    addMsg('system', 'Connected.');
+    // If project/role specified, send context to VM so it can route to the right session
+    if (project) {
+      ws.send(JSON.stringify({ type: 'context', project, role }));
+    }
+  };
+  ws.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'connected') { addMsg('system', 'Session established.'); return; }
+      if (msg.type === 'error') { addMsg('system', 'Error: ' + msg.message); return; }
+      if (msg.type === 'assistant') {
+        const text = msg.message?.content?.map(b => b.type === 'text' ? b.text : '').join('') || JSON.stringify(msg);
+        addMsg('assistant', text);
+      } else if (msg.type === 'result') {
+        addMsg('system', 'Done. (' + (msg.duration_ms || 0) + 'ms)');
+      } else {
+        addMsg('system', JSON.stringify(msg).slice(0, 200));
+      }
+    } catch { addMsg('assistant', e.data); }
+  };
+  ws.onclose = () => addMsg('system', 'Disconnected.');
+  ws.onerror = () => addMsg('system', 'Connection error.');
+}
+
+function sendMsg() {
+  const input = document.getElementById('msgInput');
+  const text = input.value.trim();
+  if (!text || !ws || ws.readyState !== 1) return;
+  addMsg('user', text);
+  ws.send(JSON.stringify({ type: 'message', text }));
+  input.value = '';
+}
+
+${online ? 'connect();' : 'addMsg("system", "VM is offline. Start the connector on the VM to connect.");'}
+</script>
+</body></html>`);
+});
 
 // --- Start Server ---
 

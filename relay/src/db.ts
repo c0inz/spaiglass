@@ -150,6 +150,14 @@ export function getConnectorByToken(token: string): Connector | undefined {
   return getDb().prepare("SELECT * FROM connectors WHERE token = ?").get(token) as Connector | undefined;
 }
 
+export function getConnectorBySlug(githubLogin: string, vmName: string): Connector | undefined {
+  return getDb().prepare(`
+    SELECT c.* FROM connectors c
+    JOIN users u ON c.user_id = u.id
+    WHERE LOWER(u.github_login) = LOWER(?) AND LOWER(c.name) = LOWER(?)
+  `).get(githubLogin, vmName) as Connector | undefined;
+}
+
 export function deleteConnector(id: string, userId: string): boolean {
   const result = getDb().prepare("DELETE FROM connectors WHERE id = ? AND user_id = ?").run(id, userId);
   return result.changes > 0;

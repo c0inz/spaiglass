@@ -44,11 +44,13 @@ export function connectorRoutes(): Hono<RelayEnv> {
     }
 
     const connector = createConnector(user.id, body.name.trim());
+    const publicUrl = c.env.PUBLIC_URL;
     return c.json({
       id: connector.id,
       name: connector.name,
       token: connector.token,
       createdAt: connector.created_at,
+      url: `${publicUrl}/vm/${user.github_login}.${connector.name}/`,
     }, 201);
   });
 
@@ -104,7 +106,7 @@ export function connectorRoutes(): Hono<RelayEnv> {
       `#    Or run both with: cd /opt/spaiglass/backend && npx tsx cli/node.ts --host 0.0.0.0 --port 8080 & npx tsx connector.ts`,
       `#`,
       `# 6. Access this VM in the browser at:`,
-      `#      ${publicUrl}/vm/${connector.id}/`,
+      `#      ${publicUrl}/vm/${user.github_login}.${connector.name}/`,
       `#`,
       `# For full setup docs: curl ${publicUrl}/setup`,
       ``,

@@ -18,6 +18,18 @@ export function authRoutes(): Hono<RelayEnv> {
     const redirectUri = `${c.env.PUBLIC_URL}/auth/github/callback`;
     const state = crypto.randomUUID();
 
+    // Save post-login redirect if provided (e.g. /vm/c0inz.my-vm/)
+    const postLoginRedirect = c.req.query("redirect");
+    if (postLoginRedirect) {
+      setCookie(c, "oauth_redirect", postLoginRedirect, {
+        httpOnly: true,
+        secure: c.env.PUBLIC_URL.startsWith("https"),
+        sameSite: "Lax",
+        maxAge: 600,
+        path: "/",
+      });
+    }
+
     setCookie(c, "oauth_state", state, {
       httpOnly: true,
       secure: c.env.PUBLIC_URL.startsWith("https"),
@@ -89,7 +101,12 @@ export function authRoutes(): Hono<RelayEnv> {
       path: "/",
     });
 
-    return c.redirect("/");
+    // Redirect to saved post-login URL or dashboard
+    const postLoginRedirect = getCookie(c, "oauth_redirect");
+    deleteCookie(c, "oauth_redirect");
+    // Only allow relative paths to prevent open redirect
+    const target = postLoginRedirect?.startsWith("/") ? postLoginRedirect : "/";
+    return c.redirect(target);
   });
 
   // Logout
