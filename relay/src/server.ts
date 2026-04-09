@@ -83,114 +83,131 @@ app.get("/api/health", (c) => {
   });
 });
 
-// Setup page (machine-readable for Claude agents)
-app.get("/setup", (c) => {
-  const user = c.get("user");
-  return c.json({
+// --- Single-source setup content ---
+// Both /setup (HTML) and /api/setup (JSON) render from this.
+function getSetupData() {
+  return {
     project: "SpAIglass",
     description: "Browser-based multi-VM interface for Claude Code. SpAIglass is a custom relay service that routes browser WebSocket connections to Claude Code running on remote VMs.",
     license: "MIT",
     source: "https://github.com/c0inz/spaiglass",
     relay: PUBLIC_URL,
-    authenticated: !!user,
-    user: user ? { login: user.github_login } : null,
-
-    // --- COMPLETE ZERO-HUMAN ENROLLMENT FLOW ---
-    // An LLM agent or script can follow these steps in order to set up
-    // a VM with no human interaction at any point.
-    agenticFlow: {
-      summary: "Complete flow to enroll a VM with zero human interaction. Follow steps 1-6 in order.",
-      step1_authenticate: {
+    steps: [
+      {
+        title: "Authenticate",
         description: "Exchange a GitHub PAT for a SpAIglass agent key. The PAT proves your GitHub identity. The agent key is used for all subsequent API calls.",
-        endpoint: "POST " + PUBLIC_URL + "/api/auth/token-exchange",
-        headers: { "Content-Type": "application/json" },
-        body: { github_pat: "ghp_YOUR_TOKEN", key_name: "my-agent" },
-        returns: "{ user: { login }, agent_key: 'sg_...', key_id, key_prefix }",
-        note: "Save the agent_key — it is shown only once. If you already have an agent key, skip this step.",
+        endpoint: `POST ${PUBLIC_URL}/api/auth/token-exchange`,
+        body: '{ "github_pat": "ghp_YOUR_TOKEN", "key_name": "my-agent" }',
+        note: "Save the agent_key — it is shown only once. If you already have an agent key, skip this step. If using the browser dashboard, sign in with GitHub instead.",
       },
-      step2_register_vm: {
-        description: "Register a new VM connector. The name is a label for your reference — it does not need to match hostname or IP.",
-        endpoint: "POST " + PUBLIC_URL + "/api/connectors",
-        headers: { "Authorization": "Bearer sg_YOUR_KEY", "Content-Type": "application/json" },
-        body: { name: "my-vm" },
-        returns: "{ id, name, token, createdAt }",
+      {
+        title: "Register a VM",
+        description: "Register a new VM connector. The name is a label for your reference — it becomes part of the URL slug.",
+        endpoint: `POST ${PUBLIC_URL}/api/connectors`,
+        body: '{ "name": "my-vm" }',
+        note: "Requires Authorization: Bearer sg_YOUR_KEY header. You can also register VMs from the dashboard.",
       },
-      step3_download_config: {
-        description: "Download the connector .env config file. It contains the relay URL, connector token, connector ID, and full install instructions in comments.",
-        endpoint: "GET " + PUBLIC_URL + "/api/connectors/:id/config",
-        headers: { "Authorization": "Bearer sg_YOUR_KEY" },
-        returns: "Plain text .env file — save it to disk",
+      {
+        title: "Download config",
+        description: "Download the connector .env config file. It contains the relay URL, connector token, and connector ID.",
+        endpoint: `GET ${PUBLIC_URL}/api/connectors/:id/config`,
+        note: "Save this file — the connector token is shown only at registration time. Also available via the dashboard 'Download Config' button.",
       },
-      step4_install: {
-        description: "Clone the repo, build the frontend, and install backend dependencies on the VM.",
+      {
+        title: "Install on the VM",
+        description: "Clone the repo, build the frontend, and install backend dependencies.",
         requirements: ["Node.js >= 20", "npm", "Claude Code CLI installed and authenticated (npm install -g @anthropic-ai/claude-code && claude login)"],
         commands: [
           "git clone https://github.com/c0inz/spaiglass.git /opt/spaiglass",
-          "cd /opt/spaiglass/frontend && npm install && npm run build",
+          "cd /opt/spaiglass/frontend && npm install && npx vite build",
           "cd /opt/spaiglass/backend && npm install",
           "ln -sf /opt/spaiglass/frontend/dist /opt/spaiglass/backend/static",
           "cp /path/to/connector.env /opt/spaiglass/backend/.env",
         ],
-        notes: [
-          "The frontend build produces static files in frontend/dist/",
-          "The symlink makes the backend serve the frontend UI",
-          "The .env file goes in the backend/ directory",
+      },
+      {
+        title: "Start services",
+        description: "Start two processes on the VM: the backend (local web UI + Claude Code bridge) and the connector (outbound WebSocket to relay).",
+        commands: [
+          "cd /opt/spaiglass/backend && npx tsx cli/node.ts --host 0.0.0.0 --port 8080",
+          "cd /opt/spaiglass/backend && npx tsx connector.ts",
         ],
+        note: "No inbound ports or firewall changes needed — all relay traffic is outbound. Both processes must be running for relay access to work.",
       },
-      step5_start: {
-        description: "Start two processes: the backend (local web UI + Claude Code bridge) and the connector client (outbound WebSocket to relay). Both read from the same .env file.",
-        backend: "cd /opt/spaiglass/backend && npx tsx cli/node.ts --host 0.0.0.0 --port 8080",
-        connector: "cd /opt/spaiglass/backend && npx tsx connector.ts",
-        combined: "cd /opt/spaiglass/backend && npx tsx cli/node.ts --host 0.0.0.0 --port 8080 & npx tsx connector.ts",
-        notes: [
-          "The backend serves the web UI and bridges to Claude Code CLI locally",
-          "The connector client connects OUTBOUND to the relay and multiplexes browser sessions to the local backend's /api/ws WebSocket endpoint",
-          "No inbound ports or firewall changes needed — all relay traffic is outbound",
-          "Both processes must be running for relay access to work",
-        ],
+      {
+        title: "Access your VM",
+        description: "Open your VM in the browser. The URL uses your GitHub login and VM name.",
+        url: `${PUBLIC_URL}/vm/<githubLogin>.<vmName>/`,
+        example: `${PUBLIC_URL}/vm/octocat.dev-server/`,
+        note: "The slug is case-insensitive. Append project/role for bookmarkable URLs: /vm/<login>.<vm>/<project>/<role>/",
       },
-      step6_report_url: {
-        description: "Tell the user their VM is live. The URL uses their GitHub login and VM name from step 2.",
-        userUrl: PUBLIC_URL + "/vm/<githubLogin>.<vmName>/",
-        example: PUBLIC_URL + "/vm/octocat.dev-server/",
-        note: "The slug is case-insensitive. You can also append project/role for bookmarkable URLs: /vm/<login>.<vm>/<project>/<role>/",
-      },
-    },
+    ],
+    addMoreVms: "The agent key is reusable. To add another VM, repeat steps 2-5 with the same key — each VM gets its own connector token.",
+    shortcut: "If someone gave you a .env file with RELAY_URL, CONNECTOR_TOKEN, and CONNECTOR_ID, skip to step 4.",
+  };
+}
 
-    // --- ADDING MORE VMs TO THE SAME ACCOUNT ---
-    addMoreVms: {
-      description: "The agent key is reusable across all VMs for the same user account. To add another VM, repeat steps 2-6 with the same agent key. No re-authentication needed.",
-      steps: [
-        "POST /api/connectors with a new name and the same agent key — each VM gets its own connector ID and token",
-        "GET /api/connectors/:id/config to download that VM's config",
-        "Install and start the connector on the new VM",
-        "Report the new URL to the user: " + PUBLIC_URL + "/vm/<githubLogin>.<vmName>/",
-      ],
-      createMoreKeys: {
-        description: "An agent key can also create additional agent keys for other agents or automation systems.",
-        endpoint: "POST " + PUBLIC_URL + "/api/agent-keys",
-        headers: { "Authorization": "Bearer sg_YOUR_KEY", "Content-Type": "application/json" },
-        body: { name: "another-agent" },
-      },
-      listVms: {
-        description: "List all VMs registered to your account.",
-        endpoint: "GET " + PUBLIC_URL + "/api/connectors",
-        headers: { "Authorization": "Bearer sg_YOUR_KEY" },
-      },
-    },
+// Setup page — HTML for browsers
+app.get("/setup", (c) => {
+  const data = getSetupData();
+  const stepsHtml = data.steps.map((s, i) => `
+    <div class="card">
+      <h3>${i + 1}. ${s.title}</h3>
+      <p>${s.description}</p>
+      ${s.endpoint ? `<code class="block">${s.endpoint}</code>` : ""}
+      ${s.body ? `<pre>${s.body}</pre>` : ""}
+      ${s.requirements ? `<p><strong>Requirements:</strong> ${s.requirements.join(", ")}</p>` : ""}
+      ${s.commands ? `<pre>${s.commands.join("\n")}</pre>` : ""}
+      ${s.url ? `<code class="block">${s.url}</code>` : ""}
+      ${s.example ? `<p>Example: <code>${s.example}</code></p>` : ""}
+      ${s.note ? `<p class="note">${s.note}</p>` : ""}
+    </div>
+  `).join("");
 
-    // --- ALTERNATIVE: BROWSER ENROLLMENT ---
-    browserFlow: {
-      description: "If a human is available, they can sign in via browser and manage everything from the dashboard.",
-      step1: "Open " + PUBLIC_URL + "/auth/github in a browser and sign in with GitHub",
-      step2: "Register VMs, create agent keys, and download configs from the dashboard UI",
-    },
+  return c.html(`<!DOCTYPE html>
+<html><head><title>Setup — SpAIglass</title>
+${FAVICON}
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 0 20px; color: #1a1a2e; background: #f0f0f5; }
+  h1 { font-size: 1.8em; }
+  h3 { margin: 0 0 8px; }
+  .card { background: white; border-radius: 8px; padding: 16px 20px; margin: 12px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  pre { background: #1e293b; color: #e2e8f0; padding: 12px 16px; border-radius: 6px; overflow-x: auto; font-size: 0.85em; white-space: pre-wrap; }
+  code { background: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+  code.block { display: block; background: #e2e8f0; padding: 8px 12px; border-radius: 6px; margin: 8px 0; }
+  .note { font-size: 0.9em; color: #666; margin-top: 8px; }
+  .subtitle { color: #666; }
+  a { color: #3b82f6; }
+  .info { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 12px 16px; margin: 12px 0; font-size: 0.9em; }
+</style>
+</head><body>
+<h1>SpAIglass Setup Guide</h1>
+<p class="subtitle">${data.description}</p>
+<p>Source: <a href="${data.source}">${data.source}</a> &middot; <a href="/">Back to Dashboard</a></p>
 
-    // --- SHORTCUT: ALREADY HAVE A CONFIG ---
-    ifYouAlreadyHaveAConfig: {
-      description: "If someone gave you a connector .env file with RELAY_URL, CONNECTOR_TOKEN, and CONNECTOR_ID, you already have everything needed. Skip authentication and registration — go straight to step 4 (install) above. The URL uses the GitHub login of the account that created the connector and the VM name.",
-      userUrl: PUBLIC_URL + "/vm/<githubLogin>.<vmName>/",
-    },
+<div class="info">
+  <strong>Shortcut:</strong> ${data.shortcut}
+</div>
+<div class="info">
+  <strong>Adding more VMs:</strong> ${data.addMoreVms}
+</div>
+
+${stepsHtml}
+
+<h2>Machine-readable</h2>
+<p>Agents and scripts can fetch <a href="/api/setup"><code>/api/setup</code></a> for the same content as JSON.</p>
+</body></html>`);
+});
+
+// Setup JSON endpoint (machine-readable for agents)
+app.get("/api/setup", (c) => {
+  const user = c.get("user");
+  const data = getSetupData();
+  return c.json({
+    ...data,
+    authenticated: !!user,
+    user: user ? { login: user.github_login } : null,
   });
 });
 
@@ -387,12 +404,8 @@ ${FAVICON}
 
 <h2>Setup Guide</h2>
 <div class="card">
-  <p><strong>1.</strong> Register a VM above — you'll get a connector token.</p>
-  <p><strong>2.</strong> On the VM, download the config or set these env vars:</p>
-  <pre>RELAY_URL=${PUBLIC_URL}
-CONNECTOR_TOKEN=&lt;from registration&gt;</pre>
-  <p><strong>3.</strong> Start SpAIglass backend — it connects to the relay automatically.</p>
-  <p><strong>4.</strong> Access your VM at <code>${PUBLIC_URL}/vm/${user.github_login}.&lt;vmName&gt;/</code></p>
+  <p>Need to set up a new VM? See the <a href="/setup" style="color: #3b82f6; font-weight: bold;">full setup guide</a> for step-by-step instructions.</p>
+  <p style="font-size: 0.85em; color: #666; margin-top: 8px;">Agents and scripts can use <code style="background: #e2e8f0; padding: 2px 6px; border-radius: 4px;">/api/setup</code> for machine-readable JSON.</p>
 </div>
 
 <script>
@@ -412,7 +425,7 @@ async function loadConnectors() {
       </div>
       <div style="font-size: 0.85em; color: #666; margin-top: 4px;">ID: \${c.id}</div>
       <div class="actions">
-        \${c.online ? \`<button class="btn-primary" onclick="window.open('/vm/${user.github_login}.' + c.name + '/')">Open</button>\` : ''}
+        \${c.online ? \`<a href="/vm/${user.github_login}.\${c.name}/" class="btn-primary" style="text-decoration: none; color: white;">Open</a>\` : ''}
         <a href="/api/connectors/\${c.id}/config" class="btn-secondary" style="text-decoration: none; padding: 8px 16px; border-radius: 6px;">Download Config</a>
         <button class="btn-danger" onclick="deleteConnector('\${c.id}')">Delete</button>
       </div>
