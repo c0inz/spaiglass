@@ -75,7 +75,7 @@ export function ProjectSelector() {
         <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-slate-800 dark:text-slate-100 text-3xl font-bold tracking-tight">
-              Spyglass
+              SpAIglass
               {vmConfig && (
                 <span className="ml-3 text-lg font-medium text-blue-500 dark:text-blue-400">
                   {vmConfig.role}

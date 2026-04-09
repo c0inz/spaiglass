@@ -4,11 +4,11 @@ import { getProjectsUrl } from "../config/api";
 import type { ProjectsResponse } from "../types";
 
 /**
- * Resolves a project/role from window.__SG (set by the relay inject script)
+ * Resolves a project-role from window.__SG (set by the relay inject script)
  * and navigates to the correct ChatPage URL.
  *
- * URL pattern: /vm/<slug>/<projectBasename>/<roleBasename>/
- * The inject script parses this into window.__SG = { project, role }.
+ * URL pattern: /vm/<slug>/<projectname>-<rolename>/
+ * The inject script splits on last hyphen into __SG.project and __SG.role.
  * This component maps project basename → full project path, then navigates.
  */
 export function RoleResolver() {
@@ -17,7 +17,7 @@ export function RoleResolver() {
 
   useEffect(() => {
     const sg = (window as any).__SG as
-      | { project?: string; role?: string }
+      | { project?: string; role?: string; segment?: string }
       | undefined;
 
     if (!sg?.project) {
@@ -39,7 +39,7 @@ export function RoleResolver() {
 
       const data: ProjectsResponse = await res.json();
 
-      // Find project whose path basename matches
+      // Find project whose path basename matches (case-insensitive)
       const match = data.projects.find((p) => {
         const basename = p.path.split("/").filter(Boolean).pop() || "";
         return basename.toLowerCase() === projectName.toLowerCase();

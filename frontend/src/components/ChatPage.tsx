@@ -640,7 +640,7 @@ export function ChatPage() {
                 className="text-slate-800 dark:text-slate-100 text-lg sm:text-2xl font-bold tracking-tight hover:text-blue-600 dark:hover:text-blue-400 transition-colors duration-200 focus:outline-none rounded-md px-1 -mx-1"
                 aria-label="Back to project selection"
               >
-                Spyglass
+                SpAIglass
               </button>
               {workingDirectory && (
                 <span className="ml-3 text-sm font-medium text-blue-500 dark:text-blue-400">

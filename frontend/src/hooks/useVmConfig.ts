@@ -14,7 +14,7 @@ export function useVmConfig() {
       .then((data) => {
         if (data) {
           setConfig(data);
-          document.title = `Spyglass — ${data.role}`;
+          document.title = `SpAIglass — ${data.role}`;
         }
       })
       .catch(() => {

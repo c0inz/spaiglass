@@ -139,16 +139,17 @@ function getSetupData() {
         description: "Open your VM in the browser. The URL uses your GitHub login and VM name.",
         url: `${PUBLIC_URL}/vm/<githubLogin>.<vmName>/`,
         example: `${PUBLIC_URL}/vm/octocat.dev-server/`,
-        note: "The slug is case-insensitive. Append project/role for bookmarkable URLs: /vm/<login>.<vm>/<project>/<role>/",
+        note: "The slug is case-insensitive. Bookmark a project and role with: /vm/<login>.<vm>/<projectname>-<rolename>/",
       },
       {
         title: "Add a role to a project",
-        description: "Roles define what Claude does in a project. Create a markdown file in the project's agents/ directory. The filename becomes the role name in the URL.",
+        description: "Roles define what Claude does in a project. Create a markdown file in the project's agents/ directory. The role name in the URL comes from the filename.",
         commands: [
-          "mkdir -p ~/myproject/agents",
-          'echo "You are a DevOps engineer..." > ~/myproject/agents/devops.md',
+          "mkdir -p ~/projects/myproject/agents",
+          'echo "You are a DevOps engineer..." > ~/projects/myproject/agents/developer.md',
         ],
-        note: "Each .md file in agents/ becomes a selectable role. The role appears on the dashboard automatically. Projects are defined by directories listed in ~/.claude.json — you cannot add a project without a VM.",
+        example: `${PUBLIC_URL}/vm/octocat.dev-server/myproject-developer/`,
+        note: "Each .md file in agents/ becomes a selectable role. The role appears on the dashboard automatically. The project must be registered in ~/.claude.json to appear in the API.",
       },
     ],
     addMoreVms: "The agent key is reusable. To add another VM, repeat steps 2-5 with the same key — each VM gets its own connector token.",
@@ -445,17 +446,19 @@ const LOGIN = '${user.github_login}';
 let hiddenRoles = JSON.parse(localStorage.getItem('sg_hidden_roles') || '[]');
 
 function compactName(proj, role) {
-  var p = proj, r = role.replace(/\\.md$/, '');
-  var full = p + ':' + r;
+  // URL segment is project-role, display is project-role truncated to 10 chars
+  var full = proj + '-' + role;
   if (full.length <= 10) return full;
-  var budget = 9;
-  var pL = p.length, rL = r.length;
-  if (pL + rL <= budget) return p + ':' + r;
+  // Truncate: keep as much of each as possible
+  var budget = 9; // 10 minus hyphen
+  var pL = proj.length, rL = role.length;
+  var p = proj, r = role;
+  if (pL + rL <= budget) return p + '-' + r;
   var half = Math.ceil(budget / 2);
   if (pL <= half) r = r.slice(0, budget - pL);
   else if (rL <= budget - half) p = p.slice(0, budget - rL);
   else { p = p.slice(0, half); r = r.slice(0, budget - half); }
-  return p + ':' + r;
+  return p + '-' + r;
 }
 
 function isHidden(connId, projBase, roleFile) {
@@ -496,7 +499,9 @@ async function loadRoles(connId, connName, slug) {
       var projBase = proj.path.split('/').filter(Boolean).pop() || proj.encodedName;
       for (var ctx of (ctxData.contexts || [])) {
         var roleBase = ctx.filename.replace(/\\.md$/, '');
-        roles.push({ projPath: proj.path, projBase: projBase, roleFile: ctx.filename, roleBase: roleBase, roleName: ctx.name });
+        // URL segment: <projectname>-<rolename>
+        var segment = projBase + '-' + roleBase;
+        roles.push({ projPath: proj.path, projBase: projBase, roleFile: ctx.filename, roleBase: roleBase, roleName: ctx.name, segment: segment });
       }
     }
     if (roles.length === 0) { grid.innerHTML = '<div class="no-roles">No roles configured</div>'; return; }
@@ -504,8 +509,8 @@ async function loadRoles(connId, connName, slug) {
     var showHidden = cb && cb.checked;
     grid.innerHTML = roles.map(function(r) {
       var hidden = isHidden(connId, r.projBase, r.roleFile);
-      var label = compactName(r.projBase, r.roleFile);
-      var url = '/vm/' + slug + '/' + encodeURIComponent(r.projBase) + '/' + encodeURIComponent(r.roleBase) + '/';
+      var label = compactName(r.projBase, r.roleBase);
+      var url = '/vm/' + slug + '/' + r.segment + '/';
       var display = hidden && !showHidden ? 'none' : 'flex';
       return '<div class="role-row' + (hidden ? ' hidden-role' : '') + '" style="display:' + display + '">' +
         '<a href="' + url + '" class="role-name" style="text-decoration:none;color:#3b82f6;">' + label + '</a>' +
@@ -719,10 +724,13 @@ function makeInjectScript(slug: string): string {
     `var H=location.origin;` +
     // Tell React Router's BrowserRouter to use this basename
     `window.__SG_BASE=B;` +
-    // Parse project/role context from URL
+    // Parse project-role context from URL: /vm/:slug/<project>-<role>/
     `var inner=location.pathname.slice(B.length).replace(/^\\/+/,'');` +
-    `var segs=inner.split('/').filter(Boolean);` +
-    `window.__SG={slug:'${slug}',project:segs[0]||'',role:segs[1]||''};` +
+    `var seg=inner.split('/').filter(Boolean)[0]||'';` +
+    `var di=seg.lastIndexOf('-');` +
+    `var proj=di>0?seg.slice(0,di):'';` +
+    `var role=di>0?seg.slice(di+1):'';` +
+    `window.__SG={slug:'${slug}',project:proj,role:role,segment:seg};` +
 
     // URL rewrite helper — adds /vm/:slug prefix to same-origin paths
     `function rw(u){` +
@@ -811,11 +819,13 @@ ${FAVICON}
       let html = resp.body;
       const prefix = `/vm/${slug}`;
 
-      // Parse project/role from the path for tab title
+      // Parse project-role from the path for tab title
+      // URL format: /vm/:slug/<project>-<role>/ (single segment)
       const afterSlug = vmPath.replace(/^\//, "").replace(/\/$/, "");
-      const pathParts = afterSlug ? afterSlug.split("/") : [];
-      const project = pathParts[0] || "";
-      const role = pathParts[1] || "";
+      const segment = afterSlug.split("/")[0] || "";
+      const lastHyphen = segment.lastIndexOf("-");
+      const project = lastHyphen > 0 ? segment.slice(0, lastHyphen) : segment;
+      const role = lastHyphen > 0 ? segment.slice(lastHyphen + 1) : "";
 
       // Build compact tab title: "SP:DE — vm-name" or "vm-name — SpAIglass"
       let tabTitle: string;

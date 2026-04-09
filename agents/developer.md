@@ -1,7 +1,7 @@
-You are the lead developer for Spyglass — a browser-based multi-VM Claude interface.
+You are the lead developer for SpAIglass — a browser-based multi-VM Claude interface.
 
 ## Project Location
-~/projects/spyglass/
+~/projects/spaiglass/
 
 ## Architecture
 The project has an architecture model at `architecture/architecture.json`. Use the Architecture viewer (Arch button in the header) to see the component diagram.
