@@ -147,29 +147,65 @@ The relay is ~500 lines of TypeScript across 8 files in `relay/src/`. Start here
 
 ## Quick Start
 
-### Use the hosted relay (spaiglass.xyz)
+### Fully agentic enrollment (zero human interaction)
 
-1. Sign in at [spaiglass.xyz](https://spaiglass.xyz) with GitHub
-2. Register a VM and download the connector config
-3. On your VM, set the env vars from the config and start the SpAIglass backend
-4. Open your VM in the browser from the fleet dashboard
-
-### Agentic enrollment (no browser needed)
+Point an LLM agent or script at the relay. It reads `/setup`, authenticates, registers VMs, installs the connector, and reports the URL. No browser needed at any point.
 
 ```bash
-# Create an agent key (one-time, from the dashboard)
-# Then use it to register VMs programmatically:
-
-curl -X POST https://spaiglass.xyz/api/connectors \
-  -H "Authorization: Bearer sg_<your-agent-key>" \
+# Step 1: Get an agent key (exchange a GitHub PAT — no browser needed)
+curl -X POST https://spaiglass.xyz/api/auth/token-exchange \
   -H "Content-Type: application/json" \
-  -d '{"name": "my-vm"}'
+  -d '{"github_pat": "ghp_YOUR_TOKEN", "key_name": "provisioner"}'
+# Returns: { "agent_key": "sg_...", "user": { "login": "..." } }
 
-# Download the config
-curl https://spaiglass.xyz/api/connectors/<id>/config \
-  -H "Authorization: Bearer sg_<your-agent-key>" \
+# Step 2: Register a VM
+curl -X POST https://spaiglass.xyz/api/connectors \
+  -H "Authorization: Bearer sg_YOUR_AGENT_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "dev-vm-01"}'
+# Returns: { "id": "abc-123", "token": "...", ... }
+
+# Step 3: Download the connector config
+curl https://spaiglass.xyz/api/connectors/abc-123/config \
+  -H "Authorization: Bearer sg_YOUR_AGENT_KEY" \
   -o connector.env
+# Returns a .env file with install instructions, relay URL, and token
+
+# Step 4: Install and start the connector on the VM
+git clone https://github.com/c0inz/spaiglass.git /opt/spaiglass
+cd /opt/spaiglass/backend && npm install
+cp /path/to/connector.env .env
+npx tsx cli/node.ts --host 0.0.0.0 --port 8080
+
+# Step 5: Tell the user their VM is live at:
+#   https://spaiglass.xyz/vm/abc-123/
 ```
+
+### Adding more VMs to the same account
+
+The agent key is reusable. Once you have one, repeat steps 2-5 for each VM -- no re-authentication needed. Each VM gets its own connector ID and token, but they all belong to the same user account.
+
+```bash
+# Same agent key, new VM
+curl -X POST https://spaiglass.xyz/api/connectors \
+  -H "Authorization: Bearer sg_YOUR_AGENT_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "staging-vm-02"}'
+
+# An agent key can also create more agent keys
+curl -X POST https://spaiglass.xyz/api/agent-keys \
+  -H "Authorization: Bearer sg_YOUR_AGENT_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "another-agent"}'
+```
+
+### Browser enrollment
+
+If you prefer the browser:
+
+1. Sign in at [spaiglass.xyz](https://spaiglass.xyz) with GitHub
+2. Register VMs and create agent keys from the dashboard
+3. Download connector configs and install on your VMs
 
 ### Self-host the relay
 

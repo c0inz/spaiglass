@@ -88,54 +88,84 @@ app.get("/setup", (c) => {
     relay: PUBLIC_URL,
     authenticated: !!user,
     user: user ? { login: user.github_login } : null,
-    connectorInstall: {
-      summary: "The connector is a Node.js backend that runs on your VM. It connects outbound to the relay via WebSocket and bridges browser sessions to Claude Code CLI on the VM.",
-      requirements: ["Node.js >= 20", "npm", "Claude Code CLI installed and authenticated (run: npm install -g @anthropic-ai/claude-code && claude login)"],
-      steps: [
-        "git clone https://github.com/c0inz/spaiglass.git /opt/spaiglass",
-        "cd /opt/spaiglass/backend && npm install",
-        "Write the connector .env file to /opt/spaiglass/backend/.env (see connectorEnvVars below)",
-        "Start the backend: cd /opt/spaiglass/backend && npx tsx cli/node.ts --host 0.0.0.0 --port 8080",
-      ],
-      connectorEnvVars: {
-        RELAY_URL: `${PUBLIC_URL}`,
-        CONNECTOR_TOKEN: "<from registration or config download>",
-        CONNECTOR_ID: "<from registration or config download>",
-        PORT: "8080",
-        HOST: "0.0.0.0",
-      },
-      quickStart: `git clone https://github.com/c0inz/spaiglass.git /opt/spaiglass && cd /opt/spaiglass/backend && npm install && cp /path/to/connector.env .env && npx tsx cli/node.ts --host 0.0.0.0 --port 8080`,
-      notes: [
-        "The VM connects OUTBOUND to the relay — no inbound ports or firewall changes needed",
-        "The connector token authenticates the VM to the relay. Keep it secret.",
-        "Once running, the user accesses the VM at: " + PUBLIC_URL + "/vm/<connectorId>/",
-      ],
-    },
-    authentication: {
-      summary: "Two ways to authenticate — choose whichever fits your situation. Both produce an agent key that works for all API calls.",
-      option1_github_pat: {
-        description: "Fully headless. Exchange a GitHub Personal Access Token for a SpAIglass agent key. No browser needed at any point.",
-        when: "Use this when you have a GitHub PAT available (e.g. in environment variables, CI, or agent tooling).",
+
+    // --- COMPLETE ZERO-HUMAN ENROLLMENT FLOW ---
+    // An LLM agent or script can follow these steps in order to set up
+    // a VM with no human interaction at any point.
+    agenticFlow: {
+      summary: "Complete flow to enroll a VM with zero human interaction. Follow steps 1-6 in order.",
+      step1_authenticate: {
+        description: "Exchange a GitHub PAT for a SpAIglass agent key. The PAT proves your GitHub identity. The agent key is used for all subsequent API calls.",
         endpoint: "POST " + PUBLIC_URL + "/api/auth/token-exchange",
-        body: '{ "github_pat": "ghp_...", "key_name": "my-agent" }',
-        returns: '{ "user": { "login": "..." }, "agent_key": "sg_...", ... }',
-        example: `curl -X POST ${PUBLIC_URL}/api/auth/token-exchange -H "Content-Type: application/json" -d '{"github_pat":"ghp_YOUR_TOKEN","key_name":"provisioner"}'`,
+        headers: { "Content-Type": "application/json" },
+        body: { github_pat: "ghp_YOUR_TOKEN", key_name: "my-agent" },
+        returns: "{ user: { login }, agent_key: 'sg_...', key_id, key_prefix }",
+        note: "Save the agent_key — it is shown only once. If you already have an agent key, skip this step.",
       },
-      option2_browser_oauth: {
-        description: "Browser-based. Sign in with GitHub OAuth, then create an agent key from the dashboard or API.",
-        when: "Use this when a human is available to sign in via browser.",
-        step1: "Open " + PUBLIC_URL + "/auth/github in a browser and sign in",
-        step2: "Create a key from the dashboard UI, or POST /api/agent-keys with { name: 'my-agent' } using the session cookie",
+      step2_register_vm: {
+        description: "Register a new VM connector. The name is a label for your reference — it does not need to match hostname or IP.",
+        endpoint: "POST " + PUBLIC_URL + "/api/connectors",
+        headers: { "Authorization": "Bearer sg_YOUR_KEY", "Content-Type": "application/json" },
+        body: { name: "my-vm" },
+        returns: "{ id, name, token, createdAt }",
+      },
+      step3_download_config: {
+        description: "Download the connector .env config file. It contains the relay URL, connector token, connector ID, and full install instructions in comments.",
+        endpoint: "GET " + PUBLIC_URL + "/api/connectors/:id/config",
+        headers: { "Authorization": "Bearer sg_YOUR_KEY" },
+        returns: "Plain text .env file — save it to disk",
+      },
+      step4_install_connector: {
+        description: "Install the SpAIglass connector on the VM.",
+        requirements: ["Node.js >= 20", "npm", "Claude Code CLI installed and authenticated (npm install -g @anthropic-ai/claude-code && claude login)"],
+        commands: [
+          "git clone https://github.com/c0inz/spaiglass.git /opt/spaiglass",
+          "cd /opt/spaiglass/backend && npm install",
+          "cp /path/to/connector.env /opt/spaiglass/backend/.env",
+        ],
+      },
+      step5_start: {
+        description: "Start the connector backend. It connects outbound to the relay — no inbound ports or firewall changes needed.",
+        command: "cd /opt/spaiglass/backend && npx tsx cli/node.ts --host 0.0.0.0 --port 8080",
+      },
+      step6_report_url: {
+        description: "Tell the user their VM is live. Replace <CONNECTOR_ID> with the id from step 2.",
+        userUrl: PUBLIC_URL + "/vm/<CONNECTOR_ID>/",
       },
     },
-    registration: {
-      description: "Once you have an agent key (from either auth option above), use it to register VMs and download configs.",
-      registerVm: "POST " + PUBLIC_URL + "/api/connectors with { name: 'vm-name' } and header Authorization: Bearer sg_<key>",
-      downloadConfig: "GET " + PUBLIC_URL + "/api/connectors/:id/config with header Authorization: Bearer sg_<key>",
-      createMoreKeys: "POST " + PUBLIC_URL + "/api/agent-keys with { name: 'key-name' } and header Authorization: Bearer sg_<key>",
+
+    // --- ADDING MORE VMs TO THE SAME ACCOUNT ---
+    addMoreVms: {
+      description: "The agent key is reusable across all VMs for the same user account. To add another VM, repeat steps 2-6 with the same agent key. No re-authentication needed.",
+      steps: [
+        "POST /api/connectors with a new name and the same agent key — each VM gets its own connector ID and token",
+        "GET /api/connectors/:id/config to download that VM's config",
+        "Install and start the connector on the new VM",
+        "Report the new URL to the user: " + PUBLIC_URL + "/vm/<NEW_CONNECTOR_ID>/",
+      ],
+      createMoreKeys: {
+        description: "An agent key can also create additional agent keys for other agents or automation systems.",
+        endpoint: "POST " + PUBLIC_URL + "/api/agent-keys",
+        headers: { "Authorization": "Bearer sg_YOUR_KEY", "Content-Type": "application/json" },
+        body: { name: "another-agent" },
+      },
+      listVms: {
+        description: "List all VMs registered to your account.",
+        endpoint: "GET " + PUBLIC_URL + "/api/connectors",
+        headers: { "Authorization": "Bearer sg_YOUR_KEY" },
+      },
     },
+
+    // --- ALTERNATIVE: BROWSER ENROLLMENT ---
+    browserFlow: {
+      description: "If a human is available, they can sign in via browser and manage everything from the dashboard.",
+      step1: "Open " + PUBLIC_URL + "/auth/github in a browser and sign in with GitHub",
+      step2: "Register VMs, create agent keys, and download configs from the dashboard UI",
+    },
+
+    // --- SHORTCUT: ALREADY HAVE A CONFIG ---
     ifYouAlreadyHaveAConfig: {
-      description: "If someone gave you a connector .env file with RELAY_URL, CONNECTOR_TOKEN, and CONNECTOR_ID, you already have everything needed. Skip registration and go straight to connectorInstall.steps.",
+      description: "If someone gave you a connector .env file with RELAY_URL, CONNECTOR_TOKEN, and CONNECTOR_ID, you already have everything needed. Skip authentication and registration — go straight to step 4 (install) above.",
       userUrl: PUBLIC_URL + "/vm/<CONNECTOR_ID from your .env>/",
     },
   });
