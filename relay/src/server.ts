@@ -81,22 +81,52 @@ app.get("/api/health", (c) => {
 app.get("/setup", (c) => {
   const user = c.get("user");
   return c.json({
+    project: "SpAIglass",
+    description: "Browser-based multi-VM interface for Claude Code. SpAIglass is a custom relay service that routes browser WebSocket connections to Claude Code running on remote VMs.",
+    license: "MIT",
+    source: "https://github.com/c0inz/spaiglass",
     relay: PUBLIC_URL,
     authenticated: !!user,
     user: user ? { login: user.github_login } : null,
-    instructions: {
-      step1: "Sign in with GitHub at /auth/github",
-      step2: "Create a connector via POST /api/connectors with { name: 'my-vm' }",
-      step3: "Download the connector config from GET /api/connectors/:id/config",
-      step4: "On the VM, set RELAY_URL and CONNECTOR_TOKEN from the config",
-      step5: "Start the SpAIglass backend — it will connect to the relay",
-      step6: "Access the VM at /vm/:connectorId/ in your browser",
+    connectorInstall: {
+      summary: "The connector is a Node.js backend that runs on your VM. It connects outbound to the relay via WebSocket and bridges browser sessions to Claude Code CLI on the VM.",
+      requirements: ["Node.js >= 20", "npm", "Claude Code CLI installed and authenticated (run: npm install -g @anthropic-ai/claude-code && claude login)"],
+      steps: [
+        "git clone https://github.com/c0inz/spaiglass.git /opt/spaiglass",
+        "cd /opt/spaiglass/backend && npm install",
+        "Write the connector .env file to /opt/spaiglass/backend/.env (see connectorEnvVars below)",
+        "Start the backend: cd /opt/spaiglass/backend && npx tsx cli/node.ts --host 0.0.0.0 --port 8080",
+      ],
+      connectorEnvVars: {
+        RELAY_URL: `${PUBLIC_URL}`,
+        CONNECTOR_TOKEN: "<from registration or config download>",
+        CONNECTOR_ID: "<from registration or config download>",
+        PORT: "8080",
+        HOST: "0.0.0.0",
+      },
+      quickStart: `git clone https://github.com/c0inz/spaiglass.git /opt/spaiglass && cd /opt/spaiglass/backend && npm install && cp /path/to/connector.env .env && npx tsx cli/node.ts --host 0.0.0.0 --port 8080`,
+      notes: [
+        "The VM connects OUTBOUND to the relay — no inbound ports or firewall changes needed",
+        "The connector token authenticates the VM to the relay. Keep it secret.",
+        "Once running, the user accesses the VM at: " + PUBLIC_URL + "/vm/<connectorId>/",
+      ],
     },
-    agenticSetup: {
-      description: "For automated VM enrollment, create an agent key and use Bearer auth",
-      createKey: "POST /api/agent-keys with { name: 'agent' } — returns a key shown once",
-      registerVm: "POST /api/connectors with { name: 'vm-name' } using Bearer key",
-      downloadConfig: "GET /api/connectors/:id/config — returns .env for the VM",
+    registration: {
+      manual: {
+        step1: "Sign in with GitHub at " + PUBLIC_URL + "/auth/github",
+        step2: "Create a connector via POST /api/connectors with { name: 'my-vm' } (requires session cookie)",
+        step3: "Download config: GET /api/connectors/:id/config",
+      },
+      agentic: {
+        description: "For automated VM enrollment without a browser. Requires an agent key (created once from the dashboard after GitHub sign-in).",
+        registerVm: "POST /api/connectors with { name: 'vm-name' } and header Authorization: Bearer sg_<key>",
+        downloadConfig: "GET /api/connectors/:id/config with header Authorization: Bearer sg_<key>",
+        createKey: "POST /api/agent-keys with { name: 'my-agent' } (requires session cookie — one-time browser action)",
+      },
+    },
+    ifYouAlreadyHaveAConfig: {
+      description: "If someone gave you a connector .env file with RELAY_URL, CONNECTOR_TOKEN, and CONNECTOR_ID, you already have everything needed. Skip registration and go straight to connectorInstall.steps.",
+      userUrl: PUBLIC_URL + "/vm/<CONNECTOR_ID from your .env>/",
     },
   });
 });
