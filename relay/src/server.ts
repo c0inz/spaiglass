@@ -144,7 +144,10 @@ app.get("/terms", (c) => {
 <h2>7. Termination</h2>
 <p>We may suspend or terminate your access at any time for violation of these terms. You may stop using the Service at any time.</p>
 
-<h2>8. Changes</h2>
+<h2>8. Open Source</h2>
+<p>SpAIglass is open source software released under the <a href="https://github.com/c0inz/spaiglass/blob/main/LICENSE">MIT License</a>. The complete source code is available at <a href="https://github.com/c0inz/spaiglass">github.com/c0inz/spaiglass</a>.</p>
+
+<h2>9. Changes</h2>
 <p>We may update these terms. Continued use after changes constitutes acceptance.</p>
 
 <p><a href="/">&larr; Back to SpAIglass</a></p>
@@ -196,7 +199,10 @@ app.get("/privacy", (c) => {
 <h2>6. Third-Party Services</h2>
 <p>We use GitHub OAuth for authentication. GitHub's privacy policy applies to data they collect during the sign-in process. We use Cloudflare for DNS and Caddy for TLS — standard infrastructure that does not process your VM traffic.</p>
 
-<h2>7. Changes</h2>
+<h2>7. Open Source</h2>
+<p>SpAIglass is open source under the <a href="https://github.com/c0inz/spaiglass/blob/main/LICENSE">MIT License</a>. You can audit the complete relay source code at <a href="https://github.com/c0inz/spaiglass/tree/main/relay/src">github.com/c0inz/spaiglass</a> to verify exactly what data is collected and how it flows.</p>
+
+<h2>8. Changes</h2>
 <p>We may update this policy. Material changes will be noted on this page with an updated date.</p>
 
 <p><a href="/">&larr; Back to SpAIglass</a></p>

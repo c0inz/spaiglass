@@ -1,3 +1,7 @@
 spaiglass.xyz {
     reverse_proxy localhost:4000
 }
+
+www.spaiglass.xyz {
+    redir https://spaiglass.xyz{uri} permanent
+}
