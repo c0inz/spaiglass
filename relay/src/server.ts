@@ -32,6 +32,38 @@ if (!GITHUB_CLIENT_ID || !GITHUB_CLIENT_SECRET) {
   console.warn("WARNING: GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET not set. OAuth will not work.");
 }
 
+// --- Server-side compact name helpers (mirrors client-side abbreviate/compactName) ---
+
+function serverAbbreviate(word: string, maxLen: number): string {
+  if (word.length <= maxLen) return word;
+  // Split camelCase / hyphens / underscores into parts
+  const parts = word.replace(/([a-z])([A-Z])/g, "$1\0$2").replace(/[-_]/g, "\0").split("\0").filter(Boolean);
+  if (parts.length > 1) {
+    let result = "";
+    for (let i = 0; i < parts.length; i++) {
+      if ((result + parts[i]).length <= maxLen) { result += parts[i]; }
+      else { const rem = maxLen - result.length; if (rem > 0) result += parts[i].slice(0, rem); break; }
+    }
+    return result;
+  }
+  if (maxLen <= 3) return word.charAt(0).toUpperCase() + word.slice(1, maxLen);
+  const stripped = word.charAt(0).toUpperCase() + word.slice(1).replace(/[aeiou]/gi, "");
+  return stripped.length <= maxLen ? stripped : stripped.slice(0, maxLen);
+}
+
+function serverCompactName(proj: string, role: string): string {
+  const full = proj + "-" + role;
+  if (full.length <= 10) return full;
+  const budget = 9;
+  let pBudget = Math.min(proj.length, Math.ceil(budget * 0.6));
+  let rBudget = budget - pBudget;
+  if (rBudget < 2) { rBudget = 2; pBudget = budget - 2; }
+  if (pBudget < 2) { pBudget = 2; rBudget = budget - 2; }
+  if (proj.length < pBudget) { rBudget += pBudget - proj.length; pBudget = proj.length; }
+  if (role.length < rBudget) { pBudget += rBudget - role.length; rBudget = role.length; }
+  return serverAbbreviate(proj, pBudget) + "-" + serverAbbreviate(role, rBudget);
+}
+
 // --- Shared HTML helpers ---
 
 // Inline SVG favicon — spyglass/eye icon in brand blue
@@ -846,12 +878,12 @@ ${FAVICON}
       const project = lastHyphen > 0 ? segment.slice(0, lastHyphen) : segment;
       const role = lastHyphen > 0 ? segment.slice(lastHyphen + 1) : "";
 
-      // Build compact tab title: "SP:DE — vm-name" or "vm-name — SpAIglass"
+      // Build compact tab title: "DevOps-Dev — DevOps-VM" or "vm-name — SpAIglass"
       let tabTitle: string;
       if (project && role) {
-        tabTitle = `${project.slice(0, 2).toUpperCase()}:${role.slice(0, 2).toUpperCase()} — ${connector.name}`;
+        tabTitle = `${serverCompactName(project, role)} — ${connector.name}`;
       } else if (project) {
-        tabTitle = `${project.slice(0, 2).toUpperCase()} — ${connector.name}`;
+        tabTitle = `${serverAbbreviate(project, 8)} — ${connector.name}`;
       } else {
         tabTitle = `${connector.name} — SpAIglass`;
       }
