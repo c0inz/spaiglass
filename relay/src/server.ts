@@ -589,12 +589,52 @@ function makeInjectScript(slug: string): string {
   const prefix = `/vm/${slug}`;
   return `<script>(function(){` +
     `var B='${prefix}';` +
-    // Patch fetch to prepend base path for absolute paths
-    `var F=window.fetch;window.fetch=function(u,o){if(typeof u==='string'&&u[0]==='/')u=B+u;return F.call(this,u,o)};` +
-    // Patch WebSocket to prepend base path
-    `var W=window.WebSocket;window.WebSocket=function(u,p){try{var x=new URL(u);if(x.host===location.host)x.pathname=B+x.pathname;u=x.toString()}catch(e){}return new W(u,p)};` +
+    `var H=location.origin;` +
+
+    // Strip /vm/:slug/... prefix from the URL so React Router sees / and matches.
+    // The project/role context is preserved in window.__SG for the frontend to use.
+    `var p=location.pathname;` +
+    `if(p.indexOf(B)===0){` +
+      `var inner=p.slice(B.length).replace(/^\\/+/,'');` +
+      `var segs=inner.split('/').filter(Boolean);` +
+      `window.__SG={slug:'${slug}',project:segs[0]||'',role:segs[1]||''};` +
+      `history.replaceState(null,'','/'+location.search+location.hash);` +
+    `}` +
+
+    // Helper: rewrite a URL string if it targets this host and isn't already prefixed
+    `function rw(u){` +
+      `if(typeof u!=='string')return u;` +
+      // Absolute path: /api/... → /vm/slug/api/...
+      `if(u[0]==='/'&&u.indexOf(B)!==0)return B+u;` +
+      // Full URL on same origin: https://host/api/... → https://host/vm/slug/api/...
+      `if(u.indexOf(H)===0){var q=u.slice(H.length);if(q[0]==='/'&&q.indexOf(B)!==0)return H+B+q;}` +
+      `return u;` +
+    `}` +
+
+    // Patch fetch — handles both string URLs and Request objects
+    `var F=window.fetch;window.fetch=function(u,o){` +
+      `if(typeof u==='string')u=rw(u);` +
+      `else if(u instanceof Request){var nu=rw(u.url);if(nu!==u.url)u=new Request(nu,u);}` +
+      `return F.call(this,u,o)};` +
+
+    // Patch WebSocket
+    `var W=window.WebSocket;window.WebSocket=function(u,pr){` +
+      `if(typeof u==='string'){` +
+        // Handle ws:// and wss:// full URLs
+        `if(u.indexOf('ws://')===0||u.indexOf('wss://')===0){` +
+          `try{var x=new URL(u);if(x.host===location.host&&x.pathname.indexOf(B)!==0){x.pathname=B+x.pathname;u=x.toString();}}catch(e){}}` +
+        // Handle /api/ws style paths
+        `else{u=rw(u);}` +
+      `}` +
+      `return new W(u,pr)};` +
     `window.WebSocket.prototype=W.prototype;` +
     `window.WebSocket.CONNECTING=W.CONNECTING;window.WebSocket.OPEN=W.OPEN;window.WebSocket.CLOSING=W.CLOSING;window.WebSocket.CLOSED=W.CLOSED;` +
+
+    // Patch pushState/replaceState so React Router navigations go through the proxy
+    `var PS=history.pushState;var RS=history.replaceState;` +
+    `history.pushState=function(s,t,u){if(typeof u==='string'&&u[0]==='/'&&u.indexOf(B)!==0)u=B+u;return PS.call(this,s,t,u)};` +
+    `history.replaceState=function(s,t,u){if(typeof u==='string'&&u[0]==='/'&&u.indexOf(B)!==0)u=B+u;return RS.call(this,s,t,u)};` +
+
     `})()</script>`;
 }
 
