@@ -171,13 +171,19 @@ curl https://spaiglass.xyz/api/connectors/abc-123/config \
   -o connector.env
 # Returns a .env file with install instructions, relay URL, and token
 
-# Step 4: Install and start the connector on the VM
+# Step 4: Install on the VM
 git clone https://github.com/c0inz/spaiglass.git /opt/spaiglass
+cd /opt/spaiglass/frontend && npm install && npm run build
 cd /opt/spaiglass/backend && npm install
-cp /path/to/connector.env .env
-npx tsx cli/node.ts --host 0.0.0.0 --port 8080
+ln -sf /opt/spaiglass/frontend/dist /opt/spaiglass/backend/static
+cp /path/to/connector.env /opt/spaiglass/backend/.env
 
-# Step 5: Tell the user their VM is live at:
+# Step 5: Start backend + relay connector (two processes)
+cd /opt/spaiglass/backend
+npx tsx cli/node.ts --host 0.0.0.0 --port 8080 &   # local web UI + Claude bridge
+npx tsx connector.ts                                  # outbound relay connection
+
+# Step 6: Tell the user their VM is live at:
 #   https://spaiglass.xyz/vm/abc-123/
 ```
 

@@ -115,18 +115,33 @@ app.get("/setup", (c) => {
         headers: { "Authorization": "Bearer sg_YOUR_KEY" },
         returns: "Plain text .env file — save it to disk",
       },
-      step4_install_connector: {
-        description: "Install the SpAIglass connector on the VM.",
+      step4_install: {
+        description: "Clone the repo, build the frontend, and install backend dependencies on the VM.",
         requirements: ["Node.js >= 20", "npm", "Claude Code CLI installed and authenticated (npm install -g @anthropic-ai/claude-code && claude login)"],
         commands: [
           "git clone https://github.com/c0inz/spaiglass.git /opt/spaiglass",
+          "cd /opt/spaiglass/frontend && npm install && npm run build",
           "cd /opt/spaiglass/backend && npm install",
+          "ln -sf /opt/spaiglass/frontend/dist /opt/spaiglass/backend/static",
           "cp /path/to/connector.env /opt/spaiglass/backend/.env",
+        ],
+        notes: [
+          "The frontend build produces static files in frontend/dist/",
+          "The symlink makes the backend serve the frontend UI",
+          "The .env file goes in the backend/ directory",
         ],
       },
       step5_start: {
-        description: "Start the connector backend. It connects outbound to the relay — no inbound ports or firewall changes needed.",
-        command: "cd /opt/spaiglass/backend && npx tsx cli/node.ts --host 0.0.0.0 --port 8080",
+        description: "Start two processes: the backend (local web UI + Claude Code bridge) and the connector client (outbound WebSocket to relay). Both read from the same .env file.",
+        backend: "cd /opt/spaiglass/backend && npx tsx cli/node.ts --host 0.0.0.0 --port 8080",
+        connector: "cd /opt/spaiglass/backend && npx tsx connector.ts",
+        combined: "cd /opt/spaiglass/backend && npx tsx cli/node.ts --host 0.0.0.0 --port 8080 & npx tsx connector.ts",
+        notes: [
+          "The backend serves the web UI and bridges to Claude Code CLI locally",
+          "The connector client connects OUTBOUND to the relay and multiplexes browser sessions to the local backend's /api/ws WebSocket endpoint",
+          "No inbound ports or firewall changes needed — all relay traffic is outbound",
+          "Both processes must be running for relay access to work",
+        ],
       },
       step6_report_url: {
         description: "Tell the user their VM is live. Replace <CONNECTOR_ID> with the id from step 2.",
