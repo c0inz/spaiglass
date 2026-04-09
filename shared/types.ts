@@ -1,7 +1,13 @@
 export interface StreamResponse {
-  type: "claude_json" | "error" | "done" | "aborted";
-  data?: unknown; // SDKMessage object for claude_json type
+  type: "claude_json" | "error" | "done" | "aborted" | "file_delivery";
+  data?: unknown; // SDKMessage object for claude_json type, FileDelivery for file_delivery
   error?: string;
+}
+
+export interface FileDelivery {
+  path: string;
+  filename: string;
+  action: "write" | "edit";
 }
 
 export interface ChatRequest {

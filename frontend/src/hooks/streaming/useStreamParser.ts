@@ -4,6 +4,8 @@ import type {
   SDKMessage,
   SystemMessage,
   AbortMessage,
+  FileDelivery,
+  FileDeliveryMessage,
 } from "../../types";
 import {
   isSystemMessage,
@@ -110,6 +112,17 @@ export function useStreamParser() {
             timestamp: Date.now(),
           };
           context.addMessage(errorMessage);
+        } else if (data.type === "file_delivery" && data.data) {
+          const delivery = data.data as FileDelivery;
+          const deliveryMessage: FileDeliveryMessage = {
+            type: "file_delivery",
+            path: delivery.path,
+            filename: delivery.filename,
+            action: delivery.action,
+            timestamp: Date.now(),
+          };
+          context.addMessage(deliveryMessage);
+          context.onFileDelivery?.(delivery.path, delivery.filename);
         } else if (data.type === "aborted") {
           const abortedMessage: AbortMessage = {
             type: "system",

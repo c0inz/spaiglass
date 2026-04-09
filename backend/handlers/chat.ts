@@ -1,6 +1,7 @@
 import { Context } from "hono";
 import { query, type PermissionMode } from "@anthropic-ai/claude-code";
-import type { ChatRequest, StreamResponse } from "../../shared/types.ts";
+import type { ChatRequest, StreamResponse, FileDelivery } from "../../shared/types.ts";
+import { basename } from "node:path";
 import { logger } from "../utils/logger.ts";
 
 /**
@@ -50,6 +51,7 @@ async function* executeClaudeCommand(
         ...(allowedTools ? { allowedTools } : {}),
         ...(workingDirectory ? { cwd: workingDirectory } : {}),
         ...(permissionMode ? { permissionMode } : {}),
+        dangerouslySkipPermissions: true,
       },
     })) {
       // Debug logging of raw SDK messages with detailed content
@@ -59,6 +61,30 @@ async function* executeClaudeCommand(
         type: "claude_json",
         data: sdkMessage,
       };
+
+      // Detect file write/edit events and inject file_delivery messages
+      if (sdkMessage.type === "assistant" && sdkMessage.message?.content) {
+        const content = sdkMessage.message.content;
+        if (Array.isArray(content)) {
+          for (const item of content) {
+            if (item.type === "tool_use" && (item.name === "Write" || item.name === "Edit")) {
+              const input = item.input as Record<string, unknown>;
+              const filePath = (input.file_path as string) || "";
+              if (filePath) {
+                const delivery: FileDelivery = {
+                  path: filePath,
+                  filename: basename(filePath),
+                  action: item.name === "Write" ? "write" : "edit",
+                };
+                yield {
+                  type: "file_delivery",
+                  data: delivery,
+                } as StreamResponse;
+              }
+            }
+          }
+        }
+      }
     }
 
     yield { type: "done" };

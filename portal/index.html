@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Spyglass — Fleet Portal</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: #0f0f1a; color: #e2e8f0; min-height: 100vh;
+      display: flex; flex-direction: column; align-items: center; padding: 32px 24px;
+    }
+    h1 { font-size: 28px; font-weight: 700; margin-bottom: 4px; letter-spacing: -0.5px; }
+    .subtitle { color: #64748b; font-size: 14px; margin-bottom: 24px; }
+    .filter-box { width: 100%; max-width: 700px; margin-bottom: 20px; }
+    .filter-input {
+      width: 100%; padding: 10px 14px; background: #1e1e2e; border: 1px solid #2d2d3f;
+      border-radius: 8px; color: #e2e8f0; font-size: 14px; outline: none;
+    }
+    .filter-input:focus { border-color: #4f6fff; }
+    .filter-input::placeholder { color: #475569; }
+    .fleet { width: 100%; max-width: 700px; display: flex; flex-direction: column; gap: 8px; }
+
+    .row {
+      background: #1e1e2e; border: 1px solid #2d2d3f; border-radius: 8px;
+      padding: 14px 18px; display: flex; align-items: center; justify-content: space-between;
+      cursor: pointer; transition: border-color 0.15s, background 0.15s;
+    }
+    .row:hover { border-color: #4f6fff; background: #252540; }
+    .row-info { display: flex; align-items: center; gap: 12px; }
+    .row-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .row-dot.online { background: #34d399; box-shadow: 0 0 6px #34d39966; }
+    .row-dot.offline { background: #64748b; }
+    .row-dot.checking { background: #fbbf24; animation: pulse 1s infinite; }
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+    .row-text { display: flex; flex-direction: column; gap: 2px; }
+    .row-title { font-size: 15px; font-weight: 600; }
+    .row-sub { font-size: 12px; color: #94a3b8; }
+    .row-actions { display: flex; align-items: center; gap: 8px; }
+    .open-icon { color: #475569; font-size: 16px; }
+    .row:hover .open-icon { color: #4f6fff; }
+    .hide-btn {
+      background: none; border: none; color: #475569; font-size: 14px; cursor: pointer;
+      padding: 2px 6px; border-radius: 4px;
+    }
+    .hide-btn:hover { color: #f87171; background: #f8717118; }
+
+    .server-row { border-left: 3px solid #4f6fff; }
+    .role-row { margin-left: 24px; border-left: 3px solid #34d399; }
+
+    .btn-row { margin-top: 20px; }
+    .btn {
+      background: none; border: 1px solid #2d2d3f; color: #64748b;
+      padding: 8px 16px; border-radius: 6px; font-size: 13px; cursor: pointer;
+    }
+    .btn:hover { border-color: #4f6fff; color: #e2e8f0; }
+    .footer { margin-top: 32px; color: #334155; font-size: 12px; }
+
+    .modal-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+      display: flex; align-items: center; justify-content: center; z-index: 50;
+    }
+    .modal {
+      background: #1e1e2e; border: 1px solid #2d2d3f; border-radius: 12px;
+      padding: 24px; width: 440px; max-width: 90vw; max-height: 80vh; display: flex; flex-direction: column;
+    }
+    .modal h2 { font-size: 18px; font-weight: 700; margin-bottom: 12px; }
+    .modal-body { flex: 1; overflow-y: auto; margin-bottom: 16px; }
+    .modal input {
+      width: 100%; padding: 8px 12px; background: #0f0f1a; border: 1px solid #2d2d3f;
+      border-radius: 6px; color: #e2e8f0; font-size: 14px; margin-bottom: 12px; outline: none;
+    }
+    .modal input:focus { border-color: #4f6fff; }
+    .project-option {
+      padding: 10px 12px; border-radius: 6px; cursor: pointer; font-size: 14px;
+      color: #94a3b8; transition: background 0.1s;
+    }
+    .project-option:hover { background: #252540; color: #e2e8f0; }
+    .project-option.selected { background: #4f6fff22; color: #4f6fff; border: 1px solid #4f6fff44; }
+    .modal-btns { display: flex; justify-content: flex-end; gap: 8px; }
+    .modal-btn {
+      padding: 8px 16px; border-radius: 6px; font-size: 13px; cursor: pointer; border: none;
+    }
+    .modal-btn.primary { background: #4f6fff; color: white; }
+    .modal-btn.primary:hover { background: #3d5ce0; }
+    .modal-btn.primary:disabled { opacity: 0.4; cursor: not-allowed; }
+    .modal-btn.cancel { background: none; color: #64748b; border: 1px solid #2d2d3f; }
+    .modal-btn.danger { background: #dc2626; color: white; }
+    .modal-btn.danger:hover { background: #b91c1c; }
+  </style>
+</head>
+<body>
+  <h1>Spyglass</h1>
+  <p class="subtitle">Fleet Portal</p>
+  <div class="filter-box">
+    <input class="filter-input" id="filter" type="text" placeholder="Filter..." oninput="renderList()">
+  </div>
+  <div class="fleet" id="fleet"></div>
+  <div class="btn-row"><button class="btn" onclick="loadFleet()">Refresh</button></div>
+  <p class="footer">Click a role to launch a session. Click a server to create a new role.</p>
+  <div id="modal"></div>
+
+  <script>
+    let fleet = { servers: [], roles: [] };
+    let projectLists = {}; // serverName -> [{ name, path }]
+
+    async function loadFleet() {
+      try {
+        const r = await fetch('fleet.json?t=' + Date.now());
+        fleet = await r.json();
+      } catch {
+        fleet = {
+          servers: [{ name: "Super-Server", url: "http://192.168.1.153:3000", projectsDir: "/home/johntdavenport/projects" }],
+          roles: []
+        };
+      }
+      // Pre-fetch project lists for each server (for create-role flow)
+      for (const s of fleet.servers) {
+        try {
+          const apiUrl = s.url.replace(':3000', ':8080');
+          const r = await fetch(`${apiUrl}/api/discover?projectsDir=${encodeURIComponent(s.projectsDir)}`, { signal: AbortSignal.timeout(5000) });
+          if (r.ok) {
+            const d = await r.json();
+            const all = [...(d.projects || []), ...(d.unassigned || [])].map(p => ({ name: p.name, path: p.path }));
+            all.sort((a, b) => a.name.localeCompare(b.name));
+            projectLists[s.name] = all;
+          }
+        } catch { projectLists[s.name] = []; }
+      }
+      renderList();
+      checkHealth();
+    }
+
+    function renderList() {
+      const filter = (document.getElementById('filter').value || '').toLowerCase();
+      const el = document.getElementById('fleet');
+      let html = '';
+
+      for (let si = 0; si < fleet.servers.length; si++) {
+        const s = fleet.servers[si];
+        // Server row
+        const serverText = s.name.toLowerCase();
+        const serverMatch = !filter || serverText.includes(filter);
+
+        // Roles for this server
+        const roles = (fleet.roles || []).filter(r => r.server === s.name && !r.hidden);
+        const roleHtml = [];
+
+        for (const r of roles) {
+          const rowText = `${s.name} ${r.project} ${r.role}`.toLowerCase();
+          if (filter && !rowText.includes(filter)) continue;
+          const launchUrl = `${s.url}/projects${r.projectPath}?role=${encodeURIComponent(r.roleFile)}`;
+          roleHtml.push(`
+            <div class="row role-row" onclick="window.open('${launchUrl}','_blank')">
+              <div class="row-info">
+                <div class="row-text">
+                  <span class="row-title">${r.project} / ${r.role}</span>
+                  <span class="row-sub">${r.projectPath}</span>
+                </div>
+              </div>
+              <div class="row-actions">
+                <button class="hide-btn" onclick="event.stopPropagation(); confirmHide(${JSON.stringify(r).replace(/"/g,'&quot;')})" title="Hide">✕</button>
+                <span class="open-icon">&#x2197;</span>
+              </div>
+            </div>`);
+        }
+
+        // Show server if it matches filter or any of its roles match
+        if (!serverMatch && roleHtml.length === 0) continue;
+
+        html += `
+          <div class="row server-row" id="server-${si}" onclick="showCreateRole('${s.name}','${s.url}')">
+            <div class="row-info">
+              <span class="row-dot checking" id="dot-${si}"></span>
+              <div class="row-text">
+                <span class="row-title">${s.name}</span>
+                <span class="row-sub">Click to create a new project role</span>
+              </div>
+            </div>
+            <span class="open-icon">+</span>
+          </div>
+          ${roleHtml.join('')}`;
+      }
+
+      el.innerHTML = html || '<div style="color:#475569;text-align:center;padding:24px;">No results</div>';
+    }
+
+    async function checkHealth() {
+      for (let i = 0; i < fleet.servers.length; i++) {
+        const dot = document.getElementById(`dot-${i}`);
+        if (!dot) continue;
+        try {
+          const apiUrl = fleet.servers[i].url.replace(':3000', ':8080');
+          const r = await fetch(`${apiUrl}/api/health`, { signal: AbortSignal.timeout(3000) });
+          dot.className = r.ok ? 'row-dot online' : 'row-dot offline';
+        } catch {
+          try {
+            await fetch(`${fleet.servers[i].url.replace(':3000',':8080')}/api/health`, { mode:'no-cors', signal: AbortSignal.timeout(3000) });
+            dot.className = 'row-dot online';
+          } catch { dot.className = 'row-dot offline'; }
+        }
+      }
+    }
+
+    function confirmHide(role) {
+      document.getElementById('modal').innerHTML = `
+        <div class="modal-overlay" onclick="closeModal()">
+          <div class="modal" onclick="event.stopPropagation()">
+            <h2>Hide Role</h2>
+            <p style="color:#94a3b8;font-size:14px;margin-bottom:20px;">
+              Hide <strong>${role.project} / ${role.role}</strong> from the list?
+            </p>
+            <div class="modal-btns">
+              <button class="modal-btn cancel" onclick="closeModal()">Cancel</button>
+              <button class="modal-btn danger" onclick="doHide('${role.server}','${role.project}','${role.role}')">Hide</button>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    async function doHide(server, project, role) {
+      const r = fleet.roles.find(x => x.server === server && x.project === project && x.role === role);
+      if (r) r.hidden = true;
+      await saveFleet();
+      closeModal();
+      renderList();
+    }
+
+    let selectedProject = null;
+
+    function showCreateRole(serverName, serverUrl) {
+      const projects = projectLists[serverName] || [];
+      selectedProject = null;
+      document.getElementById('modal').innerHTML = `
+        <div class="modal-overlay" onclick="closeModal()">
+          <div class="modal" onclick="event.stopPropagation()">
+            <h2>Create Role on ${serverName}</h2>
+            <p style="color:#94a3b8;font-size:13px;margin-bottom:12px;">1. Select a project</p>
+            <div class="modal-body" id="project-list">
+              ${projects.map((p, i) => `
+                <div class="project-option" id="proj-${i}" onclick="selectProject(${i}, '${p.name}', '${p.path}')">${p.name}</div>
+              `).join('')}
+              ${projects.length === 0 ? '<div style="color:#475569;padding:12px;">No projects found</div>' : ''}
+            </div>
+            <p style="color:#94a3b8;font-size:13px;margin-bottom:8px;">2. Name the role</p>
+            <input id="role-name" type="text" placeholder="e.g. developer, designer, security">
+            <div class="modal-btns">
+              <button class="modal-btn cancel" onclick="closeModal()">Cancel</button>
+              <button class="modal-btn primary" id="create-btn" disabled onclick="doCreate('${serverName}','${serverUrl}')">Create & Launch</button>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    function selectProject(index, name, path) {
+      selectedProject = { name, path };
+      document.querySelectorAll('.project-option').forEach((el, i) => {
+        el.className = i === index ? 'project-option selected' : 'project-option';
+      });
+      document.getElementById('create-btn').disabled = false;
+    }
+
+    async function doCreate(serverName, serverUrl) {
+      if (!selectedProject) return;
+      const roleInput = document.getElementById('role-name');
+      const roleName = roleInput.value.trim().toLowerCase().replace(/\s+/g, '-');
+      if (!roleName) { roleInput.focus(); return; }
+
+      const roleFile = roleName + '.md';
+      const filePath = selectedProject.path + '/agents/' + roleFile;
+      const content = `You are working on ${selectedProject.name} in the role of: ${roleName}\n\nProject directory: ${selectedProject.path}\n`;
+
+      try {
+        const apiUrl = serverUrl.replace(':3000', ':8080');
+        await fetch(`${apiUrl}/api/files/write`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: filePath, content })
+        });
+
+        // Add to fleet.json
+        fleet.roles.push({
+          server: serverName,
+          project: selectedProject.name,
+          projectPath: selectedProject.path,
+          role: roleName,
+          roleFile: roleFile,
+          hidden: false
+        });
+        await saveFleet();
+
+        closeModal();
+
+        // Launch
+        const launchUrl = `${serverUrl}/projects${selectedProject.path}?role=${encodeURIComponent(roleFile)}`;
+        window.open(launchUrl, '_blank');
+        renderList();
+      } catch (err) {
+        alert('Failed: ' + err.message);
+      }
+    }
+
+    async function saveFleet() {
+      try {
+        await fetch('fleet.json', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(fleet, null, 2)
+        });
+      } catch {
+        // Static server can't write — need a proper portal server for persistence
+        console.warn('Could not save fleet.json (static server)');
+      }
+    }
+
+    function closeModal() { document.getElementById('modal').innerHTML = ''; }
+
+    loadFleet();
+    setInterval(checkHealth, 30000);
+  </script>
+</body>
+</html>

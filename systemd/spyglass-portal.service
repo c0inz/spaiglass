@@ -1,0 +1,18 @@
+[Unit]
+Description=Spyglass Fleet Portal
+After=network.target
+PartOf=spyglass.target
+
+[Service]
+Type=simple
+User=johntdavenport
+WorkingDirectory=/home/johntdavenport/projects/spyglass/portal
+ExecStart=/home/linuxbrew/.linuxbrew/bin/node serve.js
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=spyglass-portal
+
+[Install]
+WantedBy=spyglass.target

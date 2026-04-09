@@ -5,6 +5,7 @@ import type { ProjectsResponse, ProjectInfo } from "../types";
 import { getProjectsUrl } from "../config/api";
 import { SettingsButton } from "./SettingsButton";
 import { SettingsModal } from "./SettingsModal";
+import { useVmConfig } from "../hooks/useVmConfig";
 
 export function ProjectSelector() {
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
@@ -12,6 +13,7 @@ export function ProjectSelector() {
   const [error, setError] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const navigate = useNavigate();
+  const vmConfig = useVmConfig();
 
   useEffect(() => {
     loadProjects();
@@ -71,9 +73,17 @@ export function ProjectSelector() {
       <div className="max-w-4xl mx-auto p-6">
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
-          <h1 className="text-slate-800 dark:text-slate-100 text-3xl font-bold tracking-tight">
-            Select a Project
-          </h1>
+          <div>
+            <h1 className="text-slate-800 dark:text-slate-100 text-3xl font-bold tracking-tight">
+              Spyglass
+              {vmConfig && (
+                <span className="ml-3 text-lg font-medium text-blue-500 dark:text-blue-400">
+                  {vmConfig.role}
+                </span>
+              )}
+            </h1>
+            <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">Select a project</p>
+          </div>
           <SettingsButton onClick={handleSettingsClick} />
         </div>
 

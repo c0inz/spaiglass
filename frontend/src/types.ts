@@ -102,6 +102,15 @@ export interface TodoMessage {
   timestamp: number;
 }
 
+// File delivery message — shown when Claude writes or edits a file
+export interface FileDeliveryMessage {
+  type: "file_delivery";
+  path: string;
+  filename: string;
+  action: "write" | "edit";
+  timestamp: number;
+}
+
 // Thinking content item from Claude SDK
 export interface ThinkingContentItem {
   type: "thinking";
@@ -130,7 +139,8 @@ export type AllMessage =
   | ToolResultMessage
   | PlanMessage
   | ThinkingMessage
-  | TodoMessage;
+  | TodoMessage
+  | FileDeliveryMessage;
 
 // Type guard functions
 export function isChatMessage(message: AllMessage): message is ChatMessage {
@@ -167,6 +177,12 @@ export function isThinkingMessage(
 
 export function isTodoMessage(message: AllMessage): message is TodoMessage {
   return message.type === "todo";
+}
+
+export function isFileDeliveryMessage(
+  message: AllMessage,
+): message is FileDeliveryMessage {
+  return message.type === "file_delivery";
 }
 
 // Permission mode types (UI-focused subset of SDK PermissionMode)
@@ -218,6 +234,7 @@ export type {
   ChatRequest,
   ProjectsResponse,
   ProjectInfo,
+  FileDelivery,
 } from "../../shared/types";
 
 // Re-export SDK types

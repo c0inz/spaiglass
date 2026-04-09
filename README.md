@@ -1,10 +1,57 @@
-# 🌐 Claude Code Web UI
+# Spyglass
+
+> Browser-based multi-VM interface for Claude Code. Manage 20+ agent VMs from any device.
+
+Spyglass extends [claude-code-webui](https://github.com/sugyan/claude-code-webui) with file management, role-based sessions, a fleet portal, image upload, file delivery notifications, session persistence, and SSH deployment tooling.
+
+**[Full feature list &rarr; FEATURES.md](FEATURES.md)**
+
+### Quick Start (Single VM)
+
+```bash
+# Clone and install
+git clone https://github.com/c0inz/spyglass.git
+cd spyglass
+cd backend && npm install && cd ../frontend && npm install && cd ..
+
+# Copy and edit environment
+cp .env.example .env
+
+# Start all services
+cd backend && VM_ROLE="DevOps" npx tsx cli/node.ts --host 0.0.0.0 --port 8080 --claude-path $(which claude) &
+cd frontend && npx vite --host 0.0.0.0 --port 3000 &
+cd portal && node serve.js &
+
+# Open http://<your-ip>:3000
+```
+
+### Deploy to Fleet
+
+```bash
+# Single VM
+./deploy-webui.sh --host 192.168.1.200 --role Designer
+
+# Bulk from manifest
+./deploy-webui.sh --manifest deploy-manifest.json
+```
+
+### Project Documentation
+
+| File | Purpose |
+|---|---|
+| [FEATURES.md](FEATURES.md) | Complete feature reference |
+| [TASKS.md](TASKS.md) | Build status and phase tracking |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Technical decisions |
+| [REQUIREMENTS.md](REQUIREMENTS.md) | Original user requirements |
+| [AGENT.md](AGENT.md) | Project context and goals |
+| [.env.example](.env.example) | Environment variable template |
+
+---
+
+## Upstream: Claude Code Web UI
 
 [![npm Version](https://img.shields.io/npm/v/claude-code-webui)](https://www.npmjs.com/package/claude-code-webui)
-[![npm Downloads](https://img.shields.io/npm/dt/claude-code-webui)](https://www.npmjs.com/package/claude-code-webui)
 [![License](https://img.shields.io/github/license/sugyan/claude-code-webui)](https://github.com/sugyan/claude-code-webui/blob/main/LICENSE)
-[![CI](https://github.com/sugyan/claude-code-webui/actions/workflows/ci.yml/badge.svg)](https://github.com/sugyan/claude-code-webui/actions/workflows/ci.yml)
-[![GitHub Release](https://img.shields.io/github/v/release/sugyan/claude-code-webui)](https://github.com/sugyan/claude-code-webui/releases)
 
 > **A modern web interface for Claude Code CLI** - Transform your command-line coding experience into an intuitive web-based chat interface
 

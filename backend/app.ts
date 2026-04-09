@@ -17,6 +17,26 @@ import { handleHistoriesRequest } from "./handlers/histories.ts";
 import { handleConversationRequest } from "./handlers/conversations.ts";
 import { handleChatRequest } from "./handlers/chat.ts";
 import { handleAbortRequest } from "./handlers/abort.ts";
+import {
+  handleConfigRequest,
+  handleHealthRequest,
+} from "./handlers/config.ts";
+import {
+  handleFileTreeRequest,
+  handleFileReadRequest,
+  handleFileWriteRequest,
+  handleFileSnapshotRequest,
+  handleFileListRequest,
+} from "./handlers/files.ts";
+import { handleContextsRequest } from "./handlers/contexts.ts";
+import { handleDiscoverRequest } from "./handlers/discover.ts";
+import { handleStaleCheckRequest } from "./handlers/stale.ts";
+import { handleUploadRequest } from "./handlers/upload.ts";
+import {
+  handleSessionSaveRequest,
+  handleSessionLastRequest,
+} from "./handlers/session.ts";
+import { createAuthMiddleware } from "./middleware/auth.ts";
 import { logger } from "./utils/logger.ts";
 import { readBinaryFile } from "./utils/fs.ts";
 
@@ -55,7 +75,14 @@ export function createApp(
     }),
   );
 
+  // Health endpoint (before auth — allows portal to check status)
+  app.get("/api/health", (c) => handleHealthRequest(c));
+
+  // Auth middleware — protects all routes below this point
+  app.use("*", createAuthMiddleware());
+
   // API routes
+  app.get("/api/config", (c) => handleConfigRequest(c));
   app.get("/api/projects", (c) => handleProjectsRequest(c));
 
   app.get("/api/projects/:encodedProjectName/histories", (c) =>
@@ -71,6 +98,29 @@ export function createApp(
   );
 
   app.post("/api/chat", (c) => handleChatRequest(c, requestAbortControllers));
+
+  // File browser routes
+  app.get("/api/files/tree", (c) => handleFileTreeRequest(c));
+  app.get("/api/files/read", (c) => handleFileReadRequest(c));
+  app.post("/api/files/write", (c) => handleFileWriteRequest(c));
+  app.get("/api/files/snapshot", (c) => handleFileSnapshotRequest(c));
+  app.get("/api/files/list", (c) => handleFileListRequest(c));
+
+  // Context selector
+  app.get("/api/projects/contexts", (c) => handleContextsRequest(c));
+
+  // Discovery endpoint
+  app.get("/api/discover", (c) => handleDiscoverRequest(c));
+
+  // Stale context detection
+  app.post("/api/session/stale", (c) => handleStaleCheckRequest(c));
+
+  // Image upload
+  app.post("/api/upload", (c) => handleUploadRequest(c));
+
+  // Session persistence
+  app.post("/api/session/save", (c) => handleSessionSaveRequest(c));
+  app.get("/api/session/last", (c) => handleSessionLastRequest(c));
 
   // Static file serving with SPA fallback
   // Serve static assets (CSS, JS, images, etc.)

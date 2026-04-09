@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from "react";
-import { StopIcon } from "@heroicons/react/24/solid";
+import { StopIcon, PaperClipIcon, XMarkIcon } from "@heroicons/react/24/solid";
 import { UI_CONSTANTS, KEYBOARD_SHORTCUTS } from "../../utils/constants";
 import { useEnterBehavior } from "../../hooks/useSettings";
 import { PermissionInputPanel } from "./PermissionInputPanel";
@@ -50,6 +50,14 @@ interface ChatInputProps {
   showPermissions?: boolean;
   permissionData?: PermissionData;
   planPermissionData?: PlanPermissionData;
+  // @-mention
+  mentionDropdown?: React.ReactNode;
+  onMentionTrigger?: (query: string, rect: DOMRect) => void;
+  onMentionClose?: () => void;
+  // Image upload
+  pendingImages?: { file: File; preview: string }[];
+  onImageAdd?: (files: File[]) => void;
+  onImageRemove?: (index: number) => void;
 }
 
 export function ChatInput({
@@ -64,8 +72,15 @@ export function ChatInput({
   showPermissions = false,
   permissionData,
   planPermissionData,
+  mentionDropdown,
+  onMentionTrigger,
+  onMentionClose,
+  pendingImages,
+  onImageAdd,
+  onImageRemove,
 }: ChatInputProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [isComposing, setIsComposing] = useState(false);
   const { enterBehavior } = useEnterBehavior();
 
@@ -210,11 +225,76 @@ export function ChatInput({
 
   return (
     <div className="flex-shrink-0">
+      {/* Image thumbnail strip */}
+      {pendingImages && pendingImages.length > 0 && (
+        <div className="flex gap-2 px-2 py-2 mb-1 overflow-x-auto">
+          {pendingImages.map((img, i) => (
+            <div key={i} className="relative flex-shrink-0 group">
+              <img
+                src={img.preview}
+                alt={img.file.name}
+                className="w-16 h-16 object-cover rounded-lg border border-slate-300 dark:border-slate-600"
+              />
+              {onImageRemove && (
+                <button
+                  type="button"
+                  onClick={() => onImageRemove(i)}
+                  className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                >
+                  <XMarkIcon className="w-3 h-3" />
+                </button>
+              )}
+              <div className="text-[9px] text-slate-500 dark:text-slate-400 truncate w-16 text-center mt-0.5">
+                {img.file.name}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
       <form onSubmit={handleSubmit} className="relative">
+        {mentionDropdown}
+        {/* Hidden file input for image upload */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            if (e.target.files && onImageAdd) {
+              onImageAdd(Array.from(e.target.files));
+            }
+            e.target.value = "";
+          }}
+        />
         <textarea
           ref={inputRef}
           value={input}
-          onChange={(e) => onInputChange(e.target.value)}
+          onChange={(e) => {
+            const val = e.target.value;
+            onInputChange(val);
+
+            // Check for @-mention trigger
+            if (onMentionTrigger && onMentionClose) {
+              const cursorPos = e.target.selectionStart;
+              const textBeforeCursor = val.slice(0, cursorPos);
+              const atIndex = textBeforeCursor.lastIndexOf("@");
+              if (
+                atIndex !== -1 &&
+                (atIndex === 0 || /\s/.test(textBeforeCursor[atIndex - 1]))
+              ) {
+                const query = textBeforeCursor.slice(atIndex + 1);
+                if (!query.includes(" ") && !query.includes("\n")) {
+                  const rect = e.target.getBoundingClientRect();
+                  onMentionTrigger(query, rect);
+                } else {
+                  onMentionClose();
+                }
+              } else {
+                onMentionClose();
+              }
+            }
+          }}
           onKeyDown={handleKeyDown}
           onCompositionStart={handleCompositionStart}
           onCompositionEnd={handleCompositionEnd}
@@ -226,6 +306,16 @@ export function ChatInput({
           disabled={isLoading}
         />
         <div className="absolute right-2 bottom-3 flex gap-2">
+          {onImageAdd && !isLoading && (
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 rounded-lg transition-colors"
+              title="Attach image"
+            >
+              <PaperClipIcon className="w-4 h-4" />
+            </button>
+          )}
           {isLoading && currentRequestId && (
             <button
               type="button"
@@ -238,7 +328,7 @@ export function ChatInput({
           )}
           <button
             type="submit"
-            disabled={!input.trim() || isLoading}
+            disabled={(!input.trim() && !(pendingImages && pendingImages.length > 0)) || isLoading}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-400 text-white rounded-lg font-medium transition-all duration-200 shadow-sm hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 text-sm"
           >
             {isLoading ? "..." : permissionMode === "plan" ? "Plan" : "Send"}

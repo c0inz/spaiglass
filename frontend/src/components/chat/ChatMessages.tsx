@@ -8,6 +8,7 @@ import {
   isPlanMessage,
   isThinkingMessage,
   isTodoMessage,
+  isFileDeliveryMessage,
 } from "../../types";
 import {
   ChatMessageComponent,
@@ -17,6 +18,7 @@ import {
   PlanMessageComponent,
   ThinkingMessageComponent,
   TodoMessageComponent,
+  FileDeliveryMessageComponent,
   LoadingComponent,
 } from "../MessageComponents";
 // import { UI_CONSTANTS } from "../../utils/constants"; // Unused for now
@@ -24,9 +26,10 @@ import {
 interface ChatMessagesProps {
   messages: AllMessage[];
   isLoading: boolean;
+  onOpenFile?: (path: string, filename: string) => void;
 }
 
-export function ChatMessages({ messages, isLoading }: ChatMessagesProps) {
+export function ChatMessages({ messages, isLoading, onOpenFile }: ChatMessagesProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
 
@@ -70,6 +73,14 @@ export function ChatMessages({ messages, isLoading }: ChatMessagesProps) {
       return <ThinkingMessageComponent key={key} message={message} />;
     } else if (isTodoMessage(message)) {
       return <TodoMessageComponent key={key} message={message} />;
+    } else if (isFileDeliveryMessage(message)) {
+      return (
+        <FileDeliveryMessageComponent
+          key={key}
+          message={message}
+          onOpenFile={onOpenFile}
+        />
+      );
     } else if (isChatMessage(message)) {
       return <ChatMessageComponent key={key} message={message} />;
     }

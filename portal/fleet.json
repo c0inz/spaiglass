@@ -1,0 +1,19 @@
+{
+  "servers": [
+    {
+      "name": "Super-Server",
+      "url": "http://192.168.1.153:3000",
+      "projectsDir": "/home/johntdavenport/projects"
+    }
+  ],
+  "roles": [
+    {
+      "server": "Super-Server",
+      "project": "spyglass",
+      "projectPath": "/home/johntdavenport/projects/spyglass",
+      "role": "developer",
+      "roleFile": "developer.md",
+      "hidden": false
+    }
+  ]
+}

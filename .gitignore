@@ -1,5 +1,6 @@
 .claude/
 !.claude/settings.json
+.spyglass/
 
 # Build artifacts
 dist/

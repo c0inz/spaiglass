@@ -1,6 +1,9 @@
 import { useEffect, useCallback, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { ChevronLeftIcon } from "@heroicons/react/24/outline";
+import {
+  ChevronLeftIcon,
+  FolderIcon,
+} from "@heroicons/react/24/outline";
 import type {
   ChatRequest,
   ChatMessage,
@@ -19,9 +22,17 @@ import { HistoryButton } from "./chat/HistoryButton";
 import { ChatInput } from "./chat/ChatInput";
 import { ChatMessages } from "./chat/ChatMessages";
 import { HistoryView } from "./HistoryView";
+import { FileSidebar } from "./FileSidebar";
+import { FileEditor } from "./FileEditor";
+import { FileMention } from "./FileMention";
+import { NewSessionDialog } from "./NewSessionDialog";
+import { StaleContextBanner } from "./StaleContextBanner";
+import { ArchitectureViewer } from "./ArchitectureViewer";
+import { useFilePolling } from "../hooks/useFilePolling";
 import { getChatUrl, getProjectsUrl } from "../config/api";
 import { KEYBOARD_SHORTCUTS } from "../utils/constants";
 import { normalizeWindowsPath } from "../utils/pathUtils";
+import { useVmConfig } from "../hooks/useVmConfig";
 import type { StreamingContext } from "../hooks/streaming/useMessageProcessor";
 
 export function ChatPage() {
@@ -30,6 +41,34 @@ export function ChatPage() {
   const [searchParams] = useSearchParams();
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [showSidebar, setShowSidebar] = useState(false);
+  const [editingFile, setEditingFile] = useState<{
+    path: string;
+    name: string;
+  } | null>(null);
+  const [contextFiles, setContextFiles] = useState<Set<string>>(new Set());
+  const [contextFilesList, setContextFilesList] = useState<
+    { path: string; name: string; touchedAt: number }[]
+  >([]);
+  const [activeContext, setActiveContext] = useState<{
+    name: string;
+    filename: string;
+    path: string;
+    content?: string;
+  } | null>(null);
+  const [showContextPicker, setShowContextPicker] = useState(false);
+  const [contextChecked, setContextChecked] = useState(false);
+  const [mentionState, setMentionState] = useState<{
+    query: string;
+    position: { top: number; left: number };
+  } | null>(null);
+  const [staleFiles, setStaleFiles] = useState<string[]>([]);
+  const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0);
+  const [showArchViewer, setShowArchViewer] = useState(false);
+  const [pendingImages, setPendingImages] = useState<
+    { file: File; preview: string }[]
+  >([]);
+  const vmConfig = useVmConfig();
 
   // Extract and normalize working directory from URL
   const workingDirectory = (() => {
@@ -43,11 +82,85 @@ export function ChatPage() {
     return normalizeWindowsPath(decodedPath);
   })();
 
-  // Get current view and sessionId from query parameters
+  // File change polling
+  const { externallyModified, dismissExternalChange, setExternallyModified } =
+    useFilePolling({
+      projectPath: workingDirectory,
+      intervalMs: 3000,
+      onFilesChanged: (changed, added, deleted) => {
+        setSidebarRefreshKey((k) => k + 1);
+        if (editingFile) {
+          const editingRel = editingFile.path;
+          if (
+            changed.some((f) => editingRel.endsWith(f)) ||
+            deleted.some((f) => editingRel.endsWith(f))
+          ) {
+            setExternallyModified(editingFile.path);
+          }
+        }
+        if (contextFiles.size > 0) {
+          const stale = changed.filter((f) =>
+            [...contextFiles].some((cf) => cf.endsWith(f)),
+          );
+          if (stale.length > 0) {
+            setStaleFiles((prev) => [...new Set([...prev, ...stale])]);
+          }
+        }
+      },
+    });
+
+  // Get current view, sessionId, and role from query parameters
   const currentView = searchParams.get("view");
   const sessionId = searchParams.get("sessionId");
+  const roleFile = searchParams.get("role");
   const isHistoryView = currentView === "history";
   const isLoadedConversation = !!sessionId && !isHistoryView;
+
+  // Load role context file if specified in URL
+  useEffect(() => {
+    if (roleFile && workingDirectory && !activeContext) {
+      const rolePath = `${workingDirectory}/agents/${roleFile}`;
+      fetch(`/api/files/read?path=${encodeURIComponent(rolePath)}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data) {
+            const name = roleFile.replace(/\.md$/, "").replace(/[-_]/g, " ");
+            setActiveContext({
+              name,
+              filename: roleFile,
+              path: rolePath,
+              content: data.content,
+            });
+            setContextFiles(new Set([rolePath]));
+            setContextFilesList([{ path: rolePath, name: roleFile, touchedAt: Date.now() }]);
+            setContextChecked(true);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [roleFile, workingDirectory]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Show context picker for new sessions — skip if role is already set via URL
+  useEffect(() => {
+    if (!isHistoryView && !sessionId && workingDirectory && !contextChecked && !roleFile) {
+      setShowContextPicker(true);
+    }
+  }, [isHistoryView, sessionId, workingDirectory, contextChecked, roleFile]);
+
+  // Auto-resume last session on page load (no sessionId in URL)
+  useEffect(() => {
+    if (sessionId || isHistoryView || !workingDirectory) return;
+    fetch(`/api/session/last?projectPath=${encodeURIComponent(workingDirectory)}`)
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => {
+        if (data?.session?.sessionId) {
+          const params = new URLSearchParams(searchParams);
+          params.set("sessionId", data.session.sessionId);
+          navigate({ search: params.toString() }, { replace: true });
+        }
+      })
+      .catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { processStreamLine } = useClaudeStreaming();
   const { abortRequest, createAbortHandler } = useAbortController();
@@ -111,6 +224,21 @@ export function ChatPage() {
     initialSessionId: loadedSessionId || undefined,
   });
 
+  // Save session when a new sessionId is received from Claude
+  useEffect(() => {
+    if (currentSessionId && workingDirectory) {
+      fetch("/api/session/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: currentSessionId,
+          projectPath: workingDirectory,
+          role: roleFile || undefined,
+        }),
+      }).catch(() => {});
+    }
+  }, [currentSessionId, workingDirectory, roleFile]);
+
   const {
     allowedTools,
     permissionRequest,
@@ -147,8 +275,46 @@ export function ChatPage() {
       hideUserMessage = false,
       overridePermissionMode?: PermissionMode,
     ) => {
-      const content = messageContent || input.trim();
-      if (!content || isLoading) return;
+      let content = messageContent || input.trim();
+      if ((!content && pendingImages.length === 0) || isLoading) return;
+
+      // Upload pending images and prepend paths to message
+      if (pendingImages.length > 0 && workingDirectory) {
+        const uploadedPaths: string[] = [];
+        for (const img of pendingImages) {
+          const formData = new FormData();
+          formData.append("file", img.file);
+          formData.append("workingDirectory", workingDirectory);
+          try {
+            const res = await fetch("/api/upload", {
+              method: "POST",
+              body: formData,
+            });
+            if (res.ok) {
+              const data = await res.json();
+              uploadedPaths.push(data.path);
+            }
+          } catch (err) {
+            console.error("Image upload failed:", err);
+          }
+        }
+        if (uploadedPaths.length > 0) {
+          const imageRefs = uploadedPaths
+            .map((p) => `[Image: ${p}]`)
+            .join("\n");
+          content = content
+            ? `${imageRefs}\n\n${content}`
+            : imageRefs;
+        }
+        setPendingImages([]);
+      }
+
+      if (!content) return;
+
+      // Prepend context file content on first message of session
+      if (!currentSessionId && activeContext?.content) {
+        content = `[Session Context: ${activeContext.filename}]\n\n${activeContext.content}\n\n---\n\n${content}`;
+      }
 
       const requestId = generateRequestId();
 
@@ -209,6 +375,9 @@ export function ChatPage() {
             shouldAbort = true;
             await createAbortHandler(requestId)();
           },
+          onFileDelivery: () => {
+            setSidebarRefreshKey((k) => k + 1);
+          },
         };
 
         while (true) {
@@ -259,6 +428,7 @@ export function ChatPage() {
       processStreamLine,
       handlePermissionError,
       createAbortHandler,
+      pendingImages,
     ],
   );
 
@@ -433,160 +603,286 @@ export function ChatPage() {
     return () => document.removeEventListener("keydown", handleGlobalKeyDown);
   }, [isLoading, currentRequestId, handleAbort]);
 
+  const handleFileSelect = (path: string, name: string) => {
+    setEditingFile({ path, name });
+    setShowArchViewer(false);
+  };
+
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900 transition-colors duration-300">
-      <div className="max-w-6xl mx-auto p-3 sm:p-6 h-screen flex flex-col">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-4 sm:mb-8 flex-shrink-0">
-          <div className="flex items-center gap-4">
-            {isHistoryView && (
+    <div className="h-screen flex flex-col bg-slate-50 dark:bg-slate-900 transition-colors duration-300 overflow-hidden">
+      {/* Header — always at top */}
+      <div className="flex items-center justify-between px-4 py-3 flex-shrink-0 border-b border-slate-200 dark:border-slate-700">
+        <div className="flex items-center gap-4">
+          {isHistoryView && (
+            <button
+              onClick={handleBackToChat}
+              className="p-2 rounded-lg bg-white/80 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-800 transition-all duration-200 backdrop-blur-sm shadow-sm hover:shadow-md"
+              aria-label="Back to chat"
+            >
+              <ChevronLeftIcon className="w-5 h-5 text-slate-600 dark:text-slate-400" />
+            </button>
+          )}
+          {isLoadedConversation && (
+            <button
+              onClick={handleBackToHistory}
+              className="p-2 rounded-lg bg-white/80 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-800 transition-all duration-200 backdrop-blur-sm shadow-sm hover:shadow-md"
+              aria-label="Back to history"
+            >
+              <ChevronLeftIcon className="w-5 h-5 text-slate-600 dark:text-slate-400" />
+            </button>
+          )}
+          <div>
+            <div className="flex items-center">
               <button
-                onClick={handleBackToChat}
-                className="p-2 rounded-lg bg-white/80 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-800 transition-all duration-200 backdrop-blur-sm shadow-sm hover:shadow-md"
-                aria-label="Back to chat"
+                onClick={handleBackToProjects}
+                className="text-slate-800 dark:text-slate-100 text-lg sm:text-2xl font-bold tracking-tight hover:text-blue-600 dark:hover:text-blue-400 transition-colors duration-200 focus:outline-none rounded-md px-1 -mx-1"
+                aria-label="Back to project selection"
               >
-                <ChevronLeftIcon className="w-5 h-5 text-slate-600 dark:text-slate-400" />
+                Spyglass
               </button>
-            )}
-            {isLoadedConversation && (
-              <button
-                onClick={handleBackToHistory}
-                className="p-2 rounded-lg bg-white/80 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-800 transition-all duration-200 backdrop-blur-sm shadow-sm hover:shadow-md"
-                aria-label="Back to history"
-              >
-                <ChevronLeftIcon className="w-5 h-5 text-slate-600 dark:text-slate-400" />
-              </button>
-            )}
-            <div>
-              <nav aria-label="Breadcrumb">
-                <div className="flex items-center">
-                  <button
-                    onClick={handleBackToProjects}
-                    className="text-slate-800 dark:text-slate-100 text-lg sm:text-3xl font-bold tracking-tight hover:text-blue-600 dark:hover:text-blue-400 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-slate-900 rounded-md px-1 -mx-1"
-                    aria-label="Back to project selection"
-                  >
-                    Claude Code Web UI
-                  </button>
-                  {(isHistoryView || sessionId) && (
-                    <>
-                      <span
-                        className="text-slate-800 dark:text-slate-100 text-lg sm:text-3xl font-bold tracking-tight mx-3 select-none"
-                        aria-hidden="true"
-                      >
-                        {" "}
-                        ›{" "}
-                      </span>
-                      <h1
-                        className="text-slate-800 dark:text-slate-100 text-lg sm:text-3xl font-bold tracking-tight"
-                        aria-current="page"
-                      >
-                        {isHistoryView
-                          ? "Conversation History"
-                          : "Conversation"}
-                      </h1>
-                    </>
-                  )}
-                </div>
-              </nav>
-              {workingDirectory && (
-                <div className="flex items-center text-sm font-mono mt-1">
-                  <button
-                    onClick={handleBackToProjectChat}
-                    className="text-slate-600 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-slate-900 rounded px-1 -mx-1 cursor-pointer"
-                    aria-label={`Return to new chat in ${workingDirectory}`}
-                  >
-                    {workingDirectory}
-                  </button>
-                  {sessionId && (
-                    <span className="ml-2 text-xs text-slate-600 dark:text-slate-400">
-                      Session: {sessionId.substring(0, 8)}...
-                    </span>
-                  )}
-                </div>
+              {vmConfig && (
+                <span className="ml-3 text-sm font-medium text-blue-500 dark:text-blue-400">
+                  {vmConfig.role}
+                </span>
+              )}
+              {activeContext && (
+                <span className="ml-2 text-xs font-medium text-emerald-500 dark:text-emerald-400">
+                  / {activeContext.name}
+                </span>
+              )}
+              {(isHistoryView || sessionId) && (
+                <>
+                  <span className="text-slate-400 mx-2">›</span>
+                  <span className="text-slate-800 dark:text-slate-100 text-lg font-bold">
+                    {isHistoryView ? "History" : "Conversation"}
+                  </span>
+                </>
               )}
             </div>
-          </div>
-          <div className="flex items-center gap-3">
-            {!isHistoryView && <HistoryButton onClick={handleHistoryClick} />}
-            <SettingsButton onClick={handleSettingsClick} />
+            {workingDirectory && (
+              <button
+                onClick={handleBackToProjectChat}
+                className="text-xs font-mono text-slate-500 dark:text-slate-400 hover:text-blue-500 transition-colors"
+              >
+                {workingDirectory}
+                {sessionId && (
+                  <span className="ml-2 text-slate-400">
+                    {sessionId.substring(0, 8)}...
+                  </span>
+                )}
+              </button>
+            )}
           </div>
         </div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowSidebar(!showSidebar)}
+            className={`p-2 rounded-lg border transition-all duration-200 ${
+              showSidebar
+                ? "bg-blue-100 dark:bg-blue-900/30 border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400"
+                : "bg-white/80 dark:bg-slate-800/80 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800"
+            }`}
+            title="Toggle file browser"
+          >
+            <FolderIcon className="w-5 h-5" />
+          </button>
+          <button
+            onClick={() => {
+              setShowArchViewer(!showArchViewer);
+              if (!showArchViewer) setEditingFile(null);
+            }}
+            className={`p-2 rounded-lg border transition-all duration-200 ${
+              showArchViewer
+                ? "bg-blue-100 dark:bg-blue-900/30 border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400"
+                : "bg-white/80 dark:bg-slate-800/80 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800"
+            }`}
+            title="Architecture viewer"
+          >
+            <span className="text-sm">Arch</span>
+          </button>
+          {!isHistoryView && <HistoryButton onClick={handleHistoryClick} />}
+          <SettingsButton onClick={handleSettingsClick} />
+        </div>
+      </div>
 
-        {/* Main Content */}
-        {isHistoryView ? (
-          <HistoryView
-            workingDirectory={workingDirectory || ""}
-            encodedName={getEncodedName()}
-            onBack={handleBackToChat}
-          />
-        ) : historyLoading ? (
-          /* Loading conversation history */
-          <div className="flex-1 flex items-center justify-center">
-            <div className="text-center">
-              <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin mx-auto mb-4"></div>
-              <p className="text-slate-600 dark:text-slate-400">
-                Loading conversation history...
-              </p>
-            </div>
-          </div>
-        ) : historyError ? (
-          /* Error loading conversation history */
-          <div className="flex-1 flex items-center justify-center">
-            <div className="text-center max-w-md">
-              <div className="w-16 h-16 mx-auto mb-4 bg-red-100 dark:bg-red-900/20 rounded-full flex items-center justify-center">
-                <svg
-                  className="w-8 h-8 text-red-500"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                  />
-                </svg>
-              </div>
-              <h2 className="text-slate-800 dark:text-slate-100 text-xl font-semibold mb-2">
-                Error Loading Conversation
-              </h2>
-              <p className="text-slate-600 dark:text-slate-400 text-sm mb-4">
-                {historyError}
-              </p>
-              <button
-                onClick={() => navigate({ search: "" })}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-              >
-                Start New Conversation
-              </button>
-            </div>
-          </div>
-        ) : (
-          <>
-            {/* Chat Messages */}
-            <ChatMessages messages={messages} isLoading={isLoading} />
-
-            {/* Input */}
-            <ChatInput
-              input={input}
-              isLoading={isLoading}
-              currentRequestId={currentRequestId}
-              onInputChange={setInput}
-              onSubmit={() => sendMessage()}
-              onAbort={handleAbort}
-              permissionMode={permissionMode}
-              onPermissionModeChange={setPermissionMode}
-              showPermissions={isPermissionMode}
-              permissionData={permissionData}
-              planPermissionData={planPermissionData}
+      {/* Body — horizontal split below header */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* File Sidebar */}
+        {showSidebar && workingDirectory && (
+          <div className="w-56 flex-shrink-0">
+            <FileSidebar
+              key={sidebarRefreshKey}
+              projectPath={workingDirectory}
+              onFileSelect={handleFileSelect}
+              contextFiles={contextFiles}
+              contextFilesList={contextFilesList}
             />
-          </>
+          </div>
         )}
 
-        {/* Settings Modal */}
-        <SettingsModal isOpen={isSettingsOpen} onClose={handleSettingsClose} />
+        {/* Middle panel — editor or architecture viewer (gets the most space) */}
+        {showArchViewer && workingDirectory ? (
+          <div className="flex-1 min-w-0 overflow-hidden border-r border-slate-200 dark:border-slate-700">
+            <ArchitectureViewer projectPath={workingDirectory} />
+          </div>
+        ) : editingFile ? (
+          <div className="flex-1 min-w-0 overflow-hidden border-r border-slate-200 dark:border-slate-700">
+            <FileEditor
+              filePath={editingFile.path}
+              fileName={editingFile.name}
+              onClose={() => setEditingFile(null)}
+            />
+          </div>
+        ) : null}
+
+        {/* Chat panel (right — 135% of file sidebar width, ~300px) */}
+        <div className={`${editingFile ? "w-[300px] flex-shrink-0" : "flex-1"} min-w-0 flex flex-col overflow-hidden`}>
+          <div className="flex-1 flex flex-col overflow-hidden p-3 sm:p-4">
+            {isHistoryView ? (
+              <HistoryView
+                workingDirectory={workingDirectory || ""}
+                encodedName={getEncodedName()}
+                onBack={handleBackToChat}
+              />
+            ) : historyLoading ? (
+              <div className="flex-1 flex items-center justify-center">
+                <div className="text-center">
+                  <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin mx-auto mb-4"></div>
+                  <p className="text-slate-600 dark:text-slate-400">Loading conversation history...</p>
+                </div>
+              </div>
+            ) : historyError ? (
+              <div className="flex-1 flex items-center justify-center">
+                <div className="text-center max-w-md">
+                  <p className="text-red-500 text-xl mb-2">Error</p>
+                  <p className="text-slate-600 dark:text-slate-400 text-sm mb-4">{historyError}</p>
+                  <button
+                    onClick={() => navigate({ search: "" })}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                  >
+                    Start New Conversation
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <StaleContextBanner
+                  staleFiles={staleFiles}
+                  onReRead={(filePath) => {
+                    // Send a message asking Claude to re-read the file
+                    const name = filePath.split("/").pop() || filePath;
+                    sendMessage(`Please re-read the file: ${name}`);
+                    setStaleFiles((prev) => prev.filter((f) => f !== filePath));
+                  }}
+                  onDismiss={() => setStaleFiles([])}
+                />
+                <ChatMessages
+                  messages={messages}
+                  isLoading={isLoading}
+                  onOpenFile={(path, name) => {
+                    setShowSidebar(true);
+                    setEditingFile({ path, name });
+                    setShowArchViewer(false);
+                  }}
+                />
+                <ChatInput
+                  input={input}
+                  isLoading={isLoading}
+                  currentRequestId={currentRequestId}
+                  onInputChange={setInput}
+                  onSubmit={() => sendMessage()}
+                  onAbort={handleAbort}
+                  permissionMode={permissionMode}
+                  onPermissionModeChange={setPermissionMode}
+                  showPermissions={isPermissionMode}
+                  permissionData={permissionData}
+                  planPermissionData={planPermissionData}
+                  pendingImages={pendingImages}
+                  onImageAdd={(files) => {
+                    const newImages = files.map((f) => ({
+                      file: f,
+                      preview: URL.createObjectURL(f),
+                    }));
+                    setPendingImages((prev) => [...prev, ...newImages]);
+                  }}
+                  onImageRemove={(index) => {
+                    setPendingImages((prev) => {
+                      URL.revokeObjectURL(prev[index].preview);
+                      return prev.filter((_, i) => i !== index);
+                    });
+                  }}
+                  onMentionTrigger={(query, rect) => {
+                    setMentionState({
+                      query,
+                      position: {
+                        top: window.innerHeight - rect.top + 8,
+                        left: rect.left,
+                      },
+                    });
+                  }}
+                  onMentionClose={() => setMentionState(null)}
+                  mentionDropdown={
+                    mentionState && workingDirectory ? (
+                      <FileMention
+                        projectPath={workingDirectory}
+                        contextFiles={contextFiles}
+                        query={mentionState.query}
+                        position={mentionState.position}
+                        onSelect={(filePath) => {
+                          const atIndex = input.lastIndexOf("@");
+                          if (atIndex !== -1) {
+                            const newInput = input.slice(0, atIndex) + filePath + " ";
+                            setInput(newInput);
+                          }
+                          setMentionState(null);
+                        }}
+                        onClose={() => setMentionState(null)}
+                      />
+                    ) : undefined
+                  }
+                />
+              </>
+            )}
+          </div>
+        </div>
       </div>
+
+      {/* Settings Modal */}
+      <SettingsModal isOpen={isSettingsOpen} onClose={handleSettingsClose} />
+
+      {/* Context Picker Dialog */}
+      {showContextPicker && workingDirectory && (
+        <NewSessionDialog
+          projectPath={workingDirectory}
+          onSelect={async (ctx) => {
+            setShowContextPicker(false);
+            setContextChecked(true);
+            if (ctx) {
+              // Load full content
+              try {
+                const res = await fetch(
+                  `/api/files/read?path=${encodeURIComponent(ctx.path)}`,
+                );
+                if (res.ok) {
+                  const data = await res.json();
+                  setActiveContext({ ...ctx, content: data.content });
+                  setContextFiles(new Set([ctx.path]));
+                } else {
+                  setActiveContext(ctx);
+                  setContextFiles(new Set([ctx.path]));
+                }
+              } catch {
+                setActiveContext(ctx);
+                setContextFiles(new Set([ctx.path]));
+              }
+            }
+          }}
+          onCancel={() => {
+            setShowContextPicker(false);
+            setContextChecked(true);
+          }}
+        />
+      )}
     </div>
   );
 }

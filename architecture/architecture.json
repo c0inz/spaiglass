@@ -1,0 +1,176 @@
+{
+  "project": {
+    "name": "Spyglass",
+    "summary": "Browser-based multi-VM Claude interface with fleet portal"
+  },
+  "environments": [
+    { "id": "vm", "name": "Ubuntu VM (per-agent)" },
+    { "id": "super-server", "name": "Super-Server (fleet portal)" },
+    { "id": "browser", "name": "User Browser" }
+  ],
+  "components": [
+    {
+      "id": "portal",
+      "name": "Fleet Portal",
+      "type": "web-app",
+      "description": "Landing page listing all VMs with health status",
+      "runsOn": ["super-server"],
+      "environment": ["super-server"],
+      "dependsOn": [],
+      "owners": ["johntdavenport"],
+      "status": "active"
+    },
+    {
+      "id": "backend",
+      "name": "Hono Backend",
+      "type": "api-server",
+      "description": "Node.js API server — spawns Claude CLI, serves files, auth",
+      "runsOn": ["vm"],
+      "environment": ["vm"],
+      "dependsOn": ["claude-cli"],
+      "owners": ["johntdavenport"],
+      "status": "active"
+    },
+    {
+      "id": "frontend",
+      "name": "React Frontend",
+      "type": "spa",
+      "description": "Chat UI, file browser, editor, context selector",
+      "runsOn": ["vm"],
+      "environment": ["vm", "browser"],
+      "dependsOn": ["backend"],
+      "owners": ["johntdavenport"],
+      "status": "active"
+    },
+    {
+      "id": "claude-cli",
+      "name": "Claude CLI",
+      "type": "cli-tool",
+      "description": "Anthropic Claude Code CLI — spawned per chat session",
+      "runsOn": ["vm"],
+      "environment": ["vm"],
+      "dependsOn": [],
+      "owners": ["anthropic"],
+      "status": "active"
+    },
+    {
+      "id": "file-editor",
+      "name": "File Editor",
+      "type": "ui-component",
+      "description": "Monaco-based editor for .md/.json/.txt with save",
+      "runsOn": ["browser"],
+      "environment": ["browser"],
+      "dependsOn": ["backend"],
+      "owners": ["johntdavenport"],
+      "status": "active"
+    },
+    {
+      "id": "context-selector",
+      "name": "Context Selector",
+      "type": "ui-component",
+      "description": "Session start dialog — picks agents/*.md context files",
+      "runsOn": ["browser"],
+      "environment": ["browser"],
+      "dependsOn": ["backend"],
+      "owners": ["johntdavenport"],
+      "status": "active"
+    },
+    {
+      "id": "auth",
+      "name": "Auth Middleware",
+      "type": "middleware",
+      "description": "Single password auth with session cookie",
+      "runsOn": ["vm"],
+      "environment": ["vm"],
+      "dependsOn": [],
+      "owners": ["johntdavenport"],
+      "status": "active"
+    },
+    {
+      "id": "deploy-script",
+      "name": "Deploy Script",
+      "type": "script",
+      "description": "SSH-based fleet deployment from Super-Server",
+      "runsOn": ["super-server"],
+      "environment": ["super-server"],
+      "dependsOn": [],
+      "owners": ["johntdavenport"],
+      "status": "planned"
+    }
+  ],
+  "infrastructure": [
+    {
+      "id": "super-server",
+      "name": "Super-Server (192.168.1.153)",
+      "type": "bare-metal",
+      "description": "Fleet portal host, deployment origin",
+      "hosts": ["portal", "deploy-script"]
+    },
+    {
+      "id": "vm",
+      "name": "Agent VMs (Tailscale mesh)",
+      "type": "virtual-machine",
+      "description": "Each VM runs one Spyglass instance with a defined role",
+      "hosts": ["backend", "frontend", "claude-cli", "auth"]
+    },
+    {
+      "id": "browser",
+      "name": "User Browser",
+      "type": "client",
+      "description": "Windows laptop or iPhone via any network",
+      "hosts": ["file-editor", "context-selector"]
+    }
+  ],
+  "connections": [
+    {
+      "id": "c1",
+      "from": "Browser",
+      "to": "Fleet Portal",
+      "mode": "http",
+      "purpose": "VM list + health status"
+    },
+    {
+      "id": "c2",
+      "from": "Browser",
+      "to": "React Frontend",
+      "mode": "http",
+      "purpose": "Chat UI served via Vite/static"
+    },
+    {
+      "id": "c3",
+      "from": "React Frontend",
+      "to": "Hono Backend",
+      "mode": "http/ndjson",
+      "purpose": "Chat streaming, file ops, auth"
+    },
+    {
+      "id": "c4",
+      "from": "Hono Backend",
+      "to": "Claude CLI",
+      "mode": "stdio/sdk",
+      "purpose": "Spawn CLI process, stream responses"
+    },
+    {
+      "id": "c5",
+      "from": "Fleet Portal",
+      "to": "Hono Backend",
+      "mode": "http",
+      "purpose": "Health check ping"
+    },
+    {
+      "id": "c6",
+      "from": "Deploy Script",
+      "to": "Agent VMs",
+      "mode": "ssh",
+      "purpose": "Clone repo, install, create systemd service"
+    }
+  ],
+  "architectureRules": [
+    "One Spyglass instance per VM — no multi-tenant",
+    "All traffic over Tailscale — nothing exposed to public internet",
+    "Auth is single password via AUTH_PASSWORD env var",
+    "Claude CLI is the only LLM integration — no provider switching",
+    "File API restricted to project directory — path traversal blocked",
+    "Session context injected as first message, not system prompt override"
+  ]
+}

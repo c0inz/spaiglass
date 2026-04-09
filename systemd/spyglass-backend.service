@@ -1,0 +1,19 @@
+[Unit]
+Description=Spyglass Backend (Claude Code Web UI)
+After=network.target
+PartOf=spyglass.target
+
+[Service]
+Type=simple
+User=johntdavenport
+WorkingDirectory=/home/johntdavenport/projects/spyglass/backend
+EnvironmentFile=/home/johntdavenport/projects/spyglass/.env
+ExecStart=/home/linuxbrew/.linuxbrew/bin/npx tsx cli/node.ts --host 0.0.0.0 --port 8080 --claude-path /home/johntdavenport/.local/bin/claude
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=spyglass-backend
+
+[Install]
+WantedBy=spyglass.target

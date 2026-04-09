@@ -1,0 +1,6 @@
+[Unit]
+Description=Spyglass - All Services
+Wants=spyglass-backend.service spyglass-frontend.service spyglass-portal.service
+
+[Install]
+WantedBy=multi-user.target

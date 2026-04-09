@@ -8,6 +8,7 @@ import type {
   TodoMessage,
   TodoItem,
   HooksMessage,
+  FileDeliveryMessage,
 } from "../types";
 import { TimestampComponent } from "./TimestampComponent";
 import { MessageContainer } from "./messages/MessageContainer";
@@ -377,6 +378,76 @@ export function TodoMessageComponent({ message }: TodoMessageComponentProps) {
       <div className="mt-3 text-xs text-amber-700 dark:text-amber-400">
         {message.todos.filter((t) => t.status === "completed").length} of{" "}
         {message.todos.length} completed
+      </div>
+    </MessageContainer>
+  );
+}
+
+interface FileDeliveryMessageComponentProps {
+  message: FileDeliveryMessage;
+  onOpenFile?: (path: string, filename: string) => void;
+}
+
+export function FileDeliveryMessageComponent({
+  message,
+  onOpenFile,
+}: FileDeliveryMessageComponentProps) {
+  const isNew = message.action === "write";
+  const label = isNew ? "File Created" : "File Updated";
+
+  const handleDownload = () => {
+    const url = `/api/files/read?path=${encodeURIComponent(message.path)}`;
+    fetch(url)
+      .then((res) => res.json())
+      .then((data) => {
+        const blob = new Blob([data.content || ""], { type: "text/plain" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = message.filename;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      })
+      .catch(console.error);
+  };
+
+  return (
+    <MessageContainer
+      alignment="left"
+      colorScheme="bg-violet-50 dark:bg-violet-900/20 text-violet-900 dark:text-violet-100"
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="w-5 h-5 bg-violet-500 dark:bg-violet-600 rounded-full flex items-center justify-center text-white text-xs flex-shrink-0">
+            {isNew ? "+" : "~"}
+          </div>
+          <div className="min-w-0">
+            <div className="text-xs font-semibold text-violet-700 dark:text-violet-300">
+              {label}
+            </div>
+            <div className="text-sm font-mono text-violet-800 dark:text-violet-200 truncate">
+              {message.filename}
+            </div>
+          </div>
+        </div>
+        <div className="flex gap-2 flex-shrink-0">
+          {onOpenFile && (
+            <button
+              onClick={() => onOpenFile(message.path, message.filename)}
+              className="px-3 py-1 text-xs font-medium bg-violet-200 dark:bg-violet-800 text-violet-800 dark:text-violet-200 rounded-md hover:bg-violet-300 dark:hover:bg-violet-700 transition-colors"
+            >
+              Open
+            </button>
+          )}
+          <button
+            onClick={handleDownload}
+            className="px-3 py-1 text-xs font-medium bg-violet-200 dark:bg-violet-800 text-violet-800 dark:text-violet-200 rounded-md hover:bg-violet-300 dark:hover:bg-violet-700 transition-colors"
+          >
+            Download
+          </button>
+        </div>
+      </div>
+      <div className="mt-1 text-[10px] font-mono text-violet-500 dark:text-violet-400 truncate">
+        {message.path}
       </div>
     </MessageContainer>
   );

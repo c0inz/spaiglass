@@ -3,6 +3,7 @@ export const API_CONFIG = {
   ENDPOINTS: {
     CHAT: "/api/chat",
     ABORT: "/api/abort",
+    UPLOAD: "/api/upload",
     PROJECTS: "/api/projects",
     HISTORIES: "/api/projects",
     CONVERSATIONS: "/api/projects",
