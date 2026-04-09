@@ -102,6 +102,56 @@ export function authRoutes(): Hono<RelayEnv> {
     return c.json({ ok: true });
   });
 
+  // Token exchange: GitHub PAT → agent key (fully headless, no browser needed)
+  app.post("/api/auth/token-exchange", async (c) => {
+    const body = await c.req.json<{ github_pat: string; key_name?: string }>().catch(() => null);
+    if (!body?.github_pat || typeof body.github_pat !== "string") {
+      return c.json({ error: "github_pat is required" }, 400);
+    }
+
+    // Verify PAT against GitHub API
+    const ghRes = await fetch("https://api.github.com/user", {
+      headers: {
+        Authorization: `Bearer ${body.github_pat}`,
+        Accept: "application/vnd.github.v3+json",
+        "User-Agent": "SpAIglass-Relay",
+      },
+    });
+
+    if (!ghRes.ok) {
+      return c.json({ error: "Invalid GitHub token" }, 401);
+    }
+
+    const ghUser = await ghRes.json() as {
+      id: number;
+      login: string;
+      name: string | null;
+      avatar_url: string | null;
+    };
+
+    // Upsert user from GitHub identity
+    const user = upsertUser(ghUser.id, ghUser.login, ghUser.name, ghUser.avatar_url);
+
+    // Generate an agent key for this user
+    const { createHash, randomBytes } = await import("node:crypto");
+    const rawKey = randomBytes(32).toString("hex");
+    const key = `sg_${rawKey}`;
+    const keyHash = createHash("sha256").update(key).digest("hex");
+    const prefix = `sg_${rawKey.slice(0, 8)}...`;
+    const keyName = body.key_name || `auto-${ghUser.login}-${Date.now()}`;
+
+    const { createAgentKey } = await import("./db.ts");
+    const agentKey = createAgentKey(user.id, keyName, keyHash, prefix);
+
+    return c.json({
+      user: { login: ghUser.login, name: ghUser.name },
+      agent_key: key,
+      key_id: agentKey.id,
+      key_prefix: agentKey.prefix,
+      note: "Save this agent key — it is shown only once. Use it as: Authorization: Bearer <key>",
+    }, 201);
+  });
+
   // Current user info
   app.get("/api/auth/me", (c) => {
     const user = c.get("user");

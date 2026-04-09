@@ -111,18 +111,28 @@ app.get("/setup", (c) => {
         "Once running, the user accesses the VM at: " + PUBLIC_URL + "/vm/<connectorId>/",
       ],
     },
+    authentication: {
+      summary: "Two ways to authenticate — choose whichever fits your situation. Both produce an agent key that works for all API calls.",
+      option1_github_pat: {
+        description: "Fully headless. Exchange a GitHub Personal Access Token for a SpAIglass agent key. No browser needed at any point.",
+        when: "Use this when you have a GitHub PAT available (e.g. in environment variables, CI, or agent tooling).",
+        endpoint: "POST " + PUBLIC_URL + "/api/auth/token-exchange",
+        body: '{ "github_pat": "ghp_...", "key_name": "my-agent" }',
+        returns: '{ "user": { "login": "..." }, "agent_key": "sg_...", ... }',
+        example: `curl -X POST ${PUBLIC_URL}/api/auth/token-exchange -H "Content-Type: application/json" -d '{"github_pat":"ghp_YOUR_TOKEN","key_name":"provisioner"}'`,
+      },
+      option2_browser_oauth: {
+        description: "Browser-based. Sign in with GitHub OAuth, then create an agent key from the dashboard or API.",
+        when: "Use this when a human is available to sign in via browser.",
+        step1: "Open " + PUBLIC_URL + "/auth/github in a browser and sign in",
+        step2: "Create a key from the dashboard UI, or POST /api/agent-keys with { name: 'my-agent' } using the session cookie",
+      },
+    },
     registration: {
-      manual: {
-        step1: "Sign in with GitHub at " + PUBLIC_URL + "/auth/github",
-        step2: "Create a connector via POST /api/connectors with { name: 'my-vm' } (requires session cookie)",
-        step3: "Download config: GET /api/connectors/:id/config",
-      },
-      agentic: {
-        description: "For automated VM enrollment without a browser. Requires an agent key (created once from the dashboard after GitHub sign-in).",
-        registerVm: "POST /api/connectors with { name: 'vm-name' } and header Authorization: Bearer sg_<key>",
-        downloadConfig: "GET /api/connectors/:id/config with header Authorization: Bearer sg_<key>",
-        createKey: "POST /api/agent-keys with { name: 'my-agent' } (requires session cookie — one-time browser action)",
-      },
+      description: "Once you have an agent key (from either auth option above), use it to register VMs and download configs.",
+      registerVm: "POST " + PUBLIC_URL + "/api/connectors with { name: 'vm-name' } and header Authorization: Bearer sg_<key>",
+      downloadConfig: "GET " + PUBLIC_URL + "/api/connectors/:id/config with header Authorization: Bearer sg_<key>",
+      createMoreKeys: "POST " + PUBLIC_URL + "/api/agent-keys with { name: 'key-name' } and header Authorization: Bearer sg_<key>",
     },
     ifYouAlreadyHaveAConfig: {
       description: "If someone gave you a connector .env file with RELAY_URL, CONNECTOR_TOKEN, and CONNECTOR_ID, you already have everything needed. Skip registration and go straight to connectorInstall.steps.",
@@ -310,6 +320,14 @@ app.get("/", (c) => {
 
 <div id="connectors"></div>
 
+<h2>Agent Keys</h2>
+<p style="font-size: 0.9em; color: #666;">Agent keys let scripts and LLM agents register VMs on your behalf without a browser.</p>
+<div style="display: flex; gap: 8px; align-items: center;">
+  <input id="keyName" placeholder="Key name (e.g. provisioner)" />
+  <button class="btn-primary" onclick="addKey()">Create Key</button>
+</div>
+<div id="agentKeys" style="margin-top: 12px;"></div>
+
 <h2>Setup Guide</h2>
 <div class="card">
   <p><strong>1.</strong> Register a VM above — you'll get a connector token.</p>
@@ -372,7 +390,49 @@ async function logout() {
   location.reload();
 }
 
+async function loadKeys() {
+  const res = await fetch('/api/agent-keys');
+  const data = await res.json();
+  const el = document.getElementById('agentKeys');
+  if (data.length === 0) {
+    el.innerHTML = '<div class="card" style="color: #94a3b8;">No agent keys yet.</div>';
+    return;
+  }
+  el.innerHTML = data.map(k => \`
+    <div class="card" style="display: flex; justify-content: space-between; align-items: center;">
+      <div>
+        <strong>\${k.name}</strong>
+        <div style="font-size: 0.85em; color: #666; margin-top: 2px;">\${k.prefix} &middot; Created \${new Date(k.created_at).toLocaleDateString()}</div>
+      </div>
+      <button class="btn-danger" onclick="deleteKey('\${k.id}')">Delete</button>
+    </div>
+  \`).join('');
+}
+
+async function addKey() {
+  const name = document.getElementById('keyName').value.trim();
+  if (!name) return alert('Enter a key name');
+  const res = await fetch('/api/agent-keys', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  const data = await res.json();
+  if (data.key) {
+    alert('Agent key created!\\n\\nKey (save this — shown only once):\\n' + data.key);
+  }
+  document.getElementById('keyName').value = '';
+  loadKeys();
+}
+
+async function deleteKey(id) {
+  if (!confirm('Delete this agent key?')) return;
+  await fetch('/api/agent-keys/' + id, { method: 'DELETE' });
+  loadKeys();
+}
+
 loadConnectors();
+loadKeys();
 setInterval(loadConnectors, 10000);
 </script>
 <div style="margin-top: 40px; padding-top: 16px; border-top: 1px solid #e2e8f0; font-size: 0.85em; color: #999;"><a href="/terms" style="color: #999;">Terms</a> &middot; <a href="/privacy" style="color: #999;">Privacy</a></div>
