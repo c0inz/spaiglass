@@ -141,6 +141,15 @@ function getSetupData() {
         example: `${PUBLIC_URL}/vm/octocat.dev-server/`,
         note: "The slug is case-insensitive. Append project/role for bookmarkable URLs: /vm/<login>.<vm>/<project>/<role>/",
       },
+      {
+        title: "Add a role to a project",
+        description: "Roles define what Claude does in a project. Create a markdown file in the project's agents/ directory. The filename becomes the role name in the URL.",
+        commands: [
+          "mkdir -p ~/myproject/agents",
+          'echo "You are a DevOps engineer..." > ~/myproject/agents/devops.md',
+        ],
+        note: "Each .md file in agents/ becomes a selectable role. The role appears on the dashboard automatically. Projects are defined by directories listed in ~/.claude.json — you cannot add a project without a VM.",
+      },
     ],
     addMoreVms: "The agent key is reusable. To add another VM, repeat steps 2-5 with the same key — each VM gets its own connector token.",
     shortcut: "If someone gave you a .env file with RELAY_URL, CONNECTOR_TOKEN, and CONNECTOR_ID, skip to step 4.",
@@ -359,21 +368,44 @@ ${FAVICON}
 ${FAVICON}
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 0 20px; color: #1a1a2e; background: #f0f0f5; }
+  body { font-family: system-ui; max-width: 900px; margin: 40px auto; padding: 0 20px; color: #1a1a2e; background: #f0f0f5; }
   h1 { font-size: 1.8em; }
   .user { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
   .user img { width: 40px; height: 40px; border-radius: 50%; }
-  .card { background: white; border-radius: 8px; padding: 16px; margin: 12px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-  .online { color: #22c55e; font-weight: bold; }
+  .card { background: white; border-radius: 8px; margin: 10px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1); overflow: hidden; }
+  .online { color: #22c55e; }
   .offline { color: #94a3b8; }
-  button { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.9em; }
+  .dot { font-size: 1.2em; line-height: 1; }
+  button, a.btn { padding: 4px 10px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.8em; text-decoration: none; display: inline-block; line-height: 1.5; }
   .btn-primary { background: #3b82f6; color: white; }
   .btn-danger { background: #ef4444; color: white; }
   .btn-secondary { background: #e2e8f0; color: #475569; }
+  .btn-ghost { background: none; color: #94a3b8; font-size: 0.75em; padding: 2px 6px; }
+  .btn-ghost:hover { color: #475569; }
   input { padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.9em; }
-  #connectors { margin-top: 20px; }
-  .actions { margin-top: 12px; display: flex; gap: 8px; }
+  #connectors { margin-top: 16px; }
   pre { background: #1e293b; color: #e2e8f0; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 0.85em; }
+
+  /* Server row — single thin line */
+  .server-row { display: flex; align-items: center; gap: 10px; padding: 10px 14px; font-size: 0.85em; flex-wrap: nowrap; }
+  .server-row .name { font-weight: 600; white-space: nowrap; }
+  .server-row .id { color: #94a3b8; font-size: 0.8em; font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
+  .server-row .spacer { flex: 1; }
+  .server-row .actions { display: flex; gap: 4px; align-items: center; flex-shrink: 0; }
+
+  /* Role grid */
+  .role-divider { border-top: 1px solid #f0f0f5; }
+  .role-grid { padding: 0 14px 8px; }
+  .role-row { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 4px; cursor: pointer; font-size: 0.82em; transition: background 0.15s; }
+  .role-row:hover { background: #f8fafc; }
+  .role-row .role-name { font-weight: 500; color: #3b82f6; min-width: 80px; white-space: nowrap; }
+  .role-row .role-url { color: #94a3b8; font-family: monospace; font-size: 0.9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .role-row.hidden-role { opacity: 0.4; }
+  .no-roles { padding: 8px 14px; color: #94a3b8; font-size: 0.82em; font-style: italic; }
+
+  /* Hidden roles checkbox */
+  .show-hidden { font-size: 0.75em; color: #94a3b8; cursor: pointer; display: flex; align-items: center; gap: 3px; white-space: nowrap; }
+  .show-hidden input { width: 12px; height: 12px; margin: 0; }
 </style>
 </head><body>
 <div class="user">
@@ -382,14 +414,14 @@ ${FAVICON}
     <strong>${user.github_name || user.github_login}</strong>
     <div style="font-size: 0.85em; color: #666;">@${user.github_login}</div>
   </div>
-  <button class="btn-secondary" onclick="logout()" style="margin-left: auto;">Sign out</button>
+  <button class="btn-secondary" onclick="logout()" style="margin-left: auto; padding: 6px 14px; font-size: 0.9em;">Sign out</button>
 </div>
 
 <h1>Your Fleet</h1>
 
 <div style="display: flex; gap: 8px; align-items: center;">
   <input id="vmName" placeholder="VM name (e.g. dev-server)" />
-  <button class="btn-primary" onclick="addConnector()">Register VM</button>
+  <button class="btn-primary" onclick="addConnector()" style="padding: 8px 16px; font-size: 0.9em;">Register VM</button>
 </div>
 
 <div id="connectors"></div>
@@ -398,50 +430,135 @@ ${FAVICON}
 <p style="font-size: 0.9em; color: #666;">Agent keys let scripts and LLM agents register VMs on your behalf without a browser.</p>
 <div style="display: flex; gap: 8px; align-items: center;">
   <input id="keyName" placeholder="Key name (e.g. provisioner)" />
-  <button class="btn-primary" onclick="addKey()">Create Key</button>
+  <button class="btn-primary" onclick="addKey()" style="padding: 8px 16px; font-size: 0.9em;">Create Key</button>
 </div>
 <div id="agentKeys" style="margin-top: 12px;"></div>
 
 <h2>Setup Guide</h2>
-<div class="card">
-  <p>Need to set up a new VM? See the <a href="/setup" style="color: #3b82f6; font-weight: bold;">full setup guide</a> for step-by-step instructions.</p>
-  <p style="font-size: 0.85em; color: #666; margin-top: 8px;">Agents and scripts can use <code style="background: #e2e8f0; padding: 2px 6px; border-radius: 4px;">/api/setup</code> for machine-readable JSON.</p>
+<div class="card" style="padding: 14px;">
+  <p style="margin: 0;">Need to set up a new VM, Project, or Role? See the <a href="/setup" style="color: #3b82f6; font-weight: bold;">full setup guide</a>.</p>
+  <p style="font-size: 0.85em; color: #666; margin: 6px 0 0;">Agents and scripts can use <code style="background: #e2e8f0; padding: 2px 6px; border-radius: 4px;">/api/setup</code> for machine-readable JSON.</p>
 </div>
 
 <script>
+const LOGIN = '${user.github_login}';
+let hiddenRoles = JSON.parse(localStorage.getItem('sg_hidden_roles') || '[]');
+
+function compactName(proj, role) {
+  var p = proj, r = role.replace(/\\.md$/, '');
+  var full = p + ':' + r;
+  if (full.length <= 10) return full;
+  var budget = 9;
+  var pL = p.length, rL = r.length;
+  if (pL + rL <= budget) return p + ':' + r;
+  var half = Math.ceil(budget / 2);
+  if (pL <= half) r = r.slice(0, budget - pL);
+  else if (rL <= budget - half) p = p.slice(0, budget - rL);
+  else { p = p.slice(0, half); r = r.slice(0, budget - half); }
+  return p + ':' + r;
+}
+
+function isHidden(connId, projBase, roleFile) {
+  return hiddenRoles.includes(connId + ':' + projBase + ':' + roleFile);
+}
+
+function toggleHide(connId, projBase, roleFile) {
+  var key = connId + ':' + projBase + ':' + roleFile;
+  var idx = hiddenRoles.indexOf(key);
+  if (idx >= 0) hiddenRoles.splice(idx, 1);
+  else hiddenRoles.push(key);
+  localStorage.setItem('sg_hidden_roles', JSON.stringify(hiddenRoles));
+  loadConnectors();
+}
+
+function toggleShowHidden(connId) {
+  var cb = document.getElementById('sh-' + connId);
+  // Re-render role grid for this connector
+  var grid = document.getElementById('rg-' + connId);
+  if (!grid) return;
+  grid.querySelectorAll('.hidden-role').forEach(function(el) {
+    el.style.display = cb.checked ? 'flex' : 'none';
+  });
+}
+
+async function loadRoles(connId, connName, slug) {
+  var grid = document.getElementById('rg-' + connId);
+  if (!grid) return;
+  try {
+    var projRes = await fetch('/vm/' + slug + '/api/projects');
+    if (!projRes.ok) { grid.innerHTML = '<div class="no-roles">Unable to reach VM</div>'; return; }
+    var projData = await projRes.json();
+    var roles = [];
+    for (var proj of projData.projects) {
+      var ctxRes = await fetch('/vm/' + slug + '/api/projects/contexts?path=' + encodeURIComponent(proj.path));
+      if (!ctxRes.ok) continue;
+      var ctxData = await ctxRes.json();
+      var projBase = proj.path.split('/').filter(Boolean).pop() || proj.encodedName;
+      for (var ctx of (ctxData.contexts || [])) {
+        var roleBase = ctx.filename.replace(/\\.md$/, '');
+        roles.push({ projPath: proj.path, projBase: projBase, roleFile: ctx.filename, roleBase: roleBase, roleName: ctx.name });
+      }
+    }
+    if (roles.length === 0) { grid.innerHTML = '<div class="no-roles">No roles configured</div>'; return; }
+    var cb = document.getElementById('sh-' + connId);
+    var showHidden = cb && cb.checked;
+    grid.innerHTML = roles.map(function(r) {
+      var hidden = isHidden(connId, r.projBase, r.roleFile);
+      var label = compactName(r.projBase, r.roleFile);
+      var url = '/vm/' + slug + '/' + encodeURIComponent(r.projBase) + '/' + encodeURIComponent(r.roleBase) + '/';
+      var display = hidden && !showHidden ? 'none' : 'flex';
+      return '<div class="role-row' + (hidden ? ' hidden-role' : '') + '" style="display:' + display + '">' +
+        '<a href="' + url + '" class="role-name" style="text-decoration:none;color:#3b82f6;">' + label + '</a>' +
+        '<span class="role-url">' + url + '</span>' +
+        '<button class="btn-ghost" onclick="event.stopPropagation();toggleHide(\\'' + connId + '\\',\\'' + r.projBase + '\\',\\'' + r.roleFile + '\\')">' + (hidden ? 'Show' : 'Hide') + '</button>' +
+      '</div>';
+    }).join('');
+  } catch(e) {
+    grid.innerHTML = '<div class="no-roles">Error loading roles</div>';
+  }
+}
+
 async function loadConnectors() {
-  const res = await fetch('/api/connectors');
-  const data = await res.json();
-  const el = document.getElementById('connectors');
+  var res = await fetch('/api/connectors');
+  var data = await res.json();
+  var el = document.getElementById('connectors');
   if (data.length === 0) {
-    el.innerHTML = '<div class="card" style="color: #94a3b8;">No VMs registered yet. Add one above.</div>';
+    el.innerHTML = '<div class="card" style="padding: 14px; color: #94a3b8;">No VMs registered yet. Add one above.</div>';
     return;
   }
-  el.innerHTML = data.map(c => \`
-    <div class="card">
-      <div style="display: flex; justify-content: space-between; align-items: center;">
-        <strong>\${c.name}</strong>
-        <span class="\${c.online ? 'online' : 'offline'}">\${c.online ? 'Online' : 'Offline'}</span>
-      </div>
-      <div style="font-size: 0.85em; color: #666; margin-top: 4px;">ID: \${c.id}</div>
-      <div class="actions">
-        \${c.online ? \`<a href="/vm/${user.github_login}.\${c.name}/" class="btn-primary" style="text-decoration: none; color: white;">Open</a>\` : ''}
-        <a href="/api/connectors/\${c.id}/config" class="btn-secondary" style="text-decoration: none; padding: 8px 16px; border-radius: 6px;">Download Config</a>
-        <button class="btn-danger" onclick="deleteConnector('\${c.id}')">Delete</button>
-      </div>
-    </div>
-  \`).join('');
+  el.innerHTML = data.map(function(c) {
+    var slug = LOGIN + '.' + c.name;
+    var hasHidden = hiddenRoles.some(function(h) { return h.startsWith(c.id + ':'); });
+    return '<div class="card">' +
+      '<div class="server-row">' +
+        '<span class="dot ' + (c.online ? 'online' : 'offline') + '">&bull;</span>' +
+        '<span class="name">' + c.name + '</span>' +
+        '<span class="id">' + c.id.slice(0, 8) + '</span>' +
+        '<span class="spacer"></span>' +
+        (hasHidden ? '<label class="show-hidden"><input type="checkbox" id="sh-' + c.id + '" onchange="toggleShowHidden(\\'' + c.id + '\\')"> Show hidden</label>' : '') +
+        '<span class="actions">' +
+          '<a href="/api/connectors/' + c.id + '/config" class="btn btn-secondary">Config</a>' +
+          '<button class="btn btn-danger" onclick="deleteConnector(\\'' + c.id + '\\')">Delete</button>' +
+        '</span>' +
+      '</div>' +
+      (c.online ? '<div class="role-divider"></div><div class="role-grid" id="rg-' + c.id + '"><div class="no-roles">Loading roles...</div></div>' : '') +
+    '</div>';
+  }).join('');
+  // Load roles for online VMs
+  data.forEach(function(c) {
+    if (c.online) loadRoles(c.id, c.name, LOGIN + '.' + c.name);
+  });
 }
 
 async function addConnector() {
-  const name = document.getElementById('vmName').value.trim();
+  var name = document.getElementById('vmName').value.trim();
   if (!name) return alert('Enter a VM name');
-  const res = await fetch('/api/connectors', {
+  var res = await fetch('/api/connectors', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ name: name }),
   });
-  const data = await res.json();
+  var data = await res.json();
   if (data.token) {
     alert('Connector created!\\n\\nToken (save this — shown only once):\\n' + data.token);
   }
@@ -461,33 +578,30 @@ async function logout() {
 }
 
 async function loadKeys() {
-  const res = await fetch('/api/agent-keys');
-  const data = await res.json();
-  const el = document.getElementById('agentKeys');
+  var res = await fetch('/api/agent-keys');
+  var data = await res.json();
+  var el = document.getElementById('agentKeys');
   if (data.length === 0) {
-    el.innerHTML = '<div class="card" style="color: #94a3b8;">No agent keys yet.</div>';
+    el.innerHTML = '<div class="card" style="padding: 14px; color: #94a3b8;">No agent keys yet.</div>';
     return;
   }
-  el.innerHTML = data.map(k => \`
-    <div class="card" style="display: flex; justify-content: space-between; align-items: center;">
-      <div>
-        <strong>\${k.name}</strong>
-        <div style="font-size: 0.85em; color: #666; margin-top: 2px;">\${k.prefix} &middot; Created \${new Date(k.created_at).toLocaleDateString()}</div>
-      </div>
-      <button class="btn-danger" onclick="deleteKey('\${k.id}')">Delete</button>
-    </div>
-  \`).join('');
+  el.innerHTML = data.map(function(k) {
+    return '<div class="card" style="display: flex; justify-content: space-between; align-items: center; padding: 10px 14px;">' +
+      '<div><strong>' + k.name + '</strong> <span style="font-size:0.8em;color:#666;">' + k.prefix + ' &middot; ' + new Date(k.created_at).toLocaleDateString() + '</span></div>' +
+      '<button class="btn btn-danger" onclick="deleteKey(\\'' + k.id + '\\')">Delete</button>' +
+    '</div>';
+  }).join('');
 }
 
 async function addKey() {
-  const name = document.getElementById('keyName').value.trim();
+  var name = document.getElementById('keyName').value.trim();
   if (!name) return alert('Enter a key name');
-  const res = await fetch('/api/agent-keys', {
+  var res = await fetch('/api/agent-keys', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ name: name }),
   });
-  const data = await res.json();
+  var data = await res.json();
   if (data.key) {
     alert('Agent key created!\\n\\nKey (save this — shown only once):\\n' + data.key);
   }
@@ -503,7 +617,7 @@ async function deleteKey(id) {
 
 loadConnectors();
 loadKeys();
-setInterval(loadConnectors, 10000);
+setInterval(loadConnectors, 30000);
 </script>
 <div style="margin-top: 40px; padding-top: 16px; border-top: 1px solid #e2e8f0; font-size: 0.85em; color: #999;"><a href="/terms" style="color: #999;">Terms</a> &middot; <a href="/privacy" style="color: #999;">Privacy</a></div>
 </body></html>`);

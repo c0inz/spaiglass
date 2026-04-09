@@ -2,6 +2,7 @@ import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import { Suspense, lazy } from "react";
 import { ProjectSelector } from "./components/ProjectSelector";
 import { ChatPage } from "./components/ChatPage";
+import { RoleResolver } from "./components/RoleResolver";
 import { SettingsProvider } from "./contexts/SettingsContext";
 import { isDevelopment } from "./utils/environment";
 
@@ -21,6 +22,7 @@ function App() {
         <Routes>
           <Route path="/" element={<ProjectSelector />} />
           <Route path="/projects/*" element={<ChatPage />} />
+          <Route path="*" element={<RoleResolver />} />
           {DemoPage && (
             <Route
               path="/demo"
