@@ -17,7 +17,7 @@ const DemoPage = isDevelopment()
 function App() {
   return (
     <SettingsProvider>
-      <Router>
+      <Router basename={(window as any).__SG_BASE || ""}>
         <Routes>
           <Route path="/" element={<ProjectSelector />} />
           <Route path="/projects/*" element={<ChatPage />} />

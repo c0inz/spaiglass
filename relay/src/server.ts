@@ -590,50 +590,37 @@ function makeInjectScript(slug: string): string {
   return `<script>(function(){` +
     `var B='${prefix}';` +
     `var H=location.origin;` +
+    // Tell React Router's BrowserRouter to use this basename
+    `window.__SG_BASE=B;` +
+    // Parse project/role context from URL
+    `var inner=location.pathname.slice(B.length).replace(/^\\/+/,'');` +
+    `var segs=inner.split('/').filter(Boolean);` +
+    `window.__SG={slug:'${slug}',project:segs[0]||'',role:segs[1]||''};` +
 
-    // Strip /vm/:slug/... prefix from the URL so React Router sees / and matches.
-    // The project/role context is preserved in window.__SG for the frontend to use.
-    `var p=location.pathname;` +
-    `if(p.indexOf(B)===0){` +
-      `var inner=p.slice(B.length).replace(/^\\/+/,'');` +
-      `var segs=inner.split('/').filter(Boolean);` +
-      `window.__SG={slug:'${slug}',project:segs[0]||'',role:segs[1]||''};` +
-      `history.replaceState(null,'','/'+location.search+location.hash);` +
-    `}` +
-
-    // Helper: rewrite a URL string if it targets this host and isn't already prefixed
+    // URL rewrite helper — adds /vm/:slug prefix to same-origin paths
     `function rw(u){` +
       `if(typeof u!=='string')return u;` +
-      // Absolute path: /api/... → /vm/slug/api/...
       `if(u[0]==='/'&&u.indexOf(B)!==0)return B+u;` +
-      // Full URL on same origin: https://host/api/... → https://host/vm/slug/api/...
       `if(u.indexOf(H)===0){var q=u.slice(H.length);if(q[0]==='/'&&q.indexOf(B)!==0)return H+B+q;}` +
       `return u;` +
     `}` +
 
-    // Patch fetch — handles both string URLs and Request objects
-    `var F=window.fetch;window.fetch=function(u,o){` +
+    // Patch fetch
+    `var _F=window.fetch;window.fetch=function(u,o){` +
       `if(typeof u==='string')u=rw(u);` +
       `else if(u instanceof Request){var nu=rw(u.url);if(nu!==u.url)u=new Request(nu,u);}` +
-      `return F.call(this,u,o)};` +
+      `return _F.call(this,u,o)};` +
 
     // Patch WebSocket
-    `var W=window.WebSocket;window.WebSocket=function(u,pr){` +
+    `var _W=window.WebSocket;window.WebSocket=function(u,pr){` +
       `if(typeof u==='string'){` +
-        // Handle ws:// and wss:// full URLs
         `if(u.indexOf('ws://')===0||u.indexOf('wss://')===0){` +
           `try{var x=new URL(u);if(x.host===location.host&&x.pathname.indexOf(B)!==0){x.pathname=B+x.pathname;u=x.toString();}}catch(e){}}` +
-        // Handle /api/ws style paths
         `else{u=rw(u);}` +
       `}` +
-      `return new W(u,pr)};` +
-    `window.WebSocket.prototype=W.prototype;` +
-    `window.WebSocket.CONNECTING=W.CONNECTING;window.WebSocket.OPEN=W.OPEN;window.WebSocket.CLOSING=W.CLOSING;window.WebSocket.CLOSED=W.CLOSED;` +
-
-    // Patch pushState/replaceState so React Router navigations go through the proxy
-    `var PS=history.pushState;var RS=history.replaceState;` +
-    `history.pushState=function(s,t,u){if(typeof u==='string'&&u[0]==='/'&&u.indexOf(B)!==0)u=B+u;return PS.call(this,s,t,u)};` +
-    `history.replaceState=function(s,t,u){if(typeof u==='string'&&u[0]==='/'&&u.indexOf(B)!==0)u=B+u;return RS.call(this,s,t,u)};` +
+      `return new _W(u,pr)};` +
+    `window.WebSocket.prototype=_W.prototype;` +
+    `window.WebSocket.CONNECTING=_W.CONNECTING;window.WebSocket.OPEN=_W.OPEN;window.WebSocket.CLOSING=_W.CLOSING;window.WebSocket.CLOSED=_W.CLOSED;` +
 
     `})()</script>`;
 }
@@ -717,10 +704,13 @@ ${FAVICON}
       html = html.replace(/<title>[^<]*<\/title>/, `<title>${tabTitle}</title>`);
       // Inject relay favicon
       html = html.replace(/<link rel="icon"[^>]*>/, FAVICON);
-      // Rewrite absolute src/href paths in HTML tags
+      // Inject the fetch/WebSocket patching script at the very top of <head>
+      // MUST execute before any other scripts (including deferred modules)
+      html = html.replace("<head>", "<head>" + makeInjectScript(slug));
+      // Rewrite absolute src/href paths in HTML tags (after inject so inject isn't affected)
       html = html.replace(/((?:src|href|action)=["'])\/(?!\/)/g, `$1${prefix}/`);
-      // Inject the fetch/WebSocket patching script before </head>
-      html = html.replace("</head>", makeInjectScript(slug) + "</head>");
+      // Don't cache HTML — always get fresh inject script
+      c.header("Cache-Control", "no-cache, no-store, must-revalidate");
       return c.html(html, resp.status as any);
     }
 
