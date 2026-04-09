@@ -122,24 +122,28 @@ export function createApp(
   app.post("/api/session/save", (c) => handleSessionSaveRequest(c));
   app.get("/api/session/last", (c) => handleSessionLastRequest(c));
 
-  // Static file serving with SPA fallback
-  // Serve static assets (CSS, JS, images, etc.)
+  // Static file serving (assets only — SPA fallback added separately via finalizeSpa)
   const serveStatic = runtime.createStaticFileMiddleware({
     root: config.staticPath,
   });
   app.use("/assets/*", serveStatic);
 
-  // SPA fallback - serve index.html for all unmatched routes (except API routes)
+  return app;
+}
+
+/**
+ * Add SPA fallback catch-all. Call this AFTER registering any WebSocket routes.
+ */
+export function finalizeSpa(app: Hono<ConfigContext>, staticPath: string) {
   app.get("*", async (c) => {
     const path = c.req.path;
 
-    // Skip API routes
     if (path.startsWith("/api/")) {
-      return c.text("Not found", 404);
+      return c.notFound();
     }
 
     try {
-      const indexPath = `${config.staticPath}/index.html`;
+      const indexPath = `${staticPath}/index.html`;
       const indexFile = await readBinaryFile(indexPath);
       return c.html(new TextDecoder().decode(indexFile));
     } catch (error) {
@@ -147,6 +151,4 @@ export function createApp(
       return c.text("Internal server error", 500);
     }
   });
-
-  return app;
 }

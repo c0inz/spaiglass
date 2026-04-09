@@ -1,0 +1,15 @@
+[Unit]
+Description=SGCleanRelay - SpAIglass Fleet Gateway
+After=network.target
+
+[Service]
+Type=simple
+User=spaiglass
+WorkingDirectory=/opt/sgcleanrelay
+EnvironmentFile=/opt/sgcleanrelay/.env
+ExecStart=/usr/bin/node --import tsx src/server.ts
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

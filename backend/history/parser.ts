@@ -6,7 +6,7 @@
 import type {
   SDKAssistantMessage,
   SDKUserMessage,
-} from "@anthropic-ai/claude-code";
+} from "@anthropic-ai/claude-agent-sdk";
 import { logger } from "../utils/logger.ts";
 import { readTextFile, readDir } from "../utils/fs.ts";
 
@@ -68,8 +68,9 @@ async function parseHistoryFile(
         messages.push(parsed);
 
         // Track message IDs from assistant messages
-        if (parsed.message?.role === "assistant" && parsed.message?.id) {
-          messageIds.add(parsed.message.id);
+        const msg = parsed.message as unknown as Record<string, unknown>;
+        if (msg?.role === "assistant" && msg?.id) {
+          messageIds.add(msg.id as string);
         }
 
         // Track timestamps

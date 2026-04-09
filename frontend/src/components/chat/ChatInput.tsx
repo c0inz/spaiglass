@@ -58,6 +58,9 @@ interface ChatInputProps {
   pendingImages?: { file: File; preview: string }[];
   onImageAdd?: (files: File[]) => void;
   onImageRemove?: (index: number) => void;
+  // Thinking level
+  thinkingLevel?: "off" | "brief" | "extended";
+  onThinkingLevelChange?: (level: "off" | "brief" | "extended") => void;
 }
 
 export function ChatInput({
@@ -78,6 +81,8 @@ export function ChatInput({
   pendingImages,
   onImageAdd,
   onImageRemove,
+  thinkingLevel = "off",
+  onThinkingLevelChange,
 }: ChatInputProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -230,11 +235,17 @@ export function ChatInput({
         <div className="flex gap-2 px-2 py-2 mb-1 overflow-x-auto">
           {pendingImages.map((img, i) => (
             <div key={i} className="relative flex-shrink-0 group">
-              <img
-                src={img.preview}
-                alt={img.file.name}
-                className="w-16 h-16 object-cover rounded-lg border border-slate-300 dark:border-slate-600"
-              />
+              {img.file.type.startsWith("image/") ? (
+                <img
+                  src={img.preview}
+                  alt={img.file.name}
+                  className="w-16 h-16 object-cover rounded-lg border border-slate-300 dark:border-slate-600"
+                />
+              ) : (
+                <div className="w-16 h-16 rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-slate-500 dark:text-slate-400 text-[10px] font-mono text-center px-1">
+                  {img.file.name.split(".").pop()?.toUpperCase() || "FILE"}
+                </div>
+              )}
               {onImageRemove && (
                 <button
                   type="button"
@@ -257,7 +268,7 @@ export function ChatInput({
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*"
+          accept="*/*"
           multiple
           className="hidden"
           onChange={(e) => {
@@ -303,7 +314,7 @@ export function ChatInput({
           }
           rows={1}
           className={`w-full px-4 py-3 pr-20 bg-white/80 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 backdrop-blur-sm shadow-sm text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 resize-none overflow-hidden min-h-[48px] max-h-[${UI_CONSTANTS.TEXTAREA_MAX_HEIGHT}px]`}
-          disabled={isLoading}
+          disabled={false}
         />
         <div className="absolute right-2 bottom-3 flex gap-2">
           {onImageAdd && !isLoading && (
@@ -311,7 +322,7 @@ export function ChatInput({
               type="button"
               onClick={() => fileInputRef.current?.click()}
               className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 rounded-lg transition-colors"
-              title="Attach image"
+              title="Attach file"
             >
               <PaperClipIcon className="w-4 h-4" />
             </button>
@@ -328,7 +339,7 @@ export function ChatInput({
           )}
           <button
             type="submit"
-            disabled={(!input.trim() && !(pendingImages && pendingImages.length > 0)) || isLoading}
+            disabled={!input.trim() && !(pendingImages && pendingImages.length > 0)}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-400 text-white rounded-lg font-medium transition-all duration-200 shadow-sm hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 text-sm"
           >
             {isLoading ? "..." : permissionMode === "plan" ? "Plan" : "Send"}
@@ -336,20 +347,41 @@ export function ChatInput({
         </div>
       </form>
 
-      {/* Permission mode status bar */}
-      <button
-        type="button"
-        onClick={() =>
-          onPermissionModeChange(getNextPermissionMode(permissionMode))
-        }
-        className="w-full px-4 py-1 text-xs text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 font-mono text-left transition-colors cursor-pointer"
-        title={`Current: ${getPermissionModeName(permissionMode)} - Click to cycle (Ctrl+Shift+M)`}
-      >
-        {getPermissionModeIndicator(permissionMode)}
-        <span className="ml-2 text-slate-400 dark:text-slate-500 text-[10px]">
-          - Click to cycle (Ctrl+Shift+M)
-        </span>
-      </button>
+      {/* Status bar */}
+      <div className="flex items-center justify-between px-4 py-1">
+        <button
+          type="button"
+          onClick={() =>
+            onPermissionModeChange(getNextPermissionMode(permissionMode))
+          }
+          className="text-xs text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 font-mono text-left transition-colors cursor-pointer"
+          title={`Current: ${getPermissionModeName(permissionMode)} - Click to cycle (Ctrl+Shift+M)`}
+        >
+          {getPermissionModeIndicator(permissionMode)}
+          <span className="ml-2 text-slate-400 dark:text-slate-500 text-[10px]">
+            (Ctrl+Shift+M)
+          </span>
+        </button>
+        <div className="flex items-center gap-3">
+          {onThinkingLevelChange && (
+            <button
+              type="button"
+              onClick={() => {
+                const levels: Array<"off" | "brief" | "extended"> = ["off", "brief", "extended"];
+                const next = levels[(levels.indexOf(thinkingLevel) + 1) % levels.length];
+                onThinkingLevelChange(next);
+              }}
+              className="text-[10px] font-mono text-purple-500 dark:text-purple-400 hover:text-purple-700 dark:hover:text-purple-300 transition-colors cursor-pointer"
+              title="Click to cycle thinking level"
+            >
+              {thinkingLevel === "off" ? "thinking off" : thinkingLevel === "brief" ? "thinking brief (5k)" : "thinking extended (32k)"}
+            </button>
+          )}
+          <span className="text-[10px] font-mono text-green-600 dark:text-green-400">
+            bypass permissions on
+          </span>
+        </div>
+      </div>
     </div>
   );
 }

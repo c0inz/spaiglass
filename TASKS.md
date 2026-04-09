@@ -111,7 +111,7 @@ Portal: `cd ~/projects/spyglass/portal && node serve.js` (port 9090)
 
 ## Layout Notes
 
-- Vertical split: sidebar (left, w-56) | editor/arch (middle, flex-1) | chat (right, w-300 when editor open, flex-1 when closed)
+- Vertical split: sidebar (left, w-56) | editor/arch (middle, flex-1) | chat (right, w-450 when editor open, flex-1 when closed)
 - Header pinned at top with Spyglass title, VM role, context name, folder/arch/history/settings buttons
 - All Claude sessions use --dangerously-skip-permissions (set in chat.ts)
 - Portal at http://192.168.1.153:9090

@@ -54,8 +54,10 @@
     "prepublishOnly": "npm run build && npm run test"
   },
   "dependencies": {
-    "@anthropic-ai/claude-code": "1.0.108",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.97",
+    "@anthropic-ai/claude-code": "^2.1.97",
     "@hono/node-server": "^1.0.0",
+    "@hono/node-ws": "^1.3.0",
     "@logtape/logtape": "^1.0.0",
     "@logtape/pretty": "^1.0.0",
     "commander": "^14.0.0",
@@ -72,8 +74,5 @@
     "tsx": "^4.0.0",
     "typescript": "^5.9.0",
     "vitest": "^3.2.4"
-  },
-  "peerDependencies": {
-    "@anthropic-ai/claude-code": "1.0.108"
   }
 }

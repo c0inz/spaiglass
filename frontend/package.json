@@ -21,6 +21,7 @@
     "capture-screenshots": "npx tsx scripts/capture-screenshots.ts"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.97",
     "@heroicons/react": "^2.2.0",
     "@monaco-editor/react": "^4.7.0",
     "dayjs": "^1.11.13",

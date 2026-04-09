@@ -17,6 +17,8 @@ export interface ChatRequest {
   allowedTools?: string[];
   workingDirectory?: string;
   permissionMode?: "default" | "plan" | "acceptEdits";
+  attachments?: string[]; // server-side file paths from /api/upload
+  maxThinkingTokens?: number; // 0 = off, otherwise token budget
 }
 
 export interface AbortRequest {

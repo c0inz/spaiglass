@@ -72,6 +72,23 @@ function isToolUseError(content: string): boolean {
 }
 
 /**
+ * Check if an error is actually a permission denial (not just a tool failure).
+ * In bypassPermissions mode, tool errors are normal failures, not permission issues.
+ */
+function isPermissionDenialError(content: string): boolean {
+  const permissionKeywords = [
+    "permission",
+    "not allowed",
+    "denied",
+    "unauthorized",
+    "User rejected",
+    "not permitted",
+  ];
+  const lower = content.toLowerCase();
+  return permissionKeywords.some((kw) => lower.includes(kw.toLowerCase()));
+}
+
+/**
  * Unified Message Processor
  *
  * This class provides consistent message processing logic for both
@@ -155,11 +172,13 @@ export class UnifiedMessageProcessor {
         ? contentItem.content
         : JSON.stringify(contentItem.content);
 
-    // Check for permission errors - but skip tool use errors which should be displayed as regular results
+    // Check for permission errors - only treat as permission error if the content
+    // actually indicates a permission denial, not just any tool error
     if (
       options.isStreaming &&
       contentItem.is_error &&
-      !isToolUseError(content)
+      !isToolUseError(content) &&
+      isPermissionDenialError(content)
     ) {
       this.handlePermissionError(contentItem, context);
       return;

@@ -1,23 +1,13 @@
 import { Context } from "hono";
 import { promises as fs } from "node:fs";
-import { join, extname } from "node:path";
+import { join } from "node:path";
 import { logger } from "../utils/logger.ts";
-
-const ALLOWED_EXTENSIONS = new Set([
-  ".png",
-  ".jpg",
-  ".jpeg",
-  ".gif",
-  ".webp",
-  ".bmp",
-  ".svg",
-]);
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
 
 /**
  * POST /api/upload
- * Accepts multipart/form-data with an image file and workingDirectory field.
+ * Accepts multipart/form-data with any file and workingDirectory field.
  * Saves to {workingDirectory}/.spyglass/uploads/{timestamp}-{filename}
  * Returns { path, filename, size }
  */
@@ -33,15 +23,6 @@ export async function handleUploadRequest(c: Context) {
 
   if (!workingDirectory || typeof workingDirectory !== "string") {
     return c.json({ error: "No workingDirectory provided" }, 400);
-  }
-
-  // Validate extension
-  const ext = extname(file.name).toLowerCase();
-  if (!ALLOWED_EXTENSIONS.has(ext)) {
-    return c.json(
-      { error: `File type ${ext} not allowed. Accepted: ${[...ALLOWED_EXTENSIONS].join(", ")}` },
-      400,
-    );
   }
 
   // Validate size
@@ -61,7 +42,7 @@ export async function handleUploadRequest(c: Context) {
   const arrayBuffer = await file.arrayBuffer();
   await fs.writeFile(filePath, Buffer.from(arrayBuffer));
 
-  logger.app.info("Image uploaded: {path}", { path: filePath });
+  logger.app.info("File uploaded: {path}", { path: filePath });
 
   return c.json({
     path: filePath,

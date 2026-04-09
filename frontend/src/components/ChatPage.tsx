@@ -68,6 +68,7 @@ export function ChatPage() {
   const [pendingImages, setPendingImages] = useState<
     { file: File; preview: string }[]
   >([]);
+  const [thinkingLevel, setThinkingLevel] = useState<"off" | "brief" | "extended">("off");
   const vmConfig = useVmConfig();
 
   // Extract and normalize working directory from URL
@@ -276,11 +277,12 @@ export function ChatPage() {
       overridePermissionMode?: PermissionMode,
     ) => {
       let content = messageContent || input.trim();
-      if ((!content && pendingImages.length === 0) || isLoading) return;
+      if (!content && pendingImages.length === 0) return;
 
-      // Upload pending images and prepend paths to message
+      // Upload pending files and collect server paths
+      let attachmentPaths: string[] = [];
+      const attachmentNames: string[] = [];
       if (pendingImages.length > 0 && workingDirectory) {
-        const uploadedPaths: string[] = [];
         for (const img of pendingImages) {
           const formData = new FormData();
           formData.append("file", img.file);
@@ -292,24 +294,18 @@ export function ChatPage() {
             });
             if (res.ok) {
               const data = await res.json();
-              uploadedPaths.push(data.path);
+              attachmentPaths.push(data.path);
+              attachmentNames.push(data.filename);
             }
           } catch (err) {
-            console.error("Image upload failed:", err);
+            console.error("File upload failed:", err);
           }
-        }
-        if (uploadedPaths.length > 0) {
-          const imageRefs = uploadedPaths
-            .map((p) => `[Image: ${p}]`)
-            .join("\n");
-          content = content
-            ? `${imageRefs}\n\n${content}`
-            : imageRefs;
         }
         setPendingImages([]);
       }
 
-      if (!content) return;
+      // Need either text or attachments
+      if (!content && attachmentPaths.length === 0) return;
 
       // Prepend context file content on first message of session
       if (!currentSessionId && activeContext?.content) {
@@ -320,10 +316,13 @@ export function ChatPage() {
 
       // Only add user message to chat if not hidden
       if (!hideUserMessage) {
+        const displayContent = attachmentNames.length > 0
+          ? `${attachmentNames.map(n => `[${n}]`).join(" ")}\n${content || ""}`
+          : content;
         const userMessage: ChatMessage = {
           type: "chat",
           role: "user",
-          content: content,
+          content: displayContent.trim(),
           timestamp: Date.now(),
         };
         addMessage(userMessage);
@@ -337,11 +336,13 @@ export function ChatPage() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            message: content,
+            message: content || "",
             requestId,
             ...(currentSessionId ? { sessionId: currentSessionId } : {}),
             allowedTools: tools || allowedTools,
             ...(workingDirectory ? { workingDirectory } : {}),
+            ...(attachmentPaths.length > 0 ? { attachments: attachmentPaths } : {}),
+            ...(thinkingLevel !== "off" ? { maxThinkingTokens: thinkingLevel === "brief" ? 5000 : 32000 } : {}),
             permissionMode: overridePermissionMode || permissionMode,
           } as ChatRequest),
         });
@@ -429,6 +430,7 @@ export function ChatPage() {
       handlePermissionError,
       createAbortHandler,
       pendingImages,
+      thinkingLevel,
     ],
   );
 
@@ -640,9 +642,9 @@ export function ChatPage() {
               >
                 Spyglass
               </button>
-              {vmConfig && (
+              {workingDirectory && (
                 <span className="ml-3 text-sm font-medium text-blue-500 dark:text-blue-400">
-                  {vmConfig.role}
+                  {workingDirectory.split("/").filter(Boolean).pop()}
                 </span>
               )}
               {activeContext && (
@@ -736,7 +738,7 @@ export function ChatPage() {
         ) : null}
 
         {/* Chat panel (right — 135% of file sidebar width, ~300px) */}
-        <div className={`${editingFile ? "w-[300px] flex-shrink-0" : "flex-1"} min-w-0 flex flex-col overflow-hidden`}>
+        <div className={`${editingFile ? "w-[450px] flex-shrink-0" : "flex-1"} min-w-0 flex flex-col overflow-hidden`}>
           <div className="flex-1 flex flex-col overflow-hidden p-3 sm:p-4">
             {isHistoryView ? (
               <HistoryView
@@ -797,6 +799,8 @@ export function ChatPage() {
                   showPermissions={isPermissionMode}
                   permissionData={permissionData}
                   planPermissionData={planPermissionData}
+                  thinkingLevel={thinkingLevel}
+                  onThinkingLevelChange={setThinkingLevel}
                   pendingImages={pendingImages}
                   onImageAdd={(files) => {
                     const newImages = files.map((f) => ({

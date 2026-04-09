@@ -1,8 +1,107 @@
 import { Context } from "hono";
-import { query, type PermissionMode } from "@anthropic-ai/claude-code";
+import { query, type PermissionMode, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { ChatRequest, StreamResponse, FileDelivery } from "../../shared/types.ts";
-import { basename } from "node:path";
+import { basename, extname } from "node:path";
+import { promises as fs } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { logger } from "../utils/logger.ts";
+
+const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
+
+function mediaTypeForExt(ext: string): string {
+  const map: Record<string, string> = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+  };
+  return map[ext] || "image/png";
+}
+
+/**
+ * Process attachments and return the prompt.
+ *
+ * Text files: read content and inline into the string prompt (simple, reliable).
+ * Images: must use AsyncIterable with base64 content blocks (only way to send images).
+ *
+ * Returns { prompt, hasImages } so the caller can adjust SDK options.
+ */
+async function processAttachments(
+  message: string,
+  attachments: string[],
+  sessionId?: string,
+): Promise<{ prompt: string | AsyncIterable<SDKUserMessage>; hasImages: boolean }> {
+  const textParts: string[] = [];
+  const imageBlocks: unknown[] = [];
+
+  for (const filePath of attachments) {
+    const ext = extname(filePath).toLowerCase();
+    if (IMAGE_EXTENSIONS.has(ext)) {
+      try {
+        const data = await fs.readFile(filePath);
+        imageBlocks.push({
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: mediaTypeForExt(ext),
+            data: data.toString("base64"),
+          },
+        });
+        logger.chat.info("Image attached: {path} ({size} bytes)", {
+          path: filePath,
+          size: data.length,
+        });
+      } catch (err) {
+        logger.chat.error("Failed to read image: {path}", { path: filePath });
+        textParts.push(`[Could not read image: ${basename(filePath)}]`);
+      }
+    } else {
+      // Text/code file — inline into prompt string
+      try {
+        const text = await fs.readFile(filePath, "utf8");
+        const name = basename(filePath);
+        textParts.push(`[Attached file: ${name}]\n\`\`\`\n${text}\n\`\`\``);
+        logger.chat.info("Text file attached: {path}", { path: filePath });
+      } catch {
+        textParts.push(`[Could not read file: ${basename(filePath)}]`);
+      }
+    }
+  }
+
+  // If no images, just inline everything into the string prompt
+  if (imageBlocks.length === 0) {
+    const combined = [...textParts, message].filter(Boolean).join("\n\n");
+    return { prompt: combined || "See attached file.", hasImages: false };
+  }
+
+  // Images present — must use AsyncIterable with content blocks
+  const contentBlocks: unknown[] = [...imageBlocks];
+
+  // Add any inlined text file content
+  for (const part of textParts) {
+    contentBlocks.push({ type: "text", text: part });
+  }
+
+  // Add user's message text
+  const userText = message.trim() || "See attached.";
+  contentBlocks.push({ type: "text", text: userText });
+
+  async function* gen(): AsyncIterable<SDKUserMessage> {
+    yield {
+      type: "user",
+      message: {
+        role: "user" as const,
+        content: contentBlocks,
+      },
+      parent_tool_use_id: null,
+      uuid: randomUUID(),
+      session_id: sessionId || randomUUID(),
+    } as SDKUserMessage;
+  }
+
+  return { prompt: gen(), hasImages: true };
+}
 
 /**
  * Executes a Claude command and yields streaming responses
@@ -25,6 +124,8 @@ async function* executeClaudeCommand(
   allowedTools?: string[],
   workingDirectory?: string,
   permissionMode?: PermissionMode,
+  attachments?: string[],
+  maxThinkingTokens?: number,
 ): AsyncGenerator<StreamResponse> {
   let abortController: AbortController;
 
@@ -40,18 +141,31 @@ async function* executeClaudeCommand(
     abortController = new AbortController();
     requestAbortControllers.set(requestId, abortController);
 
+    // Build prompt — inline text files, use content blocks for images
+    let prompt: string | AsyncIterable<SDKUserMessage> = processedMessage;
+    let hasImages = false;
+
+    if (attachments && attachments.length > 0) {
+      const result = await processAttachments(processedMessage, attachments, sessionId);
+      prompt = result.prompt;
+      hasImages = result.hasImages;
+    }
+
+    // When using AsyncIterable (images), the session_id is embedded in the message,
+    // so we skip the `resume` option to avoid conflicts with stream-json mode.
     for await (const sdkMessage of query({
-      prompt: processedMessage,
+      prompt,
       options: {
         abortController,
         executable: "node" as const,
         executableArgs: [],
         pathToClaudeCodeExecutable: cliPath,
-        ...(sessionId ? { resume: sessionId } : {}),
+        ...(!hasImages && sessionId ? { resume: sessionId } : {}),
         ...(allowedTools ? { allowedTools } : {}),
         ...(workingDirectory ? { cwd: workingDirectory } : {}),
-        ...(permissionMode ? { permissionMode } : {}),
-        dangerouslySkipPermissions: true,
+        ...(maxThinkingTokens ? { maxThinkingTokens } : {}),
+        permissionMode: "bypassPermissions" as const,
+        allowDangerouslySkipPermissions: true,
       },
     })) {
       // Debug logging of raw SDK messages with detailed content
@@ -139,6 +253,8 @@ export async function handleChatRequest(
           chatRequest.allowedTools,
           chatRequest.workingDirectory,
           chatRequest.permissionMode,
+          chatRequest.attachments,
+          chatRequest.maxThinkingTokens,
         )) {
           const data = JSON.stringify(chunk) + "\n";
           controller.enqueue(new TextEncoder().encode(data));

@@ -109,24 +109,16 @@ export class NodeRuntime implements Runtime {
     port: number,
     hostname: string,
     handler: (req: Request) => Response | Promise<Response>,
-  ): void {
-    // Use Hono with Node.js server to handle Web API Request/Response
-    const app = new Hono();
-
-    // Route all requests to the provided handler
-    app.all("*", async (c) => {
-      const response = await handler(c.req.raw);
-      return response;
-    });
-
-    // Start the server using @hono/node-server
-    serve({
-      fetch: app.fetch,
+  ): ReturnType<typeof serve> {
+    // Start the server using @hono/node-server with the handler directly
+    const server = serve({
+      fetch: handler,
       port,
       hostname,
     });
 
     console.log(`Listening on http://${hostname}:${port}/`);
+    return server;
   }
 
   createStaticFileMiddleware(options: { root: string }): MiddlewareHandler {
