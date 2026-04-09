@@ -445,20 +445,39 @@ ${FAVICON}
 const LOGIN = '${user.github_login}';
 let hiddenRoles = JSON.parse(localStorage.getItem('sg_hidden_roles') || '[]');
 
+function abbreviate(word, maxLen) {
+  if (word.length <= maxLen) return word;
+  // Split camelCase / hyphens / underscores into parts
+  var parts = word.replace(/([a-z])([A-Z])/g, '$1\\0$2').replace(/[-_]/g, '\\0').split('\\0').filter(Boolean);
+  if (parts.length > 1) {
+    // Multi-part: keep as many full parts from the left as fit
+    var result = '';
+    for (var i = 0; i < parts.length; i++) {
+      if ((result + parts[i]).length <= maxLen) { result += parts[i]; }
+      else { var rem = maxLen - result.length; if (rem > 0) result += parts[i].slice(0, rem); break; }
+    }
+    return result;
+  }
+  // Single word, short budget: capitalize + truncate (Dev, Adm)
+  if (maxLen <= 3) return word.charAt(0).toUpperCase() + word.slice(1, maxLen);
+  // Longer budget: capitalize + drop interior vowels, then truncate
+  var stripped = word.charAt(0).toUpperCase() + word.slice(1).replace(/[aeiou]/gi, '');
+  return stripped.length <= maxLen ? stripped : stripped.slice(0, maxLen);
+}
+
 function compactName(proj, role) {
-  // URL segment is project-role, display is project-role truncated to 10 chars
   var full = proj + '-' + role;
   if (full.length <= 10) return full;
-  // Truncate: keep as much of each as possible
   var budget = 9; // 10 minus hyphen
-  var pL = proj.length, rL = role.length;
-  var p = proj, r = role;
-  if (pL + rL <= budget) return p + '-' + r;
-  var half = Math.ceil(budget / 2);
-  if (pL <= half) r = r.slice(0, budget - pL);
-  else if (rL <= budget - half) p = p.slice(0, budget - rL);
-  else { p = p.slice(0, half); r = r.slice(0, budget - half); }
-  return p + '-' + r;
+  // Give project 60% of budget (it's more important for recognition)
+  var pBudget = Math.min(proj.length, Math.ceil(budget * 0.6));
+  var rBudget = budget - pBudget;
+  if (rBudget < 2) { rBudget = 2; pBudget = budget - 2; }
+  if (pBudget < 2) { pBudget = 2; rBudget = budget - 2; }
+  // Redistribute if one side doesn't need its full budget
+  if (proj.length < pBudget) { rBudget += pBudget - proj.length; pBudget = proj.length; }
+  if (role.length < rBudget) { pBudget += rBudget - role.length; rBudget = role.length; }
+  return abbreviate(proj, pBudget) + '-' + abbreviate(role, rBudget);
 }
 
 function isHidden(connId, projBase, roleFile) {
