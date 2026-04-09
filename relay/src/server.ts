@@ -7,7 +7,8 @@
 
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { serve } from "@hono/node-server";
+import { getRequestListener } from "@hono/node-server";
+import { createServer } from "node:http";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { getCookie } from "hono/cookie";
 import { initDb, cleanExpiredSessions, getUserBySessionToken, getConnectorById } from "./db.ts";
@@ -37,14 +38,14 @@ initDb(DB_PATH);
 
 const app = new Hono<RelayEnv>();
 
-// Inject environment bindings
+// Inject environment bindings (mutate, don't replace — preserves WS upgrade symbol refs)
 app.use("*", async (c, next) => {
-  c.env = {
+  Object.assign(c.env, {
     GITHUB_CLIENT_ID,
     GITHUB_CLIENT_SECRET,
     PUBLIC_URL,
     SESSION_SECRET: process.env.SESSION_SECRET || "dev-secret",
-  };
+  });
   await next();
 });
 
@@ -537,8 +538,12 @@ app.get("/vm/:connectorId/ws", upgradeWebSocket((c) => {
 console.log(`SGCleanRelay starting on ${HOST}:${PORT}`);
 console.log(`Public URL: ${PUBLIC_URL}`);
 
-const server = serve({ fetch: app.fetch, port: PORT, hostname: HOST });
+const server = createServer();
 injectWebSocket(server);
+server.on("request", getRequestListener(app.fetch));
+server.listen(PORT, HOST, () => {
+  console.log(`Listening on ${HOST}:${PORT}`);
+});
 
 // Session cleanup every hour
 setInterval(() => {

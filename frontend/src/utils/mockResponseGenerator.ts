@@ -38,7 +38,7 @@ export type MockScenarioStep =
 // Generate realistic Claude system messages
 export function createSystemMessage(
   sessionId: string,
-): Extract<SDKMessage, { type: "system" }> {
+): any {
   return {
     type: "system",
     subtype: "init",
@@ -59,18 +59,18 @@ export function createSystemMessage(
 export function createAssistantMessage(
   content: string,
   sessionId: string,
-): Extract<SDKMessage, { type: "assistant" }> {
+): any {
   return {
     type: "assistant",
     message: {
       id: "msg_" + generateId(),
       type: "message",
       role: "assistant",
-      content: [{ type: "text", text: content }],
+      content: [{ type: "text", text: content } as any],
       model: "claude-3-5-sonnet-20241022",
       stop_reason: "end_turn",
       stop_sequence: null,
-      usage: { input_tokens: 25, output_tokens: 45 },
+      usage: { input_tokens: 25, output_tokens: 45 } as any,
     },
     parent_tool_use_id: null,
     session_id: sessionId,
@@ -87,7 +87,7 @@ export function createCombinedAssistantMessage(
     input: Record<string, unknown>;
   },
   sessionId: string,
-): Extract<SDKMessage, { type: "assistant" }> {
+): any {
   return {
     type: "assistant",
     message: {
@@ -95,7 +95,7 @@ export function createCombinedAssistantMessage(
       type: "message",
       role: "assistant",
       content: [
-        { type: "text", text: textContent },
+        { type: "text", text: textContent } as any,
         {
           type: "tool_use",
           id: toolUse.id,
@@ -106,7 +106,7 @@ export function createCombinedAssistantMessage(
       model: "claude-3-5-sonnet-20241022",
       stop_reason: "tool_use",
       stop_sequence: null,
-      usage: { input_tokens: 25, output_tokens: 65 },
+      usage: { input_tokens: 25, output_tokens: 65 } as any,
     },
     parent_tool_use_id: null,
     session_id: sessionId,
@@ -119,7 +119,7 @@ export function createResultMessage(
   sessionId: string,
   inputTokens: number = 45,
   outputTokens: number = 120,
-): Extract<SDKMessage, { type: "result" }> {
+): any {
   return {
     type: "result",
     subtype: "success",
@@ -133,8 +133,7 @@ export function createResultMessage(
     usage: {
       input_tokens: inputTokens,
       output_tokens: outputTokens,
-      total_tokens: inputTokens + outputTokens,
-    },
+    } as any,
     permission_denials: [],
     uuid: generateId(),
   };
@@ -144,7 +143,7 @@ export function createResultMessage(
 export function createExitPlanModeToolUse(
   sessionId: string,
   planContent: string,
-): Extract<SDKMessage, { type: "assistant" }> {
+): any {
   const toolUseId = generateId();
   return {
     type: "assistant",
@@ -165,7 +164,7 @@ export function createExitPlanModeToolUse(
       model: "claude-3-5-sonnet-20241022",
       stop_reason: "tool_use",
       stop_sequence: null,
-      usage: { input_tokens: 25, output_tokens: 28 },
+      usage: { input_tokens: 25, output_tokens: 28 } as any,
     },
     parent_tool_use_id: null,
     session_id: sessionId,
@@ -178,7 +177,7 @@ export function createExitPlanModeToolUseWithId(
   sessionId: string,
   toolUseId: string,
   planContent: string,
-): Extract<SDKMessage, { type: "assistant" }> {
+): any {
   return {
     type: "assistant",
     message: {
@@ -198,7 +197,7 @@ export function createExitPlanModeToolUseWithId(
       model: "claude-3-5-sonnet-20241022",
       stop_reason: "tool_use",
       stop_sequence: null,
-      usage: { input_tokens: 25, output_tokens: 28 },
+      usage: { input_tokens: 25, output_tokens: 28 } as any,
     },
     parent_tool_use_id: null,
     session_id: sessionId,
@@ -210,7 +209,7 @@ export function createExitPlanModeToolUseWithId(
 export function createExitPlanModeToolResult(
   sessionId: string,
   toolUseId: string,
-): Extract<SDKMessage, { type: "user" }> {
+): any {
   return {
     type: "user",
     message: {
@@ -236,7 +235,7 @@ export function createToolUseMessage(
   toolInput: Record<string, unknown>,
   sessionId: string,
   toolUseId: string = generateId(),
-): Extract<SDKMessage, { type: "assistant" }> {
+): any {
   return {
     type: "assistant",
     message: {
@@ -254,7 +253,7 @@ export function createToolUseMessage(
       model: "claude-3-5-sonnet-20241022",
       stop_reason: "tool_use",
       stop_sequence: null,
-      usage: { input_tokens: 45, output_tokens: 28 },
+      usage: { input_tokens: 45, output_tokens: 28 } as any,
     },
     parent_tool_use_id: null,
     session_id: sessionId,
