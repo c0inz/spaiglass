@@ -83,6 +83,12 @@ function connectToRelay() {
       return;
     }
 
+    // HTTP proxy: relay forwards an HTTP request to serve locally
+    if (msg.type === "http_request") {
+      handleHttpRequest(msg);
+      return;
+    }
+
     // Browser → VM: relay forwards a browser message
     if (msg.type === "relay_forward") {
       const browserId = msg.browserId as string;
@@ -110,6 +116,78 @@ function scheduleReconnect() {
     reconnectTimer = null;
     connectToRelay();
   }, 3000);
+}
+
+/**
+ * Handle an HTTP request from the relay.
+ * Makes a local HTTP request to the backend and sends the response back.
+ */
+async function handleHttpRequest(msg: Record<string, unknown>) {
+  const reqId = msg.reqId as string;
+  const method = msg.method as string;
+  const path = msg.path as string;
+  const headers = (msg.headers || {}) as Record<string, string>;
+  const body = msg.body as string | undefined;
+
+  const localUrl = `http://127.0.0.1:${LOCAL_PORT}${path}`;
+
+  try {
+    // Filter hop-by-hop headers and rewrite host
+    const fwdHeaders: Record<string, string> = {};
+    for (const [k, v] of Object.entries(headers)) {
+      const lk = k.toLowerCase();
+      if (!["host", "connection", "upgrade", "transfer-encoding", "keep-alive"].includes(lk)) {
+        fwdHeaders[k] = v;
+      }
+    }
+    fwdHeaders["host"] = `127.0.0.1:${LOCAL_PORT}`;
+
+    const resp = await fetch(localUrl, {
+      method,
+      headers: fwdHeaders,
+      body: method !== "GET" && method !== "HEAD" ? body : undefined,
+      redirect: "manual",
+    });
+
+    const contentType = resp.headers.get("content-type") || "";
+    const isText = /text|json|javascript|css|xml|svg|html|font\/woff/.test(contentType);
+
+    const respHeaders: Record<string, string> = {};
+    resp.headers.forEach((v, k) => {
+      const lk = k.toLowerCase();
+      if (!["transfer-encoding", "content-encoding", "connection"].includes(lk)) {
+        respHeaders[k] = v;
+      }
+    });
+
+    let respBody: string;
+    if (isText) {
+      respBody = await resp.text();
+    } else {
+      const buf = Buffer.from(await resp.arrayBuffer());
+      respBody = buf.toString("base64");
+    }
+
+    relayWs!.send(JSON.stringify({
+      type: "http_response",
+      reqId,
+      status: resp.status,
+      headers: respHeaders,
+      body: respBody,
+      bodyEncoding: isText ? "utf-8" : "base64",
+    }));
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    log(`HTTP proxy error for ${method} ${path}: ${message}`);
+    relayWs!.send(JSON.stringify({
+      type: "http_response",
+      reqId,
+      status: 502,
+      headers: { "content-type": "text/plain" },
+      body: `Backend error: ${message}`,
+      bodyEncoding: "utf-8",
+    }));
+  }
 }
 
 /**

@@ -32,6 +32,11 @@ if (!GITHUB_CLIENT_ID || !GITHUB_CLIENT_SECRET) {
   console.warn("WARNING: GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET not set. OAuth will not work.");
 }
 
+// --- Shared HTML helpers ---
+
+// Inline SVG favicon — spyglass/eye icon in brand blue
+const FAVICON = `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><circle cx="28" cy="28" r="18" fill="none" stroke="#3b82f6" stroke-width="5"/><circle cx="28" cy="28" r="7" fill="#3b82f6"/><line x1="42" y1="42" x2="58" y2="58" stroke="#3b82f6" stroke-width="5" stroke-linecap="round"/></svg>')}" />`;
+
 // --- Initialize ---
 
 initDb(DB_PATH);
@@ -193,6 +198,7 @@ app.get("/setup", (c) => {
 app.get("/terms", (c) => {
   return c.html(`<!DOCTYPE html>
 <html><head><title>Terms of Service - SpAIglass</title>
+${FAVICON}
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   body { font-family: system-ui; max-width: 700px; margin: 60px auto; padding: 0 20px; color: #1a1a2e; background: #f0f0f5; line-height: 1.6; }
@@ -246,6 +252,7 @@ app.get("/terms", (c) => {
 app.get("/privacy", (c) => {
   return c.html(`<!DOCTYPE html>
 <html><head><title>Privacy Policy - SpAIglass</title>
+${FAVICON}
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   body { font-family: system-ui; max-width: 700px; margin: 60px auto; padding: 0 20px; color: #1a1a2e; background: #f0f0f5; line-height: 1.6; }
@@ -312,6 +319,7 @@ app.get("/", (c) => {
   if (!user) {
     return c.html(`<!DOCTYPE html>
 <html><head><title>SpAIglass Relay</title>
+${FAVICON}
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   body { font-family: system-ui; max-width: 600px; margin: 80px auto; padding: 0 20px; color: #1a1a2e; background: #f0f0f5; }
@@ -331,6 +339,7 @@ app.get("/", (c) => {
 
   return c.html(`<!DOCTYPE html>
 <html><head><title>SpAIglass Fleet</title>
+${FAVICON}
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 0 20px; color: #1a1a2e; background: #f0f0f5; }
@@ -512,8 +521,9 @@ function resolveVmSlug(slug: string): ReturnType<typeof getConnectorById> {
   return getConnectorById(slug);
 }
 
-// Browser → VM WebSocket tunnel (must be before wildcard VM page route)
-app.get("/vm/:slug/ws", upgradeWebSocket((c) => {
+// Browser → VM WebSocket tunnel (must be before wildcard proxy route)
+// The frontend connects to /api/ws; the inject script rewrites it to /vm/:slug/api/ws
+app.get("/vm/:slug/api/ws", upgradeWebSocket((c) => {
   const slug = c.req.param("slug")!;
   const sessionToken = getCookie(c, SESSION_COOKIE);
 
@@ -546,136 +556,151 @@ app.get("/vm/:slug/ws", upgradeWebSocket((c) => {
   };
 }));
 
-// VM page — serves a minimal page that connects via WebSocket
-// Supports: /vm/:slug/ and /vm/:slug/:project/:role/ for bookmarkable URLs
-app.get("/vm/:slug", (c) => {
-  return c.redirect(`/vm/${c.req.param("slug")}/`);
-});
-
-app.get("/vm/:slug/*", (c) => {
+// Auth + resolve middleware for all /vm/:slug routes
+async function vmAuth(c: Parameters<Parameters<typeof app.get>[1]>[0]): Promise<{ user: NonNullable<ReturnType<typeof getUserBySessionToken>>; connector: NonNullable<ReturnType<typeof resolveVmSlug>> } | Response> {
   const slug = c.req.param("slug")!;
-  // Parse optional project/role from remaining path
-  const fullPath = c.req.path;
-  const afterSlug = fullPath.replace(`/vm/${slug}/`, "").replace(/\/$/, "");
-  const parts = afterSlug ? afterSlug.split("/") : [];
-  const project = parts[0] || "";
-  const role = parts[1] || "";
-
-  const sessionToken = getCookie(c, SESSION_COOKIE);
-  const user = sessionToken ? getUserBySessionToken(sessionToken) : undefined;
+  // Use the user already resolved by authMiddleware (supports both session cookie and agent key)
+  const user = c.get("user");
 
   if (!user) {
-    return c.redirect(`/auth/github?redirect=${encodeURIComponent(fullPath)}`);
+    const isAjax = c.req.header("accept")?.includes("application/json") ||
+                   c.req.header("x-requested-with") === "XMLHttpRequest";
+    if (isAjax) return c.json({ error: "Authentication required" }, 401);
+    return c.redirect(`/auth/github?redirect=${encodeURIComponent(c.req.path)}`);
   }
 
   const connector = resolveVmSlug(slug);
   if (!connector || connector.user_id !== user.id) {
     return c.html(`<!DOCTYPE html>
 <html><head><title>VM Not Found</title>
+${FAVICON}
 <style>body{font-family:system-ui;max-width:600px;margin:80px auto;padding:0 20px;color:#1a1a2e;background:#f0f0f5;}</style>
-</head><body>
-<h1>VM not found</h1>
+</head><body><h1>VM not found</h1>
 <p>No VM matching "${slug}" was found on your account.</p>
-<p><a href="/">Back to dashboard</a></p>
-</body></html>`, 404);
+<p><a href="/">Back to dashboard</a></p></body></html>`, 404);
   }
 
+  return { user, connector };
+}
+
+// URL rewriting script injected into HTML responses from the VM backend.
+// Patches fetch() and WebSocket() to prepend /vm/:slug so requests route through the relay.
+function makeInjectScript(slug: string): string {
+  const prefix = `/vm/${slug}`;
+  return `<script>(function(){` +
+    `var B='${prefix}';` +
+    // Patch fetch to prepend base path for absolute paths
+    `var F=window.fetch;window.fetch=function(u,o){if(typeof u==='string'&&u[0]==='/')u=B+u;return F.call(this,u,o)};` +
+    // Patch WebSocket to prepend base path
+    `var W=window.WebSocket;window.WebSocket=function(u,p){try{var x=new URL(u);if(x.host===location.host)x.pathname=B+x.pathname;u=x.toString()}catch(e){}return new W(u,p)};` +
+    `window.WebSocket.prototype=W.prototype;` +
+    `window.WebSocket.CONNECTING=W.CONNECTING;window.WebSocket.OPEN=W.OPEN;window.WebSocket.CLOSING=W.CLOSING;window.WebSocket.CLOSED=W.CLOSED;` +
+    `})()</script>`;
+}
+
+// Redirect /vm/:slug (no trailing slash) to /vm/:slug/
+app.get("/vm/:slug", (c) => {
+  return c.redirect(`/vm/${c.req.param("slug")}/`);
+});
+
+// HTTP proxy: all /vm/:slug/* requests are forwarded to the VM backend
+// via HTTP-over-WebSocket through the connector tunnel
+app.all("/vm/:slug/*", async (c) => {
+  const slug = c.req.param("slug")!;
+  const auth = await vmAuth(c);
+  if (auth instanceof Response) return auth;
+  const { connector } = auth;
+
   const cm = getChannelManager();
-  const online = cm.isOnline(connector.id);
-  const pageTitle = [connector.name, project, role].filter(Boolean).join(" / ");
+  if (!cm.isOnline(connector.id)) {
+    return c.html(`<!DOCTYPE html>
+<html><head><title>VM Offline</title>
+${FAVICON}
+<style>body{font-family:system-ui;max-width:600px;margin:80px auto;padding:0 20px;color:#1a1a2e;background:#f0f0f5;}</style>
+</head><body><h1>VM offline</h1>
+<p>${connector.name} is not connected to the relay.</p>
+<p>Start the connector on the VM to bring it online.</p>
+<p><a href="/">Back to dashboard</a></p></body></html>`, 503);
+  }
 
-  return c.html(`<!DOCTYPE html>
-<html><head><title>${pageTitle} — SpAIglass</title>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<style>
-  body { font-family: system-ui; margin: 0; padding: 0; background: #0f172a; color: #e2e8f0; height: 100vh; display: flex; flex-direction: column; }
-  #header { padding: 12px 20px; background: #1e293b; display: flex; align-items: center; gap: 12px; font-size: 0.9em; flex-wrap: wrap; }
-  #header .name { font-weight: bold; font-size: 1.1em; }
-  #header .context { color: #94a3b8; font-size: 0.95em; }
-  #header .status { padding: 2px 8px; border-radius: 4px; font-size: 0.85em; }
-  .online { background: #22c55e; color: #000; }
-  .offline { background: #ef4444; color: #fff; }
-  #messages { flex: 1; overflow-y: auto; padding: 20px; }
-  .msg { margin: 8px 0; padding: 12px 16px; border-radius: 8px; max-width: 80%; white-space: pre-wrap; word-wrap: break-word; }
-  .msg.system { color: #94a3b8; font-style: italic; text-align: center; max-width: 100%; }
-  .msg.user { background: #3b82f6; color: white; margin-left: auto; }
-  .msg.assistant { background: #1e293b; color: #e2e8f0; }
-  #input-area { padding: 16px 20px; background: #1e293b; display: flex; gap: 8px; }
-  #input-area input { flex: 1; padding: 10px 14px; border: 1px solid #334155; border-radius: 8px; background: #0f172a; color: #e2e8f0; font-size: 1em; }
-  #input-area button { padding: 10px 20px; background: #3b82f6; color: white; border: none; border-radius: 8px; font-size: 1em; cursor: pointer; }
-  #input-area button:disabled { opacity: 0.5; }
-  a { color: #60a5fa; }
-</style>
-</head><body>
-<div id="header">
-  <a href="/" style="color: #94a3b8; text-decoration: none;">&larr;</a>
-  <span class="name">${connector.name}</span>
-  ${project ? `<span class="context">/ ${project}${role ? ` / ${role}` : ''}</span>` : ''}
-  <span id="statusBadge" class="status ${online ? 'online' : 'offline'}" style="margin-left: auto;">${online ? 'Online' : 'Offline'}</span>
-</div>
-<div id="messages"></div>
-<div id="input-area">
-  <input id="msgInput" placeholder="${online ? 'Send a message...' : 'VM is offline'}" ${online ? '' : 'disabled'} onkeydown="if(event.key==='Enter')sendMsg()" />
-  <button id="sendBtn" onclick="sendMsg()" ${online ? '' : 'disabled'}>Send</button>
-</div>
-<script>
-const connectorId = "${connector.id}";
-const slug = "${slug}";
-const project = "${project}";
-const role = "${role}";
-const wsUrl = location.protocol.replace('http','ws') + '//' + location.host + '/vm/' + slug + '/ws';
-const messages = document.getElementById('messages');
+  // Strip /vm/:slug prefix — the VM backend serves from root
+  const vmPath = c.req.path.replace(`/vm/${slug}`, "") || "/";
+  const queryString = new URL(c.req.url).search;
+  const fullVmPath = vmPath + queryString;
 
-function addMsg(cls, text) {
-  const d = document.createElement('div');
-  d.className = 'msg ' + cls;
-  d.textContent = text;
-  messages.appendChild(d);
-  messages.scrollTop = messages.scrollHeight;
-}
-
-let ws;
-function connect() {
-  addMsg('system', 'Connecting to ' + slug + (project ? ' (' + project + (role ? '/' + role : '') + ')' : '') + '...');
-  ws = new WebSocket(wsUrl);
-  ws.onopen = () => {
-    addMsg('system', 'Connected.');
-    // If project/role specified, send context to VM so it can route to the right session
-    if (project) {
-      ws.send(JSON.stringify({ type: 'context', project, role }));
+  // Forward relevant request headers
+  const fwdHeaders: Record<string, string> = {};
+  c.req.raw.headers.forEach((value, key) => {
+    const lk = key.toLowerCase();
+    if (!["host", "connection", "upgrade", "transfer-encoding", "keep-alive"].includes(lk)) {
+      fwdHeaders[key] = value;
     }
-  };
-  ws.onmessage = (e) => {
-    try {
-      const msg = JSON.parse(e.data);
-      if (msg.type === 'connected') { addMsg('system', 'Session established.'); return; }
-      if (msg.type === 'error') { addMsg('system', 'Error: ' + msg.message); return; }
-      if (msg.type === 'assistant') {
-        const text = msg.message?.content?.map(b => b.type === 'text' ? b.text : '').join('') || JSON.stringify(msg);
-        addMsg('assistant', text);
-      } else if (msg.type === 'result') {
-        addMsg('system', 'Done. (' + (msg.duration_ms || 0) + 'ms)');
-      } else {
-        addMsg('system', JSON.stringify(msg).slice(0, 200));
+  });
+
+  const body = !["GET", "HEAD"].includes(c.req.method) ? await c.req.text() : undefined;
+
+  try {
+    const resp = await cm.httpRequest(connector.id, c.req.method, fullVmPath, fwdHeaders, body);
+
+    // Set response headers (skip hop-by-hop)
+    for (const [key, value] of Object.entries(resp.headers)) {
+      const lk = key.toLowerCase();
+      if (!["transfer-encoding", "content-length", "connection"].includes(lk)) {
+        c.header(key, value);
       }
-    } catch { addMsg('assistant', e.data); }
-  };
-  ws.onclose = () => addMsg('system', 'Disconnected.');
-  ws.onerror = () => addMsg('system', 'Connection error.');
-}
+    }
 
-function sendMsg() {
-  const input = document.getElementById('msgInput');
-  const text = input.value.trim();
-  if (!text || !ws || ws.readyState !== 1) return;
-  addMsg('user', text);
-  ws.send(JSON.stringify({ type: 'message', text }));
-  input.value = '';
-}
+    const isHtml = resp.headers["content-type"]?.includes("text/html");
 
-${online ? 'connect();' : 'addMsg("system", "VM is offline. Start the connector on the VM to connect.");'}
-</script>
-</body></html>`);
+    if (isHtml && resp.bodyEncoding !== "base64") {
+      // Inject URL rewriting into HTML responses
+      let html = resp.body;
+      const prefix = `/vm/${slug}`;
+
+      // Parse project/role from the path for tab title
+      const afterSlug = vmPath.replace(/^\//, "").replace(/\/$/, "");
+      const pathParts = afterSlug ? afterSlug.split("/") : [];
+      const project = pathParts[0] || "";
+      const role = pathParts[1] || "";
+
+      // Build compact tab title: "SP:DE — vm-name" or "vm-name — SpAIglass"
+      let tabTitle: string;
+      if (project && role) {
+        tabTitle = `${project.slice(0, 2).toUpperCase()}:${role.slice(0, 2).toUpperCase()} — ${connector.name}`;
+      } else if (project) {
+        tabTitle = `${project.slice(0, 2).toUpperCase()} — ${connector.name}`;
+      } else {
+        tabTitle = `${connector.name} — SpAIglass`;
+      }
+
+      // Rewrite <title>
+      html = html.replace(/<title>[^<]*<\/title>/, `<title>${tabTitle}</title>`);
+      // Inject relay favicon
+      html = html.replace(/<link rel="icon"[^>]*>/, FAVICON);
+      // Rewrite absolute src/href paths in HTML tags
+      html = html.replace(/((?:src|href|action)=["'])\/(?!\/)/g, `$1${prefix}/`);
+      // Inject the fetch/WebSocket patching script before </head>
+      html = html.replace("</head>", makeInjectScript(slug) + "</head>");
+      return c.html(html, resp.status as any);
+    }
+
+    if (resp.bodyEncoding === "base64") {
+      const buf = Buffer.from(resp.body, "base64");
+      c.header("Content-Length", buf.length.toString());
+      return new Response(buf, { status: resp.status, headers: c.res.headers });
+    }
+
+    return c.body(resp.body, resp.status as any);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Proxy error";
+    return c.html(`<!DOCTYPE html>
+<html><head><title>Proxy Error</title>
+${FAVICON}
+<style>body{font-family:system-ui;max-width:600px;margin:80px auto;padding:0 20px;color:#1a1a2e;background:#f0f0f5;}</style>
+</head><body><h1>Proxy error</h1>
+<p>${message}</p>
+<p><a href="/">Back to dashboard</a></p></body></html>`, 502);
+  }
 });
 
 // --- Start Server ---

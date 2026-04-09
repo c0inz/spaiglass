@@ -1,15 +1,29 @@
 /**
  * WebSocket tunnel — bridges browsers to SpAIglass VMs.
  *
- * Two endpoints:
+ * Three proxy modes:
  * - /connector — VM inbound: VM connects, sends token, gets registered
- * - /vm/:connectorId/ws — Browser inbound: browser connects, traffic tunneled to VM
+ * - /vm/:slug/api/ws — Browser WebSocket: tunneled to VM's /api/ws
+ * - /vm/:slug/* — Browser HTTP: proxied to VM backend via HTTP-over-WebSocket
  *
  * The relay is transparent — all messages are forwarded without inspection.
  */
 
 import type { WSContext } from "hono/ws";
 import { getConnectorByToken, getConnectorById, touchConnector } from "./db.ts";
+
+export interface HttpProxyResponse {
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+  bodyEncoding?: "utf-8" | "base64";
+}
+
+interface PendingHttpRequest {
+  resolve: (resp: HttpProxyResponse) => void;
+  reject: (err: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
 
 interface ConnectorChannel {
   connectorId: string;
@@ -20,6 +34,7 @@ interface ConnectorChannel {
 
 class ChannelManager {
   private channels = new Map<string, ConnectorChannel>(); // connectorId -> channel
+  private httpPending = new Map<string, PendingHttpRequest>();
 
   /** Register a VM connector */
   register(connectorId: string, userId: string, ws: WSContext): void {
@@ -113,6 +128,46 @@ class ChannelManager {
     }
   }
 
+  /** Proxy an HTTP request through the connector WebSocket tunnel */
+  httpRequest(connectorId: string, method: string, path: string, headers: Record<string, string>, body?: string): Promise<HttpProxyResponse> {
+    const channel = this.channels.get(connectorId);
+    if (!channel) return Promise.reject(new Error("VM offline"));
+
+    const reqId = crypto.randomUUID();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.httpPending.delete(reqId);
+        reject(new Error("HTTP proxy timeout"));
+      }, 30_000);
+
+      this.httpPending.set(reqId, { resolve, reject, timer });
+
+      try {
+        channel.ws.send(JSON.stringify({
+          type: "http_request",
+          reqId,
+          method,
+          path,
+          headers,
+          body,
+        }));
+      } catch {
+        clearTimeout(timer);
+        this.httpPending.delete(reqId);
+        reject(new Error("Failed to send to VM"));
+      }
+    });
+  }
+
+  /** Resolve a pending HTTP proxy request with the VM's response */
+  resolveHttpResponse(reqId: string, response: HttpProxyResponse): void {
+    const pending = this.httpPending.get(reqId);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.httpPending.delete(reqId);
+    pending.resolve(response);
+  }
+
   stats(): { connectors: number; browsers: number } {
     let browsers = 0;
     for (const ch of this.channels.values()) {
@@ -177,6 +232,20 @@ export function handleConnectorWs() {
           connectorId: connector.id,
           name: connector.name,
         }));
+        return;
+      }
+
+      // Handle http_response from VM → pending HTTP proxy request
+      if (msg.type === "http_response") {
+        const reqId = msg.reqId as string;
+        if (reqId) {
+          cm.resolveHttpResponse(reqId, {
+            status: msg.status as number,
+            headers: (msg.headers || {}) as Record<string, string>,
+            body: (msg.body || "") as string,
+            bodyEncoding: msg.bodyEncoding as "utf-8" | "base64" | undefined,
+          });
+        }
         return;
       }
 
