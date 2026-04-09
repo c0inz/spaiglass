@@ -532,7 +532,7 @@ async function loadRoles(connId, connName, slug) {
       var url = '/vm/' + slug + '/' + r.segment + '/';
       var display = hidden && !showHidden ? 'none' : 'flex';
       return '<div class="role-row' + (hidden ? ' hidden-role' : '') + '" style="display:' + display + '">' +
-        '<a href="' + url + '" class="role-name" style="text-decoration:none;color:#3b82f6;">' + label + '</a>' +
+        '<a href="' + url + '" target="_blank" class="role-name" style="text-decoration:none;color:#3b82f6;">' + label + '</a>' +
         '<span class="role-url">' + url + '</span>' +
         '<button class="btn-ghost" onclick="event.stopPropagation();toggleHide(\\'' + connId + '\\',\\'' + r.projBase + '\\',\\'' + r.roleFile + '\\')">' + (hidden ? 'Show' : 'Hide') + '</button>' +
       '</div>';

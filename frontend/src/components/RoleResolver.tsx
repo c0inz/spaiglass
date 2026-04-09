@@ -1,35 +1,36 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { getProjectsUrl } from "../config/api";
 import type { ProjectsResponse } from "../types";
+import { ChatPage } from "./ChatPage";
 
 /**
  * Resolves a project-role from window.__SG (set by the relay inject script)
- * and navigates to the correct ChatPage URL.
+ * and renders ChatPage with the resolved context — without changing the URL.
  *
  * URL pattern: /vm/<slug>/<projectname>-<rolename>/
  * The inject script splits on last hyphen into __SG.project and __SG.role.
- * This component maps project basename → full project path, then navigates.
+ * This component maps project basename → full project path, stores it in
+ * window.__SG_RESOLVED, and renders ChatPage which reads from there.
  */
 export function RoleResolver() {
-  const navigate = useNavigate();
+  const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    resolveProject();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function resolveProject() {
     const sg = (window as any).__SG as
-      | { project?: string; role?: string; segment?: string }
+      | { project?: string; role?: string }
       | undefined;
 
     if (!sg?.project) {
-      // No project context — go to project selector
-      navigate("/", { replace: true });
+      // No project context — just render ChatPage as-is
+      setReady(true);
       return;
     }
 
-    resolveAndNavigate(sg.project, sg.role || "");
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  async function resolveAndNavigate(projectName: string, roleName: string) {
     try {
       const res = await fetch(getProjectsUrl());
       if (!res.ok) {
@@ -42,25 +43,21 @@ export function RoleResolver() {
       // Find project whose path basename matches (case-insensitive)
       const match = data.projects.find((p) => {
         const basename = p.path.split("/").filter(Boolean).pop() || "";
-        return basename.toLowerCase() === projectName.toLowerCase();
+        return basename.toLowerCase() === sg.project!.toLowerCase();
       });
 
       if (!match) {
-        setError(`Project "${projectName}" not found`);
+        setError(`Project "${sg.project}" not found`);
         return;
       }
 
-      const normalizedPath = match.path.startsWith("/")
-        ? match.path
-        : `/${match.path}`;
+      // Store resolved context for ChatPage to read
+      (window as any).__SG_RESOLVED = {
+        path: match.path,
+        role: sg.role ? `${sg.role}.md` : null,
+      };
 
-      if (roleName) {
-        navigate(`/projects${normalizedPath}?role=${roleName}.md`, {
-          replace: true,
-        });
-      } else {
-        navigate(`/projects${normalizedPath}`, { replace: true });
-      }
+      setReady(true);
     } catch {
       setError("Failed to resolve project");
     }
@@ -69,22 +66,18 @@ export function RoleResolver() {
   if (error) {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center">
-          <div className="text-red-600 dark:text-red-400 mb-4">{error}</div>
-          <button
-            onClick={() => navigate("/", { replace: true })}
-            className="text-blue-500 hover:text-blue-400"
-          >
-            Go to project selector
-          </button>
-        </div>
+        <div className="text-red-600 dark:text-red-400">{error}</div>
       </div>
     );
   }
 
-  return (
-    <div className="flex items-center justify-center min-h-screen">
-      <div className="text-slate-600 dark:text-slate-400">Loading...</div>
-    </div>
-  );
+  if (!ready) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-slate-600 dark:text-slate-400">Loading...</div>
+      </div>
+    );
+  }
+
+  return <ChatPage />;
 }

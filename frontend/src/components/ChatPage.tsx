@@ -71,8 +71,11 @@ export function ChatPage() {
   const [thinkingLevel, setThinkingLevel] = useState<"off" | "brief" | "extended">("off");
   const vmConfig = useVmConfig();
 
-  // Extract and normalize working directory from URL
+  // Extract working directory: prefer relay-resolved context, fall back to URL
   const workingDirectory = (() => {
+    const sgResolved = (window as any).__SG_RESOLVED as { path?: string } | undefined;
+    if (sgResolved?.path) return sgResolved.path;
+
     const rawPath = location.pathname.replace("/projects", "");
     if (!rawPath) return undefined;
 
@@ -110,10 +113,11 @@ export function ChatPage() {
       },
     });
 
-  // Get current view, sessionId, and role from query parameters
+  // Get current view, sessionId, and role from query parameters or relay context
   const currentView = searchParams.get("view");
   const sessionId = searchParams.get("sessionId");
-  const roleFile = searchParams.get("role");
+  const roleFile = searchParams.get("role") ||
+    ((window as any).__SG_RESOLVED as { role?: string } | undefined)?.role || null;
   const isHistoryView = currentView === "history";
   const isLoadedConversation = !!sessionId && !isHistoryView;
 
@@ -635,16 +639,14 @@ export function ChatPage() {
           )}
           <div>
             <div className="flex items-center">
-              <button
-                onClick={handleBackToProjects}
-                className="text-slate-800 dark:text-slate-100 text-lg sm:text-2xl font-bold tracking-tight hover:text-blue-600 dark:hover:text-blue-400 transition-colors duration-200 focus:outline-none rounded-md px-1 -mx-1"
-                aria-label="Back to project selection"
+              <span
+                className="text-slate-800 dark:text-slate-100 text-lg sm:text-2xl font-bold tracking-tight px-1 -mx-1"
               >
                 SpAIglass
-              </button>
+              </span>
               {workingDirectory && (
-                <span className="ml-3 text-sm font-medium text-blue-500 dark:text-blue-400">
-                  {workingDirectory.split("/").filter(Boolean).pop()}
+                <span className="ml-3 text-sm font-medium text-blue-500 dark:text-blue-400" title={workingDirectory}>
+                  {workingDirectory}
                 </span>
               )}
               {activeContext && (
