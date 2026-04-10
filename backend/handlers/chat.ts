@@ -130,12 +130,9 @@ async function* executeClaudeCommand(
   let abortController: AbortController;
 
   try {
-    // Process commands that start with '/'
+    // Pass message through as-is — slash commands like /help, /compact etc.
+    // are handled by the Claude Code CLI directly
     let processedMessage = message;
-    if (message.startsWith("/")) {
-      // Remove the '/' and send just the command
-      processedMessage = message.substring(1);
-    }
 
     // Create and store AbortController for this request
     abortController = new AbortController();

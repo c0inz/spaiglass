@@ -6,6 +6,8 @@ import {
   ChevronRightIcon,
   ArrowPathIcon,
 } from "@heroicons/react/24/outline";
+import type { SessionStats } from "../types";
+import { HelpPanel } from "./HelpPanel";
 
 interface TreeEntry {
   name: string;
@@ -25,6 +27,8 @@ interface FileSidebarProps {
   onFileSelect: (path: string, name: string) => void;
   contextFiles?: Set<string>;
   contextFilesList?: ContextFileEntry[];
+  sessionStats?: SessionStats;
+  slashCommands?: string[];
 }
 
 function TreeNode({
@@ -137,10 +141,12 @@ export function FileSidebar({
   onFileSelect,
   contextFiles,
   contextFilesList,
+  sessionStats,
+  slashCommands,
 }: FileSidebarProps) {
   const [tree, setTree] = useState<TreeEntry[]>([]);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<"tree" | "context">("tree");
+  const [activeTab, setActiveTab] = useState<"tree" | "context" | "help">("tree");
 
   const loadTree = useCallback(async () => {
     setLoading(true);
@@ -196,6 +202,16 @@ export function FileSidebar({
           )}
         </button>
         <button
+          onClick={() => setActiveTab("help")}
+          className={`flex-1 text-xs font-medium py-2 transition-colors ${
+            activeTab === "help"
+              ? "text-blue-600 dark:text-blue-400 border-b-2 border-blue-500"
+              : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300"
+          }`}
+        >
+          Help
+        </button>
+        <button
           onClick={loadTree}
           className="px-2 py-2 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
           title="Refresh"
@@ -206,7 +222,12 @@ export function FileSidebar({
 
       {/* Tab content */}
       <div className="flex-1 overflow-auto py-1">
-        {activeTab === "tree" ? (
+        {activeTab === "help" ? (
+          <HelpPanel
+            stats={sessionStats || { model: "", inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, totalCost: 0, turns: 0, durationMs: 0, sessionId: "" }}
+            slashCommands={slashCommands || []}
+          />
+        ) : activeTab === "tree" ? (
           loading && tree.length === 0 ? (
             <div className="text-xs text-slate-400 px-3 py-2">Loading...</div>
           ) : (

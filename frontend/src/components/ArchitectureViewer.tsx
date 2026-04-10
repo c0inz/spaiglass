@@ -162,9 +162,27 @@ export function ArchitectureViewer({ projectPath }: ArchitectureViewerProps) {
   }
 
   if (error) {
+    // Determine setup URL — use relay setup if running under /vm/ prefix, otherwise local /setup
+    const sgBase = (window as any).__SG_BASE as string | undefined;
+    const setupUrl = sgBase
+      ? `${window.location.origin}/setup`
+      : "/setup";
+
     return (
       <div className="p-4 text-slate-500 text-sm">
-        {error}
+        <p className="mb-2">Missing <code className="bg-slate-800 px-1.5 py-0.5 rounded text-slate-400">architecture/architecture.json</code> in this project.</p>
+        <p>
+          Follow the instructions in the{" "}
+          <a
+            href={setupUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-400 hover:text-blue-300 underline"
+          >
+            setup guide
+          </a>{" "}
+          to create one.
+        </p>
       </div>
     );
   }

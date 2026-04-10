@@ -1,13 +1,45 @@
 # SpAIglass
 
-> Browser-based multi-VM interface for Claude Code. Manage your AI agent fleet from any device.
+**Claude chat and markdown access from ANYWHERE.**
 
-SpAIglass lets you run Claude Code on remote VMs and access them through your browser. The relay server handles authentication, routing, and WebSocket tunneling so you never need SSH or a terminal.
+> Browser-based multi-VM interface for Claude Code. Open source. Fully auditable. Your code never leaves your machine.
 
-**Source code:** [github.com/c0inz/spaiglass](https://github.com/c0inz/spaiglass)
-**Live relay:** [spaiglass.xyz](https://spaiglass.xyz)
-**License:** [MIT](LICENSE)
-**Operator:** [ReadyStack.dev](https://readystack.dev)
+SpAIglass lets you run Claude Code on remote VMs and access them through your browser — from any device, anywhere. Chat with Claude, browse your project files, edit markdown, and manage your AI agent fleet. The relay is a stateless routing proxy: it routes traffic but never stores, inspects, or logs your code, conversations, or files. All relay traffic is TLS-encrypted end to end.
+
+| | |
+|---|---|
+| **Source code** | [github.com/c0inz/spaiglass](https://github.com/c0inz/spaiglass) |
+| **Live relay** | [spaiglass.xyz](https://spaiglass.xyz) |
+| **License** | [MIT](LICENSE) — free and open source |
+| **Operator** | [ReadyStack.dev](https://readystack.dev) |
+
+### Features
+
+- **Chat with Claude Code** from any browser — laptop, phone, tablet
+- **Cross-platform host support** — Linux, macOS (Intel + Apple Silicon), and Windows 10/11 in the same fleet
+- **One-line install per platform** — `curl install.sh | bash` on Linux/macOS, `iwr install.ps1 | iex` on Windows
+- **Project file browser** — see and edit your files while you chat
+- **Markdown editor** — Monaco-powered, syntax highlighted, Ctrl+S to save
+- **Six themes** — light, dark, glass, plain, plus 70s amber/green CRT phosphor with a five-color picker
+- **Role-based sessions** — define agent roles per project via `agents/*.md` files
+- **Architecture viewer** — ASCII diagrams from `architecture.json`
+- **Multi-VM fleet management** — one dashboard for all your machines, with a per-VM version-skew banner
+- **Open source & fully auditable** — MIT licensed, relay is ~800 lines of TypeScript
+- **Risk-avoidance architecture** — relay never stores code, files, or conversations
+- **Full encryption** — all traffic is HTTPS/WSS (TLS 1.3)
+- **Outbound-only** — VMs connect out, no inbound ports or firewall holes needed
+
+### Supported Claude CLI platforms
+
+Spaiglass uses the official **Anthropic Claude Code CLI** to spawn sessions on each host. It runs anywhere the Claude CLI does:
+
+| Platform | Versions | Service | Installer |
+|---|---|---|---|
+| **Linux** | Ubuntu, Debian, Fedora, Arch — anything with `bash`, `tar`, `node>=20` | `systemd --user` with linger | `curl -fsSL https://spaiglass.xyz/install.sh \| bash -s -- ...` |
+| **macOS** | 12+ on Intel or Apple Silicon | launchd LaunchAgent under `~/Library/LaunchAgents` | `curl -fsSL https://spaiglass.xyz/install.sh \| bash -s -- ...` |
+| **Windows** | 10 (build 17063+) and 11 | Per-user Scheduled Task at logon (no admin) | `& ([scriptblock]::Create((iwr https://spaiglass.xyz/install.ps1 -useb))) ...` |
+
+Install the Claude Code CLI first via [`claude.ai/install.sh`](https://claude.ai/install.sh) (Linux/macOS) or [`claude.ai/install.ps1`](https://claude.ai/install.ps1) (Windows), then run the spaiglass installer for your platform.
 
 ---
 
@@ -16,22 +48,27 @@ SpAIglass lets you run Claude Code on remote VMs and access them through your br
 ```
 Browser (any device)
   |
-  | HTTPS + WSS
+  | HTTPS + WSS  (TLS 1.3 via Caddy + Let's Encrypt)
   v
-SGCleanRelay (spaiglass.xyz)        <-- this repo: relay/
-  |  - GitHub OAuth
+SGCleanRelay (spaiglass.xyz)              <-- this repo: relay/
+  |  - GitHub OAuth + session cookies
   |  - Connector registry (SQLite)
   |  - Agent key API
   |  - WebSocket tunnel routing
+  |  - Serves the React frontend dist/    <-- so VMs only ship the backend
   |
-  | WSS (persistent)
+  | WSS (persistent, dialed OUT from the host)
   v
-SpAIglass VM (your infrastructure)   <-- this repo: backend/ + frontend/
-  |  - Claude Code SDK
-  |  - Persistent sessions
-  |  - File management
+Spaiglass host (Linux / macOS / Windows)  <-- this repo: backend/ + connector
+  |  - Backend on 127.0.0.1:8080
+  |  - Outbound connector dials wss://spaiglass.xyz/connector
+  |  - File browser, editor, project discovery
+  |  - Spawns the Anthropic Claude Code CLI
   v
-Claude API (Anthropic)
+Claude Code CLI (local)
+  |
+  v
+Anthropic API (api.anthropic.com)
 ```
 
 ### How it works
@@ -133,7 +170,7 @@ git rev-parse HEAD
 
 ### Audit the code yourself
 
-The relay is ~500 lines of TypeScript across 8 files in `relay/src/`. Start here:
+The relay is ~800 lines of TypeScript across 8 files in `relay/src/`. Start here:
 
 | File | What to audit |
 |---|---|
@@ -147,49 +184,59 @@ The relay is ~500 lines of TypeScript across 8 files in `relay/src/`. Start here
 
 ## Quick Start
 
+### Browser enrollment (recommended)
+
+1. Sign in at [spaiglass.xyz](https://spaiglass.xyz) with GitHub
+2. Click **Register VM**, give it a name — the dashboard pops up a modal with two tabs:
+   - **Linux / macOS:** `curl -fsSL https://spaiglass.xyz/install.sh | bash -s -- --token=… --id=… --name=…`
+   - **Windows 10/11:** `& ([scriptblock]::Create((iwr https://spaiglass.xyz/install.ps1 -useb))) -Token … -Id … -Name …`
+3. Paste the command on the host. The installer downloads a slim tarball (~130 KB), installs production node deps, writes a `.env`, and registers a service that runs at boot/logon.
+4. Your VM appears on the dashboard at `https://spaiglass.xyz/vm/<github-login>.<vm-name>/`.
+
+The installer is **idempotent** — re-run it to upgrade in place. It preserves your `.env` and restarts the service. Pass `--uninstall` (or `-Uninstall` on Windows) to remove.
+
 ### Fully agentic enrollment (zero human interaction)
 
-Point an LLM agent or script at the relay. It reads `/setup`, authenticates, registers VMs, installs the connector, and reports the URL. No browser needed at any point.
+For LLM agents and provisioning scripts, the relay's `/api/setup` endpoint returns the same instructions as JSON. The full machine-readable flow:
 
 ```bash
-# Step 1: Get an agent key (exchange a GitHub PAT — no browser needed)
+# Step 1: Exchange a GitHub PAT for a reusable spaiglass agent key
 curl -X POST https://spaiglass.xyz/api/auth/token-exchange \
   -H "Content-Type: application/json" \
   -d '{"github_pat": "ghp_YOUR_TOKEN", "key_name": "provisioner"}'
 # Returns: { "agent_key": "sg_...", "user": { "login": "..." } }
 
-# Step 2: Register a VM
+# Step 2: Register a VM (returns a one-time install token)
 curl -X POST https://spaiglass.xyz/api/connectors \
   -H "Authorization: Bearer sg_YOUR_AGENT_KEY" \
   -H "Content-Type: application/json" \
   -d '{"name": "dev-vm-01"}'
-# Returns: { "id": "abc-123", "token": "...", ... }
+# Returns: { "id": "abc-123", "token": "...", "name": "dev-vm-01" }
 
-# Step 3: Download the connector config
-curl https://spaiglass.xyz/api/connectors/abc-123/config \
-  -H "Authorization: Bearer sg_YOUR_AGENT_KEY" \
-  -o connector.env
-# Returns a .env file with install instructions, relay URL, and token
+# Step 3a: Install on the host — Linux or macOS
+curl -fsSL https://spaiglass.xyz/install.sh | bash -s -- \
+    --token=YOUR_TOKEN --id=abc-123 --name=dev-vm-01
 
-# Step 4: Install on the VM
-git clone https://github.com/c0inz/spaiglass.git /opt/spaiglass
-cd /opt/spaiglass/frontend && npm install && npm run build
-cd /opt/spaiglass/backend && npm install
-ln -sf /opt/spaiglass/frontend/dist /opt/spaiglass/backend/static
-cp /path/to/connector.env /opt/spaiglass/backend/.env
+# Step 3b: Install on the host — Windows 10/11 (PowerShell, no admin)
+& ([scriptblock]::Create((iwr https://spaiglass.xyz/install.ps1 -useb))) `
+    -Token YOUR_TOKEN -Id abc-123 -Name dev-vm-01
 
-# Step 5: Start backend + relay connector (two processes)
-cd /opt/spaiglass/backend
-npx tsx cli/node.ts --host 0.0.0.0 --port 8080 &   # local web UI + Claude bridge
-npx tsx connector.ts                                  # outbound relay connection
-
-# Step 6: Tell the user their VM is live at:
-#   https://spaiglass.xyz/vm/abc-123/
+# Step 4: Done. The host is live at:
+#   https://spaiglass.xyz/vm/<github-login>.dev-vm-01/
 ```
+
+### Prerequisites on the host
+
+- **Node.js >= 20** and **npm**
+- **Claude Code CLI** installed and authenticated:
+  - Linux/macOS: `curl -fsSL https://claude.ai/install.sh | bash` then `claude` (one-time auth)
+  - Windows: `irm https://claude.ai/install.ps1 | iex` then `claude` (one-time auth)
+- Linux only: `tar` and `bash`
+- Windows only: PowerShell 5.1+ and `tar.exe` (ships with Windows 10 1803+)
 
 ### Adding more VMs to the same account
 
-The agent key is reusable. Once you have one, repeat steps 2-5 for each VM -- no re-authentication needed. Each VM gets its own connector ID and token, but they all belong to the same user account.
+The agent key is reusable. Repeat step 2 + step 3 with the same key — each host gets its own connector ID and token under the same account. Mix Linux, macOS, and Windows freely.
 
 ```bash
 # Same agent key, new VM
@@ -197,21 +244,7 @@ curl -X POST https://spaiglass.xyz/api/connectors \
   -H "Authorization: Bearer sg_YOUR_AGENT_KEY" \
   -H "Content-Type: application/json" \
   -d '{"name": "staging-vm-02"}'
-
-# An agent key can also create more agent keys
-curl -X POST https://spaiglass.xyz/api/agent-keys \
-  -H "Authorization: Bearer sg_YOUR_AGENT_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"name": "another-agent"}'
 ```
-
-### Browser enrollment
-
-If you prefer the browser:
-
-1. Sign in at [spaiglass.xyz](https://spaiglass.xyz) with GitHub
-2. Register VMs and create agent keys from the dashboard
-3. Download connector configs and install on your VMs
 
 ### Self-host the relay
 

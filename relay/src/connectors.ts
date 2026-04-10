@@ -31,6 +31,9 @@ export function connectorRoutes(): Hono<RelayEnv> {
       online: cm.isOnline(conn.id),
       lastSeen: conn.last_seen,
       createdAt: conn.created_at,
+      // Spaiglass install version reported by the VM on its WS auth handshake.
+      // Null when offline. Dashboard compares against LATEST_SPAIGLASS_VERSION.
+      spaiglassVersion: cm.getVersion(conn.id),
     })));
   });
 

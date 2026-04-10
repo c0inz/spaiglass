@@ -30,6 +30,7 @@ interface ConnectorChannel {
   userId: string;
   ws: WSContext;
   browsers: Map<string, WSContext>; // browserId -> browser WS
+  spaiglassVersion: string; // version reported by VM on auth, e.g. "2026.04.10"
 }
 
 class ChannelManager {
@@ -37,7 +38,7 @@ class ChannelManager {
   private httpPending = new Map<string, PendingHttpRequest>();
 
   /** Register a VM connector */
-  register(connectorId: string, userId: string, ws: WSContext): void {
+  register(connectorId: string, userId: string, ws: WSContext, spaiglassVersion: string): void {
     // Disconnect existing connection if any
     this.disconnect(connectorId);
     this.channels.set(connectorId, {
@@ -45,7 +46,13 @@ class ChannelManager {
       userId,
       ws,
       browsers: new Map(),
+      spaiglassVersion,
     });
+  }
+
+  /** Get the spaiglass version reported by a connector on auth, or null if offline */
+  getVersion(connectorId: string): string | null {
+    return this.channels.get(connectorId)?.spaiglassVersion ?? null;
   }
 
   /** Remove a VM connector */
@@ -129,7 +136,7 @@ class ChannelManager {
   }
 
   /** Proxy an HTTP request through the connector WebSocket tunnel */
-  httpRequest(connectorId: string, method: string, path: string, headers: Record<string, string>, body?: string): Promise<HttpProxyResponse> {
+  httpRequest(connectorId: string, method: string, path: string, headers: Record<string, string>, body?: string, bodyEncoding?: "utf-8" | "base64"): Promise<HttpProxyResponse> {
     const channel = this.channels.get(connectorId);
     if (!channel) return Promise.reject(new Error("VM offline"));
 
@@ -150,6 +157,7 @@ class ChannelManager {
           path,
           headers,
           body,
+          bodyEncoding,
         }));
       } catch {
         clearTimeout(timer);
@@ -220,8 +228,10 @@ export function handleConnectorWs() {
           return;
         }
 
-        // Register the connector channel
-        cm.register(connector.id, connector.user_id, ws);
+        // Register the connector channel; record the spaiglass install version
+        // the VM is running so the dashboard can show an out-of-date banner.
+        const version = (typeof msg.spaiglassVersion === "string" && msg.spaiglassVersion) || "unknown";
+        cm.register(connector.id, connector.user_id, ws, version);
         touchConnector(connector.id);
 
         // Store connector ID on the WS for cleanup

@@ -27,6 +27,10 @@ const CONNECTOR_ID = process.env.CONNECTOR_ID;
 const LOCAL_PORT = process.env.PORT || "8080";
 const LOCAL_HOST = process.env.HOST || "0.0.0.0";
 const LOCAL_WS = `ws://127.0.0.1:${LOCAL_PORT}/api/ws`;
+// Spaiglass install version (date string like "2026.04.10"). Written into .env
+// by install.sh from the VERSION file shipped in the dist tarball, so the relay
+// can detect VMs running an out-of-date install and surface an update banner.
+const SPAIGLASS_VERSION = process.env.SPAIGLASS_VERSION || "unknown";
 
 if (!RELAY_URL || !CONNECTOR_TOKEN) {
   console.error("Missing RELAY_URL or CONNECTOR_TOKEN in .env");
@@ -59,7 +63,11 @@ function connectToRelay() {
 
   relayWs.on("open", () => {
     log("Connected to relay, authenticating...");
-    relayWs!.send(JSON.stringify({ type: "auth", token: CONNECTOR_TOKEN }));
+    relayWs!.send(JSON.stringify({
+      type: "auth",
+      token: CONNECTOR_TOKEN,
+      spaiglassVersion: SPAIGLASS_VERSION,
+    }));
   });
 
   relayWs.on("message", (raw) => {
@@ -127,7 +135,8 @@ async function handleHttpRequest(msg: Record<string, unknown>) {
   const method = msg.method as string;
   const path = msg.path as string;
   const headers = (msg.headers || {}) as Record<string, string>;
-  const body = msg.body as string | undefined;
+  const rawBody = msg.body as string | undefined;
+  const bodyEncoding = msg.bodyEncoding as "utf-8" | "base64" | undefined;
 
   const localUrl = `http://127.0.0.1:${LOCAL_PORT}${path}`;
 
@@ -142,10 +151,16 @@ async function handleHttpRequest(msg: Record<string, unknown>) {
     }
     fwdHeaders["host"] = `127.0.0.1:${LOCAL_PORT}`;
 
+    // Decode body: base64 for binary (multipart/form-data), utf-8 for text
+    let fetchBody: string | Buffer | undefined;
+    if (method !== "GET" && method !== "HEAD" && rawBody) {
+      fetchBody = bodyEncoding === "base64" ? Buffer.from(rawBody, "base64") : rawBody;
+    }
+
     const resp = await fetch(localUrl, {
       method,
       headers: fwdHeaders,
-      body: method !== "GET" && method !== "HEAD" ? body : undefined,
+      body: fetchBody,
       redirect: "manual",
     });
 

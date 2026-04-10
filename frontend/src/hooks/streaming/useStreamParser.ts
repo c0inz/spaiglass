@@ -37,6 +37,8 @@ export function useStreamParser() {
 
         // Session handling
         onSessionId: context.onSessionId,
+        onSlashCommands: context.onSlashCommands,
+        onSessionStats: context.onSessionStats,
         hasReceivedInit: context.hasReceivedInit,
         setHasReceivedInit: context.setHasReceivedInit,
 

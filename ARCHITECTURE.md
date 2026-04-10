@@ -2,27 +2,47 @@
 
 ## Overview
 
-**Spyglass** — fork of `sugyan/claude-code-webui` with added features. One deployment per VM.
-Each deployment is a standalone Node.js process serving the full application.
+**SpAIglass** — fork of `sugyan/claude-code-webui` with added features. The application is split into a stateless internet-facing relay (`SGCleanRelay`) and a per-host backend that runs on each managed machine. The relay also serves the React frontend so that hosts only need to ship the backend.
 
 ```
-User Browser (laptop or phone)
+User Browser (any device, any network)
       │
-      │  HTTPS via Tailscale
+      │  HTTPS / WSS (TLS 1.3 via Caddy + Let's Encrypt)
       ▼
-WebUI Backend (Node.js + Hono) ← runs on Ubuntu VM
+SGCleanRelay (spaiglass.xyz)
       │
-      ├── Serves React frontend (static build)
-      ├── /api/chat        → spawns Claude CLI process
-      ├── /api/files       → reads/writes VM filesystem
-      ├── /api/upload      → receives uploaded images
-      └── /api/projects    → project directory management
+      ├── GitHub OAuth + session cookies
+      ├── Connector registry (SQLite)
+      ├── Agent key API (sg_...)
+      ├── WebSocket tunnel routing
+      └── Serves the React frontend dist/
+      │
+      │  WSS (persistent, dialed OUT from each host)
+      ▼
+SpAIglass host backend (Linux / macOS / Windows)
+      │
+      ├── 127.0.0.1:8080 backend (Hono + Node.js >= 20)
+      ├── Outbound connector → wss://spaiglass.xyz/connector
+      ├── /api/chat     → spawns Anthropic Claude Code CLI
+      ├── /api/files    → file browser, editor, project discovery
+      ├── /api/upload   → image upload handler
+      └── /api/projects → project directory management
       │
       ▼
-Claude CLI (installed on same VM)
+Anthropic Claude Code CLI (installed on the host)
       │
-      └── Works within selected project directory
+      └── Runs inside the selected project directory
 ```
+
+### Supported host platforms
+
+| Platform | Versions | Service mechanism | Installer |
+|---|---|---|---|
+| **Linux** | Any distro with bash, tar, node >= 20 (Ubuntu, Debian, Fedora, Arch...) | `systemd --user` with linger enabled so the unit survives logout | `curl -fsSL https://spaiglass.xyz/install.sh \| bash -s -- ...` |
+| **macOS** | macOS 12+ on Intel or Apple Silicon | `launchd` LaunchAgent in `~/Library/LaunchAgents` | `curl -fsSL https://spaiglass.xyz/install.sh \| bash -s -- ...` |
+| **Windows** | Windows 10 build 17063+ and Windows 11 | Per-user Scheduled Task that runs at logon (no admin) | `& ([scriptblock]::Create((iwr https://spaiglass.xyz/install.ps1 -useb))) ...` |
+
+The Claude Code CLI (from `claude.ai/install.sh` or `claude.ai/install.ps1`) must be installed and authenticated on the host before running the spaiglass installer. The spaiglass installers are idempotent — re-running upgrades in place and preserves the host's `.env`.
 
 ## Base Repository
 
@@ -123,40 +143,19 @@ Each VM stores its last session state in a JSON file on disk:
   to the project/context picker
 - "New Session" button clears this and shows the picker
 
-## Fleet Portal
+## Fleet Management (relay dashboard)
 
-A minimal standalone app running on Super-Server (port 9090).
+Fleet management is part of the relay itself — there is no separate portal. After signing in to `spaiglass.xyz` with GitHub, the dashboard lists every connector the user owns, regardless of platform, and provides:
 
-```
-User Browser
-      │
-      │  http://<super-server-tailscale-ip>:9090
-      ▼
-Fleet Portal (Node.js + static HTML)
-      │
-      ├── Reads fleet.json for server list
-      ├── Queries each server's /api/discover for projects + roles
-      ├── Pings each server's /api/health for online/offline
-      ├── Renders hierarchical list: Server → Project → Role
-      └── Click a row → window.open(vm.url/projects/<path>?role=<file>)
-```
+- **Add VM modal** — generates a one-time install token and presents two tabs: Linux/macOS (`curl install.sh | bash`) and Windows (`iwr install.ps1 | iex`). Clipboard-ready commands include the token, connector ID, and host name.
+- **Live status** — connector last-seen timestamps, online/offline indicators driven by the relay's WebSocket registry.
+- **Per-VM links** — each connector renders a clickable URL of the form `https://spaiglass.xyz/vm/<github-login>.<vm-name>/` that tunnels the browser to that host.
+- **Version-skew banner** — the relay-served frontend polls `/api/release` and surfaces a per-VM warning when a backend reports an older release than the relay.
+- **Connector lifecycle** — rename, regenerate token, delete. Connector tokens are stored only as SHA-256 hashes.
 
-**fleet.json:**
-```json
-{
-  "servers": [
-    { "name": "Super-Server", "url": "http://192.168.1.153:3000", "projectsDir": "/home/johntdavenport/projects" },
-    { "name": "Designer-VM", "url": "http://100.x.x.x:3000", "projectsDir": "/home/readystack/projects" }
-  ],
-  "hidden": [
-    { "server": "Super-Server", "project": "oldproject", "role": "deprecated-role" }
-  ]
-}
-```
+### Discovery endpoint (on each host)
 
-**Discovery endpoint (on each VM):**
-- `GET /api/discover?projectsDir=<path>` → scans for projects with
-  `agents/*.md` files:
+- `GET /api/discover?projectsDir=<path>` → scans for projects with `agents/*.md` files and returns the same structure used by the relay dashboard:
   ```json
   {
     "projects": [
@@ -169,58 +168,68 @@ Fleet Portal (Node.js + static HTML)
       }
     ],
     "unassigned": [
-      { "name": "spyglass", "path": "/home/johntdavenport/projects/spyglass" }
+      { "name": "spaiglass", "path": "/home/johntdavenport/projects/spaiglass" }
     ]
   }
   ```
 - `projects` = directories with `agents/*.md` files (have roles)
 - `unassigned` = directories without `agents/` (no roles yet)
-
-**New role creation flow:**
-When user clicks an unassigned project or a bare server:
-1. Portal shows project picker (from `unassigned` list)
-2. User names a role
-3. `POST /api/files/write` creates `agents/<rolename>.md` in that project
-4. Portal opens Spyglass with that project + role
-
-The portal is auth-protected (same `AUTH_PASSWORD` pattern).
-
-Each VM's WebUI adds:
-- `GET /api/health` → `{ "status": "ok", "role": "Designer" }`
-- `GET /api/discover` → project/role discovery (see above)
+- `GET /api/health` → `{ "status": "ok", "role": "<VM_ROLE>", "version": "<release>" }`
 
 ## Deployment
 
-### Per-VM deployment script
+### Browser enrollment (recommended)
+
+1. Sign in to `spaiglass.xyz` with GitHub.
+2. Click **Register VM**, give it a name. The dashboard pops up a modal with two platform tabs.
+3. Copy the appropriate one-line installer and paste it on the host.
+4. The host appears in the dashboard at `https://spaiglass.xyz/vm/<github-login>.<vm-name>/`.
+
+### Agentic / scripted enrollment
+
+For LLM agents and provisioning scripts, the relay's `/api/setup` endpoint returns the same instructions as JSON, and `/api/auth/token-exchange` lets a GitHub PAT mint a reusable `sg_...` agent key. With that key the script:
 
 ```bash
-# Usage from Super-Server:
-./deploy-webui.sh --host <tailscale-ip> --role "Designer" --password "pass"
+# 1. Register the VM (returns id + one-time token)
+curl -X POST https://spaiglass.xyz/api/connectors \
+  -H "Authorization: Bearer sg_..." \
+  -H "Content-Type: application/json" \
+  -d '{"name":"dev-vm-01"}'
 
-# Or bulk deploy from manifest:
-./deploy-webui.sh --manifest fleet.json
+# 2a. Linux / macOS host
+curl -fsSL https://spaiglass.xyz/install.sh | bash -s -- \
+    --token=TOKEN --id=ID --name=dev-vm-01
+
+# 2b. Windows host (PowerShell, no admin)
+& ([scriptblock]::Create((iwr https://spaiglass.xyz/install.ps1 -useb))) `
+    -Token TOKEN -Id ID -Name dev-vm-01
 ```
 
-The script:
-1. SSHes into the target VM
-2. Clones (or pulls) the repo to `~/claude-webui`
-3. Runs `npm install`
-4. Creates `/etc/systemd/system/claude-webui.service` with env vars
-5. Enables and starts the service
-6. Verifies `/api/health` responds
+### What each installer does
 
-### Per-VM systemd service
+| Step | Linux (`install.sh`) | macOS (`install.sh`) | Windows (`install.ps1`) |
+|---|---|---|---|
+| Download | Slim ~130 KB tarball from `spaiglass.xyz/dist/spaiglass-host.tar.gz` | Same | Same (tar.exe ships with Windows 10 1803+) |
+| Install | Extracts under `~/.local/share/spaiglass`, runs `npm install --omit=dev` | Same | Extracts under `%LOCALAPPDATA%\spaiglass`, runs `npm install --omit=dev` |
+| Config | Writes `~/.config/spaiglass/.env` with token + connector id | Same | Writes `%LOCALAPPDATA%\spaiglass\.env` |
+| Service | `systemd --user` unit + `loginctl enable-linger` so it survives logout | `launchd` LaunchAgent in `~/Library/LaunchAgents`, loaded with `launchctl bootstrap gui/$(id -u)` | Per-user Scheduled Task that runs at logon, no admin required |
+| Idempotency | Re-running upgrades in place, preserves `.env`, restarts the unit | Same | Same |
+| Uninstall | `--uninstall` flag tears down service and removes the install dir | Same | `-Uninstall` flag |
 
-```bash
-# /etc/systemd/system/claude-webui.service
-AUTH_PASSWORD=<password>
-VM_ROLE=Designer
-PORT=8080
-HOST=0.0.0.0
-CLAUDE_WORKING_DIR=/home/readystack/projects
+### Per-host configuration
+
+The backend reads its environment from the platform-appropriate `.env` file:
+
+```
+SPAIGLASS_RELAY_URL=wss://spaiglass.xyz
+SPAIGLASS_CONNECTOR_ID=<uuid>
+SPAIGLASS_CONNECTOR_TOKEN=<one-time token, used to authenticate the WSS dial>
+VM_ROLE=Designer            # optional label shown in the header
+PORT=8080                   # backend bound to 127.0.0.1:8080 only
+CLAUDE_WORKING_DIR=...      # defaults to the user's home dir
 ```
 
-Starts on boot via systemd. Restarts automatically on crash.
+The backend never opens an inbound port — all traffic reaches it via the outbound WebSocket dialed by the connector.
 
 ## Directory Structure (fork)
 
@@ -379,17 +388,100 @@ spyglass/                    ← forked repo
   use full-width editor (no split view).
 - Save and dirty state work identically across all three formats.
 
-## Security Boundaries
+## Security Architecture
 
-- WebUI only accessible via Tailscale (firewall blocks port 8080 from public)
+SpAIglass is designed around a **risk-avoidance architecture**: the relay is deliberately kept as thin and stateless as possible, so that even a fully compromised relay cannot access your code, conversations, or files.
+
+### Threat Model
+
+The relay is the only internet-facing component. Its attack surface is intentionally minimal:
+
+| Threat | Mitigation |
+|--------|-----------|
+| Relay compromise exposes user data | Relay stores no user data — only GitHub identity (public info) and connector tokens. No code, files, or conversations are ever stored or logged by the relay. |
+| Traffic interception | All relay traffic is TLS-encrypted (HTTPS/WSS via Caddy). Browser-to-relay and VM-to-relay connections both use WSS. No plaintext data traverses the network at any point. |
+| Unauthorized VM access | Each connector authenticates with a unique token. Browser sessions require GitHub OAuth. The relay validates both before routing any traffic. A valid session can only reach connectors owned by the authenticated user. |
+| Lateral movement between VMs | VMs are isolated from each other. The relay routes traffic per-connector — there is no mechanism for one connector to reach another. Each VM's backend only serves its own project directories. |
+| Path traversal / filesystem access | The backend's file API validates all paths against the current project directory. Symlink resolution and `..` traversal are rejected. Upload directories are temporary and not statically served. |
+| Session hijacking | Auth cookies are httpOnly, secure-flagged, SameSite=Lax, and expire after 72 hours. Agent API keys are stored as SHA-256 hashes — the plaintext key is shown once at creation and never stored. |
+| Relay MITM / impersonation | VMs connect outbound to the relay — no inbound ports are opened. The connector uses the relay's TLS certificate for authentication. DNS is served via Cloudflare. |
+
+### Data Flow
+
+```
+Browser (anywhere)
+    │
+    │  HTTPS/WSS (TLS 1.3)
+    ▼
+SpAIglass Relay (spaiglass.xyz)
+    │  Stateless routing proxy
+    │  Stores: GitHub identity, connector tokens
+    │  Does NOT store: code, files, conversations, prompts, responses
+    │
+    │  WSS (TLS 1.3, outbound from VM)
+    ▼
+VM Backend (your machine)
+    │  Serves React frontend (static build)
+    │  Manages file browser, editor, project discovery
+    │  Spawns Claude CLI processes
+    │
+    ▼
+Claude CLI (local to VM)
+    │  All code execution happens here
+    │  Conversation history stored locally (~/.claude/)
+    │  API calls go directly to Anthropic (api.anthropic.com)
+    └── Your code never leaves this machine
+```
+
+### What the relay knows
+
+The relay sees WebSocket frames pass through it in real time. It does not parse, log, or store the content of these frames. The relay knows:
+
+- **Who you are** — GitHub username (from OAuth)
+- **Which VM you're connecting to** — connector ID (from the URL slug)
+- **That traffic is flowing** — connection open/close events for health monitoring
+- **Nothing about your code** — the relay is a dumb pipe for WebSocket frames
+
+### What the relay does NOT know
+
+- File contents on your VMs
+- What you're saying to Claude
+- What Claude is saying back
+- Which files Claude is reading or writing
+- Your Anthropic API key (stored on the VM, sent directly to Anthropic)
+
+### Auditability
+
+The relay is open source under the MIT License. The complete source is at [github.com/c0inz/spaiglass/tree/main/relay/src](https://github.com/c0inz/spaiglass/tree/main/relay/src). The relay codebase is approximately 800 lines of TypeScript across 8 files. There are no build steps, transpilation layers, or obfuscation. Anyone can read it in an afternoon and verify every claim made in this document.
+
+Key files to audit:
+- `tunnel.ts` — WebSocket routing logic (the core of what the relay does)
+- `db.ts` — SQLite schema showing exactly what is persisted
+- `auth.ts` — OAuth flow and token exchange
+- `connectors.ts` — Connector registration and .env generation
+- `middleware.ts` — Rate limiting and session validation
+
+### Encryption
+
+| Segment | Protocol | Certificate |
+|---------|----------|-------------|
+| Browser → Relay | HTTPS / WSS | Let's Encrypt via Caddy (auto-renewed) |
+| VM → Relay | WSS | Same relay certificate, validated by Node.js TLS |
+| VM → Anthropic API | HTTPS | Anthropic's certificate (api.anthropic.com) |
+
+All three segments are independently TLS-encrypted. There is no segment where data travels in plaintext.
+
+### VM-side security boundaries
+
 - File API restricted to project directory (path traversal protection)
 - Upload directory is temp, not served statically
 - Auth cookie is httpOnly, signed with a secret
 - No user data leaves the VM except to Anthropic's API (via Claude CLI)
+- VMs connect outbound only — no inbound ports need to be opened
 
 ## Infrastructure Context
 
-- Tailscale installed on all VMs and user devices
-- Apache Guacamole running on Ubuntu host for full desktop access when needed
-- VM setup script already exists (installs xRDP, Tailscale, Xfce)
-- Guacamole setup script already exists
+- Hosts can be on any network — no Tailscale, VPN, or special networking required
+- All relay traffic is outbound from the host (single persistent WebSocket to `spaiglass.xyz`)
+- Hosts can run Linux, macOS, or Windows side-by-side in the same fleet under one GitHub identity
+- No inbound ports are opened on the host; the backend listens only on `127.0.0.1:8080`

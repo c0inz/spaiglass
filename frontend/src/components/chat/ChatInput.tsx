@@ -61,6 +61,8 @@ interface ChatInputProps {
   // Thinking level
   thinkingLevel?: "off" | "brief" | "extended";
   onThinkingLevelChange?: (level: "off" | "brief" | "extended") => void;
+  // Slash commands from SDK
+  slashCommands?: string[];
 }
 
 export function ChatInput({
@@ -83,10 +85,13 @@ export function ChatInput({
   onImageRemove,
   thinkingLevel = "off",
   onThinkingLevelChange,
+  slashCommands = [],
 }: ChatInputProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isComposing, setIsComposing] = useState(false);
+  const [slashMenu, setSlashMenu] = useState<{ query: string } | null>(null);
+  const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
   const { enterBehavior } = useEnterBehavior();
 
   // Focus input when not loading and not in permission mode
@@ -129,7 +134,35 @@ export function ChatInput({
       return;
     }
 
-    if (e.key === KEYBOARD_SHORTCUTS.SUBMIT && !isComposing) {
+    // Slash menu keyboard navigation
+    if (slashMenu && slashCommands.length > 0) {
+      const filtered = slashCommands.filter((cmd) =>
+        cmd.toLowerCase().includes(slashMenu.query.toLowerCase()),
+      );
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSlashSelectedIndex((i) => (i + 1) % filtered.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSlashSelectedIndex((i) => (i - 1 + filtered.length) % filtered.length);
+        return;
+      }
+      if ((e.key === "Tab" || e.key === "Enter") && filtered.length > 0) {
+        e.preventDefault();
+        onInputChange(`/${filtered[slashSelectedIndex]} `);
+        setSlashMenu(null);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setSlashMenu(null);
+        return;
+      }
+    }
+
+    if (e.key === KEYBOARD_SHORTCUTS.SUBMIT && !isComposing && !isLoading) {
       if (enterBehavior === "newline") {
         handleNewlineModeKeyDown(e);
       } else {
@@ -177,6 +210,8 @@ export function ChatInput({
         return "⏸ plan mode";
       case "acceptEdits":
         return "⏵⏵ accept edits";
+      case "bypassPermissions":
+        return "⚡ bypass permissions";
     }
   };
 
@@ -189,12 +224,14 @@ export function ChatInput({
         return "plan mode";
       case "acceptEdits":
         return "accept edits";
+      case "bypassPermissions":
+        return "bypass permissions";
     }
   };
 
   // Get next permission mode for cycling
   const getNextPermissionMode = (current: PermissionMode): PermissionMode => {
-    const modes: PermissionMode[] = ["default", "plan", "acceptEdits"];
+    const modes: PermissionMode[] = ["default", "plan", "acceptEdits", "bypassPermissions"];
     const currentIndex = modes.indexOf(current);
     return modes[(currentIndex + 1) % modes.length];
   };
@@ -264,6 +301,35 @@ export function ChatInput({
       )}
       <form onSubmit={handleSubmit} className="relative">
         {mentionDropdown}
+        {slashMenu && slashCommands.length > 0 && (() => {
+          const filtered = slashCommands.filter((cmd) =>
+            cmd.toLowerCase().includes(slashMenu.query.toLowerCase()),
+          );
+          if (filtered.length === 0) return null;
+          return (
+            <div className="absolute z-50 bottom-full mb-1 left-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg max-h-48 overflow-y-auto" style={{ minWidth: "200px" }}>
+              {filtered.map((cmd, index) => (
+                <button
+                  key={cmd}
+                  type="button"
+                  className={`w-full px-3 py-2 text-left text-sm font-mono ${
+                    index === slashSelectedIndex
+                      ? "bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200"
+                      : "text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
+                  }`}
+                  onClick={() => {
+                    onInputChange(`/${cmd} `);
+                    setSlashMenu(null);
+                    inputRef.current?.focus();
+                  }}
+                  onMouseEnter={() => setSlashSelectedIndex(index)}
+                >
+                  /{cmd}
+                </button>
+              ))}
+            </div>
+          );
+        })()}
         {/* Hidden file input for image upload */}
         <input
           ref={fileInputRef}
@@ -276,6 +342,8 @@ export function ChatInput({
               onImageAdd(Array.from(e.target.files));
             }
             e.target.value = "";
+            // Refocus chat input after file dialog closes
+            setTimeout(() => inputRef.current?.focus(), 0);
           }}
         />
         <textarea
@@ -305,6 +373,19 @@ export function ChatInput({
                 onMentionClose();
               }
             }
+
+            // Check for /slash command trigger — only when "/" is the first character
+            if (val.startsWith("/")) {
+              const query = val.slice(1);
+              if (!query.includes(" ") && !query.includes("\n")) {
+                setSlashMenu({ query });
+                setSlashSelectedIndex(0);
+              } else {
+                setSlashMenu(null);
+              }
+            } else {
+              setSlashMenu(null);
+            }
           }}
           onKeyDown={handleKeyDown}
           onCompositionStart={handleCompositionStart}
@@ -316,7 +397,8 @@ export function ChatInput({
           className={`w-full px-4 py-3 pr-20 bg-white/80 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 backdrop-blur-sm shadow-sm text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 resize-none overflow-hidden min-h-[48px] max-h-[${UI_CONSTANTS.TEXTAREA_MAX_HEIGHT}px]`}
           disabled={false}
         />
-        <div className="absolute right-2 bottom-3 flex gap-2">
+        {/* Button row centered on the 48px single-line textarea (py-3 + text-sm + py-2 button → (48-36)/2 = 6px). */}
+        <div className="absolute right-2 bottom-[6px] flex gap-2">
           {onImageAdd && !isLoading && (
             <button
               type="button"
@@ -339,7 +421,7 @@ export function ChatInput({
           )}
           <button
             type="submit"
-            disabled={!input.trim() && !(pendingImages && pendingImages.length > 0)}
+            disabled={isLoading || (!input.trim() && !(pendingImages && pendingImages.length > 0))}
             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-400 text-white rounded-lg font-medium transition-all duration-200 shadow-sm hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 text-sm"
           >
             {isLoading ? "..." : permissionMode === "plan" ? "Plan" : "Send"}
@@ -377,9 +459,6 @@ export function ChatInput({
               {thinkingLevel === "off" ? "thinking off" : thinkingLevel === "brief" ? "thinking brief (5k)" : "thinking extended (32k)"}
             </button>
           )}
-          <span className="text-[10px] font-mono text-green-600 dark:text-green-400">
-            bypass permissions on
-          </span>
         </div>
       </div>
     </div>

@@ -1,3 +1,282 @@
 @import "tailwindcss";
 
 @variant dark (.dark &);
+
+/* ============================================================================
+ * GLASS THEME — sits on top of dark mode. Adds glassmorphism overlay:
+ *   - Body gets dark gradient background with cyan/purple radial highlights
+ *   - Major surfaces (panels, cards, modals) get backdrop-filter blur + translucent bg
+ *   - Borders use subtle white tints
+ * Strategy: target the most common dark-mode background utilities and override.
+ * ============================================================================ */
+html.glass body,
+html.glass {
+  background: #0A0A0F !important;
+  background-image:
+    radial-gradient(ellipse at top left, rgba(124, 77, 255, 0.18), transparent 55%),
+    radial-gradient(ellipse at bottom right, rgba(0, 188, 212, 0.14), transparent 55%) !important;
+  background-attachment: fixed !important;
+  color: #E0E0F0;
+}
+
+/* Glass surface treatment for the most common dark slate panel utilities */
+html.glass .bg-slate-800,
+html.glass .bg-slate-800\/50,
+html.glass .bg-slate-800\/80,
+html.glass .bg-slate-800\/90,
+html.glass .bg-slate-700,
+html.glass .bg-slate-700\/50,
+html.glass .bg-slate-900,
+html.glass .bg-slate-900\/50,
+html.glass .bg-slate-900\/80,
+html.glass .dark\:bg-slate-800,
+html.glass .dark\:bg-slate-700,
+html.glass .dark\:bg-slate-900,
+html.glass .dark\:bg-slate-700\/50,
+html.glass .dark\:bg-slate-800\/50 {
+  background: rgba(255, 255, 255, 0.04) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+  border-color: rgba(255, 255, 255, 0.10) !important;
+}
+
+/* Header / inputs / cards extra polish */
+html.glass header,
+html.glass [class*="border-slate-700"],
+html.glass [class*="border-slate-800"] {
+  border-color: rgba(255, 255, 255, 0.10) !important;
+}
+
+html.glass input,
+html.glass textarea,
+html.glass select {
+  background: rgba(0, 0, 0, 0.35) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+}
+
+/* Glass accent for primary buttons (the bright blues) */
+html.glass .bg-blue-500,
+html.glass .bg-blue-600,
+html.glass .bg-blue-700 {
+  background: linear-gradient(135deg, #00BCD4, #7C4DFF) !important;
+  box-shadow: 0 4px 16px rgba(0, 188, 212, 0.35) !important;
+}
+
+/* ============================================================================
+ * PLAIN THEME — sits on top of light mode. Removes decorative gradients,
+ * mutes accent colors, gives a clean corporate look.
+ * ============================================================================ */
+html.plain body,
+html.plain {
+  background: #ffffff !important;
+  color: #1f2937 !important;
+}
+
+html.plain .bg-blue-500,
+html.plain .bg-blue-600,
+html.plain .bg-blue-700 {
+  background: #1e40af !important;
+  box-shadow: none !important;
+}
+
+html.plain .text-blue-500,
+html.plain .text-blue-600,
+html.plain .text-blue-700 {
+  color: #1e40af !important;
+}
+
+html.plain [class*="rounded-2xl"],
+html.plain [class*="rounded-xl"] {
+  border-radius: 4px !important;
+}
+
+html.plain [class*="shadow"] {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06) !important;
+}
+
+/* ============================================================================
+ * 70s THEMES — terminalcss-inspired: monochrome, bordered, no fills.
+ * Single phosphor color (via --phosphor var) drives text, borders, accents.
+ * Dark: CRT phosphor terminal. Light: parchment + dark ink.
+ * ============================================================================ */
+html[data-phosphor="green"] { --phosphor: #33ff33; }
+html[data-phosphor="amber"] { --phosphor: #ffb000; }
+html[data-phosphor="white"] { --phosphor: #f0f0f0; }
+html[data-phosphor="cyan"]  { --phosphor: #00ffff; }
+html[data-phosphor="red"]   { --phosphor: #ff5050; }
+
+/* Shared typography for both 70s themes */
+html.seventies,
+html.seventies body,
+html.seventies input,
+html.seventies textarea,
+html.seventies select,
+html.seventies button,
+html.seventies pre,
+html.seventies code {
+  font-family: 'IBM Plex Mono', 'VT323', 'Courier New', ui-monospace, monospace !important;
+}
+html.seventies h1,
+html.seventies h2,
+html.seventies h3,
+html.seventies h4 {
+  font-family: 'IBM Plex Mono', 'VT323', 'Courier New', ui-monospace, monospace !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.5px !important;
+}
+html.seventies [class*="rounded"] {
+  border-radius: 0 !important;
+}
+html.seventies [class*="shadow"] {
+  box-shadow: none !important;
+}
+html.seventies [class*="backdrop-blur"] {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* ---- 70s DARK ---- */
+html.seventies-dark,
+html.seventies-dark body {
+  background: #0c0e0c !important;
+  color: var(--phosphor, #33ff33) !important;
+}
+html.seventies-dark * {
+  text-shadow: 0 0 1px currentColor;
+}
+html.seventies-dark h1,
+html.seventies-dark h2,
+html.seventies-dark h3,
+html.seventies-dark h4,
+html.seventies-dark p,
+html.seventies-dark li,
+html.seventies-dark span,
+html.seventies-dark label,
+html.seventies-dark div {
+  color: var(--phosphor, #33ff33) !important;
+}
+/* Surfaces: transparent with phosphor borders */
+html.seventies-dark [class*="bg-white"],
+html.seventies-dark [class*="bg-slate-50"],
+html.seventies-dark [class*="bg-slate-100"],
+html.seventies-dark [class*="bg-slate-200"],
+html.seventies-dark [class*="bg-slate-700"],
+html.seventies-dark [class*="bg-slate-800"],
+html.seventies-dark [class*="bg-slate-900"],
+html.seventies-dark [class*="dark:bg-slate-700"],
+html.seventies-dark [class*="dark:bg-slate-800"],
+html.seventies-dark [class*="dark:bg-slate-900"] {
+  background: transparent !important;
+}
+html.seventies-dark [class*="border"] {
+  border-color: var(--phosphor, #33ff33) !important;
+}
+/* Inputs */
+html.seventies-dark input,
+html.seventies-dark textarea,
+html.seventies-dark select {
+  background: transparent !important;
+  color: var(--phosphor, #33ff33) !important;
+  border: 1px solid var(--phosphor, #33ff33) !important;
+}
+html.seventies-dark input::placeholder,
+html.seventies-dark textarea::placeholder {
+  color: var(--phosphor, #33ff33) !important;
+  opacity: 0.4;
+}
+/* Primary buttons (bg-blue-*) become transparent w/ phosphor outline, invert on hover */
+html.seventies-dark button[class*="bg-blue"],
+html.seventies-dark .bg-blue-500,
+html.seventies-dark .bg-blue-600,
+html.seventies-dark .bg-blue-700 {
+  background: transparent !important;
+  color: var(--phosphor, #33ff33) !important;
+  border: 1px solid var(--phosphor, #33ff33) !important;
+}
+html.seventies-dark button[class*="bg-blue"]:hover:not(:disabled),
+html.seventies-dark .bg-blue-500:hover,
+html.seventies-dark .bg-blue-600:hover,
+html.seventies-dark .bg-blue-700:hover {
+  background: var(--phosphor, #33ff33) !important;
+  color: #0c0e0c !important;
+}
+html.seventies-dark button[class*="bg-blue"]:disabled {
+  opacity: 0.4 !important;
+}
+/* Muted text / secondary labels */
+html.seventies-dark [class*="text-slate-400"],
+html.seventies-dark [class*="text-slate-500"],
+html.seventies-dark [class*="text-slate-600"] {
+  color: var(--phosphor, #33ff33) !important;
+  opacity: 0.6;
+}
+html.seventies-dark a { color: var(--phosphor, #33ff33) !important; text-decoration: underline; }
+html.seventies-dark a:hover { background: var(--phosphor, #33ff33) !important; color: #0c0e0c !important; text-decoration: none; }
+
+/* ---- 70s LIGHT ---- */
+html.seventies-light,
+html.seventies-light body {
+  background: #f4ecd8 !important;
+  color: #2d1810 !important;
+}
+html.seventies-light h1,
+html.seventies-light h2,
+html.seventies-light h3,
+html.seventies-light h4,
+html.seventies-light p,
+html.seventies-light li,
+html.seventies-light span,
+html.seventies-light label,
+html.seventies-light div {
+  color: #2d1810 !important;
+}
+html.seventies-light [class*="bg-white"],
+html.seventies-light [class*="bg-slate-50"],
+html.seventies-light [class*="bg-slate-100"],
+html.seventies-light [class*="bg-slate-200"],
+html.seventies-light [class*="bg-slate-700"],
+html.seventies-light [class*="bg-slate-800"],
+html.seventies-light [class*="bg-slate-900"] {
+  background: transparent !important;
+}
+html.seventies-light [class*="border"] {
+  border-color: #2d1810 !important;
+}
+html.seventies-light input,
+html.seventies-light textarea,
+html.seventies-light select {
+  background: transparent !important;
+  color: #2d1810 !important;
+  border: 1px solid #2d1810 !important;
+}
+html.seventies-light input::placeholder,
+html.seventies-light textarea::placeholder {
+  color: #2d1810 !important;
+  opacity: 0.45;
+}
+html.seventies-light button[class*="bg-blue"],
+html.seventies-light .bg-blue-500,
+html.seventies-light .bg-blue-600,
+html.seventies-light .bg-blue-700 {
+  background: transparent !important;
+  color: #2d1810 !important;
+  border: 1px solid #2d1810 !important;
+}
+html.seventies-light button[class*="bg-blue"]:hover:not(:disabled),
+html.seventies-light .bg-blue-500:hover,
+html.seventies-light .bg-blue-600:hover,
+html.seventies-light .bg-blue-700:hover {
+  background: #2d1810 !important;
+  color: #f4ecd8 !important;
+}
+html.seventies-light button[class*="bg-blue"]:disabled {
+  opacity: 0.4 !important;
+}
+html.seventies-light [class*="text-slate-400"],
+html.seventies-light [class*="text-slate-500"],
+html.seventies-light [class*="text-slate-600"] {
+  color: #2d1810 !important;
+  opacity: 0.65;
+}
+html.seventies-light a { color: #6b1f0a !important; text-decoration: underline; }
+html.seventies-light a:hover { background: #2d1810 !important; color: #f4ecd8 !important; text-decoration: none; }

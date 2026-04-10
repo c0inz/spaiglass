@@ -185,8 +185,21 @@ export function isFileDeliveryMessage(
   return message.type === "file_delivery";
 }
 
-// Permission mode types (UI-focused subset of SDK PermissionMode)
-export type PermissionMode = "default" | "plan" | "acceptEdits";
+// Live session stats for Help panel
+export interface SessionStats {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  totalCost: number;
+  turns: number;
+  durationMs: number;
+  sessionId: string;
+}
+
+// Permission mode types
+export type PermissionMode = "default" | "plan" | "acceptEdits" | "bypassPermissions";
 
 // SDK type integration utilities
 export function toSDKPermissionMode(uiMode: PermissionMode): SDKPermissionMode {
@@ -196,8 +209,7 @@ export function toSDKPermissionMode(uiMode: PermissionMode): SDKPermissionMode {
 export function fromSDKPermissionMode(
   sdkMode: SDKPermissionMode,
 ): PermissionMode {
-  // Filter out bypassPermissions for UI
-  return sdkMode === "bypassPermissions" ? "default" : sdkMode;
+  return sdkMode as PermissionMode;
 }
 
 // Chat state extensions for permission mode

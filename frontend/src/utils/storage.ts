@@ -48,7 +48,20 @@ export function getSettings(): AppSettings {
     return unifiedSettings;
   }
 
-  // If no unified settings or outdated version, migrate from legacy format
+  // v1 → v2: backfill the phosphor field for pre-70s-theme users so the
+  // settings object stays a complete AppSettings and TS isn't lying to us.
+  if (unifiedSettings && unifiedSettings.version === 1) {
+    const upgraded: AppSettings = {
+      theme: unifiedSettings.theme ?? "light",
+      phosphor: "green",
+      enterBehavior: unifiedSettings.enterBehavior ?? "send",
+      version: CURRENT_SETTINGS_VERSION,
+    };
+    setSettings(upgraded);
+    return upgraded;
+  }
+
+  // If no unified settings or unknown version, migrate from legacy format
   return migrateLegacySettings();
 }
 
@@ -74,6 +87,7 @@ function migrateLegacySettings(): AppSettings {
   // Create migrated settings
   const migratedSettings: AppSettings = {
     theme: legacyTheme,
+    phosphor: "green",
     enterBehavior: legacyEnterBehavior,
     version: CURRENT_SETTINGS_VERSION,
   };

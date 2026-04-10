@@ -38,8 +38,13 @@ export interface ProcessingContext {
 
   // Session handling
   onSessionId?: (sessionId: string) => void;
+  onSlashCommands?: (commands: string[]) => void;
+  onSessionStats?: (stats: { model?: string; cost?: number; inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheCreationTokens?: number; turns?: number; durationMs?: number }) => void;
   hasReceivedInit?: boolean;
   setHasReceivedInit?: (received: boolean) => void;
+
+  // File delivery
+  onFileDelivery?: (path: string, filename: string) => void;
 
   // Init message handling
   shouldShowInitMessage?: () => boolean;
@@ -307,6 +312,16 @@ export class UnifiedMessageProcessor {
       // Mark that we've received init
       context.setHasReceivedInit?.(true);
 
+      // Extract slash commands from init message
+      if ("slash_commands" in message && Array.isArray((message as any).slash_commands)) {
+        context.onSlashCommands?.((message as any).slash_commands);
+      }
+
+      // Extract model from init message
+      if ("model" in message && (message as any).model) {
+        context.onSessionStats?.({ model: (message as any).model });
+      }
+
       const shouldShow = context.shouldShowInitMessage?.() ?? true;
       if (shouldShow) {
         const systemMessage = convertSystemMessage(message, timestamp);
@@ -416,6 +431,20 @@ export class UnifiedMessageProcessor {
     const timestamp = options.timestamp || Date.now();
     const resultMessage = convertResultMessage(message, timestamp);
     context.addMessage(resultMessage);
+
+    // Extract session stats from result message
+    if (context.onSessionStats) {
+      const msg = message as any;
+      context.onSessionStats({
+        cost: msg.total_cost_usd,
+        inputTokens: msg.usage?.input_tokens,
+        outputTokens: msg.usage?.output_tokens,
+        cacheReadTokens: msg.usage?.cache_read_input_tokens,
+        cacheCreationTokens: msg.usage?.cache_creation_input_tokens,
+        turns: msg.num_turns,
+        durationMs: msg.duration_ms,
+      });
+    }
 
     // Clear current assistant message (streaming only)
     if (options.isStreaming) {

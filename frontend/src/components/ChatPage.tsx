@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useState } from "react";
+import { useEffect, useCallback, useState, useRef } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
   ChevronLeftIcon,
@@ -9,6 +9,7 @@ import type {
   ChatMessage,
   ProjectInfo,
   PermissionMode,
+  SessionStats,
 } from "../types";
 import { useClaudeStreaming } from "../hooks/useClaudeStreaming";
 import { useChatState } from "../hooks/chat/useChatState";
@@ -69,6 +70,19 @@ export function ChatPage() {
     { file: File; preview: string }[]
   >([]);
   const [thinkingLevel, setThinkingLevel] = useState<"off" | "brief" | "extended">("off");
+  const [slashCommands, setSlashCommands] = useState<string[]>([]);
+  const sessionStatsRef = useRef<SessionStats>({
+    model: "",
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    totalCost: 0,
+    turns: 0,
+    durationMs: 0,
+    sessionId: "",
+  });
+  const [sessionStats, setSessionStats] = useState<SessionStats>(sessionStatsRef.current);
   const vmConfig = useVmConfig();
 
   // Extract working directory: prefer relay-resolved context, fall back to URL
@@ -260,6 +274,26 @@ export function ChatPage() {
     onPermissionModeChange: setPermissionMode,
   });
 
+  const handleSessionStats = useCallback(
+    (stats: { model?: string; cost?: number; inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheCreationTokens?: number; turns?: number; durationMs?: number }) => {
+      const current = sessionStatsRef.current;
+      const updated: SessionStats = {
+        model: stats.model || current.model,
+        inputTokens: stats.inputTokens ?? current.inputTokens,
+        outputTokens: stats.outputTokens ?? current.outputTokens,
+        cacheReadTokens: stats.cacheReadTokens ?? current.cacheReadTokens,
+        cacheCreationTokens: stats.cacheCreationTokens ?? current.cacheCreationTokens,
+        totalCost: stats.cost != null ? (current.totalCost + stats.cost) : current.totalCost,
+        turns: stats.turns ?? current.turns,
+        durationMs: stats.durationMs != null ? (current.durationMs + stats.durationMs) : current.durationMs,
+        sessionId: current.sessionId,
+      };
+      sessionStatsRef.current = updated;
+      setSessionStats(updated);
+    },
+    [],
+  );
+
   const handlePermissionError = useCallback(
     (toolName: string, patterns: string[], toolUseId: string) => {
       // Check if this is an ExitPlanMode permission error
@@ -365,7 +399,13 @@ export function ChatPage() {
           setCurrentAssistantMessage,
           addMessage,
           updateLastMessage,
-          onSessionId: setCurrentSessionId,
+          onSessionId: (sid: string) => {
+            setCurrentSessionId(sid);
+            sessionStatsRef.current = { ...sessionStatsRef.current, sessionId: sid };
+            setSessionStats(sessionStatsRef.current);
+          },
+          onSlashCommands: setSlashCommands,
+          onSessionStats: handleSessionStats,
           shouldShowInitMessage: () => !hasShownInitMessage,
           onInitMessageShown: () => setHasShownInitMessage(true),
           get hasReceivedInit() {
@@ -435,6 +475,7 @@ export function ChatPage() {
       createAbortHandler,
       pendingImages,
       thinkingLevel,
+      handleSessionStats,
     ],
   );
 
@@ -720,6 +761,8 @@ export function ChatPage() {
               onFileSelect={handleFileSelect}
               contextFiles={contextFiles}
               contextFilesList={contextFilesList}
+              sessionStats={sessionStats}
+              slashCommands={slashCommands}
             />
           </div>
         )}
@@ -739,8 +782,8 @@ export function ChatPage() {
           </div>
         ) : null}
 
-        {/* Chat panel (right — 135% of file sidebar width, ~300px) */}
-        <div className={`${editingFile ? "w-[450px] flex-shrink-0" : "flex-1"} min-w-0 flex flex-col overflow-hidden`}>
+        {/* Chat panel */}
+        <div className={`${editingFile || showArchViewer ? "w-[450px] flex-shrink-0" : "flex-1"} min-w-0 flex flex-col overflow-hidden`}>
           <div className="flex-1 flex flex-col overflow-hidden p-3 sm:p-4">
             {isHistoryView ? (
               <HistoryView
@@ -798,6 +841,7 @@ export function ChatPage() {
                   onAbort={handleAbort}
                   permissionMode={permissionMode}
                   onPermissionModeChange={setPermissionMode}
+                  slashCommands={slashCommands}
                   showPermissions={isPermissionMode}
                   permissionData={permissionData}
                   planPermissionData={planPermissionData}
@@ -851,6 +895,7 @@ export function ChatPage() {
             )}
           </div>
         </div>
+
       </div>
 
       {/* Settings Modal */}

@@ -101,11 +101,11 @@ export function authRoutes(): Hono<RelayEnv> {
       path: "/",
     });
 
-    // Redirect to saved post-login URL or dashboard
+    // Redirect to saved post-login URL or fleet relay
     const postLoginRedirect = getCookie(c, "oauth_redirect");
     deleteCookie(c, "oauth_redirect");
     // Only allow relative paths to prevent open redirect
-    const target = postLoginRedirect?.startsWith("/") ? postLoginRedirect : "/";
+    const target = postLoginRedirect?.startsWith("/") ? postLoginRedirect : "/fleetrelay";
     return c.redirect(target);
   });
 

@@ -1,16 +1,18 @@
 /**
- * SGCleanRelay — Stateless routing proxy for SpAIglass VM fleet.
+ * SGCleanRelay — Stateless routing proxy for spAiglass VM fleet.
  *
- * Routes browser WebSocket connections to private SpAIglass VMs.
+ * Routes browser WebSocket connections to private spAiglass VMs.
  * GitHub OAuth for identity. No secrets, files, or conversations stored.
  */
 
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { getRequestListener } from "@hono/node-server";
 import { createServer } from "node:http";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { getCookie } from "hono/cookie";
+import { readFileSync, existsSync, statSync, createReadStream } from "node:fs";
+import { join as pathJoin } from "node:path";
 import { initDb, cleanExpiredSessions, getUserBySessionToken, getConnectorById, getConnectorBySlug } from "./db.ts";
 import { authRoutes, SESSION_COOKIE } from "./auth.ts";
 import { connectorRoutes } from "./connectors.ts";
@@ -27,6 +29,15 @@ const PUBLIC_URL = process.env.PUBLIC_URL || `http://localhost:${PORT}`;
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID || "";
 const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET || "";
 const DB_PATH = process.env.DB_PATH || "./relay.db";
+// Latest spaiglass install version. Bumped on each frontend bundle release.
+// Read from /opt/sgcleanrelay/release/VERSION (or RELEASE_DIR/VERSION) at startup.
+// Connectors reporting an older version trigger the update banner on the dashboard.
+const RELEASE_DIR = process.env.RELEASE_DIR || "/opt/sgcleanrelay/release";
+// Frontend bundle served for /vm/:slug/ pages. We serve the SPA from the relay
+// instead of tunneling each page load through the connector — VMs only need
+// to handle /api/* requests. Falls back to tunneled serving if this dir is
+// missing, so a fresh deploy without the frontend copy still works.
+const RELAY_FRONTEND_DIR = process.env.RELAY_FRONTEND_DIR || "/opt/sgcleanrelay/frontend";
 
 if (!GITHUB_CLIENT_ID || !GITHUB_CLIENT_SECRET) {
   console.warn("WARNING: GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET not set. OAuth will not work.");
@@ -66,8 +77,322 @@ function serverCompactName(proj: string, role: string): string {
 
 // --- Shared HTML helpers ---
 
-// Inline SVG favicon — brass spyglass with blue lens
-const FAVICON = `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="b" x1=".3" y1="0" x2=".7" y2="1"><stop offset="0%" stop-color="#dab45c"/><stop offset="40%" stop-color="#c49a3c"/><stop offset="75%" stop-color="#a07828"/><stop offset="100%" stop-color="#7a5c1c"/></linearGradient><linearGradient id="h" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#e8c86c"/><stop offset="100%" stop-color="#c49a3c"/></linearGradient><radialGradient id="l" cx=".38" cy=".32" r=".55"><stop offset="0%" stop-color="#5a9ee0"/><stop offset="45%" stop-color="#2563a0"/><stop offset="100%" stop-color="#0f1f33"/></radialGradient></defs><polygon points="12,10 16,8 46,38 50,50 46,52 42,40" fill="url(#b)"/><polygon points="12,10 16,8 46,38 42,40" fill="url(#h)" opacity=".45"/><line x1="19" y1="12" x2="16" y2="16" stroke="#e8c86c" stroke-width="1.5" stroke-linecap="round"/><line x1="26" y1="19" x2="23" y2="23" stroke="#e8c86c" stroke-width="1.5" stroke-linecap="round"/><circle cx="13" cy="10" r="3.8" fill="url(#b)" stroke="#7a5c1c" stroke-width=".6"/><circle cx="12.2" cy="9.2" r="1.3" fill="#e8c86c" opacity=".4"/><circle cx="46" cy="46" r="12" fill="url(#b)" stroke="#7a5c1c" stroke-width=".8"/><circle cx="46" cy="46" r="10.2" fill="none" stroke="#dab45c" stroke-width=".7"/><circle cx="46" cy="46" r="9" fill="url(#l)"/><ellipse cx="43.5" cy="43" rx="4" ry="3.2" fill="white" opacity=".15"/><circle cx="42" cy="42" r="1.8" fill="white" opacity=".35"/></svg>')}" />`;
+// Inline SVG favicon — brass spyglass lens, looking down the barrel
+const FAVICON = `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="b" x1=".2" y1="0" x2=".8" y2="1"><stop offset="0%" stop-color="#c49a3c"/><stop offset="50%" stop-color="#a07828"/><stop offset="100%" stop-color="#7a5c1c"/></linearGradient><linearGradient id="r" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#dab45c"/><stop offset="30%" stop-color="#c49a3c"/><stop offset="70%" stop-color="#8a6a24"/><stop offset="100%" stop-color="#6b5020"/></linearGradient><radialGradient id="l" cx=".4" cy=".35" r=".55"><stop offset="0%" stop-color="#5a9ee0"/><stop offset="40%" stop-color="#2563a0"/><stop offset="80%" stop-color="#132d4f"/><stop offset="100%" stop-color="#0a1622"/></radialGradient><radialGradient id="s" cx=".5" cy=".5" r=".5"><stop offset="70%" stop-color="transparent"/><stop offset="100%" stop-color="rgba(0,0,0,.3)"/></radialGradient></defs><polygon points="4,2 10,0 28,18 24,22" fill="url(#b)"/><polygon points="4,2 10,0 28,18 26,18" fill="#dab45c" opacity=".3"/><line x1="14" y1="6" x2="11" y2="9" stroke="#dab45c" stroke-width="1.2" stroke-linecap="round"/><circle cx="34" cy="34" r="27" fill="url(#r)" stroke="#6b5020" stroke-width=".8"/><circle cx="34" cy="34" r="25.5" fill="none" stroke="#8a6a24" stroke-width=".4" opacity=".6"/><circle cx="34" cy="34" r="24" fill="none" stroke="#dab45c" stroke-width=".3" opacity=".5"/><circle cx="34" cy="34" r="22.5" fill="none" stroke="#8a6a24" stroke-width=".4" opacity=".6"/><circle cx="34" cy="34" r="21.5" fill="none" stroke="#e8c86c" stroke-width=".8"/><circle cx="34" cy="34" r="20" fill="url(#l)"/><circle cx="34" cy="34" r="20" fill="url(#s)"/><ellipse cx="28" cy="28" rx="8" ry="7" fill="white" opacity=".1"/><ellipse cx="26" cy="25" rx="3.5" ry="2.8" fill="white" opacity=".25"/><circle cx="24.5" cy="23.5" r="1.5" fill="white" opacity=".4"/></svg>')}" />`;
+
+// --- Theme system ---
+// Four themes (70s-light, 70s-dark, glass, corporate) + phosphor color selector for 70s themes.
+// Persists in localStorage. Goes in <head> to apply before paint (no flash).
+const THEME_HEAD = `
+<link href="https://fonts.googleapis.com/css2?family=VT323&family=IBM+Plex+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script>
+(function() {
+  var t = localStorage.getItem('sg_theme') || 'glass';
+  var p = localStorage.getItem('sg_phosphor') || 'green';
+  document.documentElement.setAttribute('data-theme', t);
+  document.documentElement.setAttribute('data-phosphor', p);
+})();
+</script>
+<style>
+/* Phosphor presets — apply in 70s themes */
+[data-phosphor="green"] { --phosphor: #33ff33; }
+[data-phosphor="amber"] { --phosphor: #ffb000; }
+[data-phosphor="white"] { --phosphor: #f0f0f0; }
+[data-phosphor="cyan"]  { --phosphor: #00ffff; }
+[data-phosphor="red"]   { --phosphor: #ff5050; }
+
+/* ============ GLASS THEME ============ */
+[data-theme="glass"] body {
+  background: #0A0A0F !important;
+  background-image: radial-gradient(ellipse at top left, rgba(124,77,255,0.15), transparent 50%), radial-gradient(ellipse at bottom right, rgba(0,188,212,0.12), transparent 50%) !important;
+  color: #E0E0F0 !important;
+  font-family: 'Inter', system-ui, sans-serif !important;
+  min-height: 100vh;
+}
+[data-theme="glass"] h1, [data-theme="glass"] h2, [data-theme="glass"] h3 { color: #F0F0FF !important; }
+[data-theme="glass"] h1 { background: linear-gradient(135deg, #00BCD4, #7C4DFF); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+[data-theme="glass"] p, [data-theme="glass"] li, [data-theme="glass"] .pitch, [data-theme="glass"] .subtitle { color: #C0C0D8 !important; }
+[data-theme="glass"] a { color: #00BCD4 !important; }
+[data-theme="glass"] a:hover { color: #4DD0E1 !important; }
+[data-theme="glass"] .card, [data-theme="glass"] .features, [data-theme="glass"] .info, [data-theme="glass"] .claude-hint {
+  background: rgba(255,255,255,0.04) !important;
+  border: 1px solid rgba(255,255,255,0.1) !important;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4) !important;
+  color: #E0E0F0 !important;
+}
+[data-theme="glass"] .claude-hint strong { color: #00BCD4 !important; }
+[data-theme="glass"] pre, [data-theme="glass"] code, [data-theme="glass"] .copy-box {
+  background: rgba(0,0,0,0.5) !important;
+  color: #C0FFFF !important;
+  border: 1px solid rgba(0,188,212,0.3) !important;
+  font-family: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, monospace !important;
+}
+[data-theme="glass"] code.block { display: block; }
+[data-theme="glass"] a.btn, [data-theme="glass"] .btn-primary, [data-theme="glass"] button.btn-primary {
+  background: linear-gradient(135deg, #00BCD4, #7C4DFF) !important;
+  color: #0A0A0F !important;
+  border: none !important;
+  font-weight: 600 !important;
+  box-shadow: 0 4px 16px rgba(0,188,212,0.4) !important;
+}
+[data-theme="glass"] .btn-secondary { background: rgba(255,255,255,0.08) !important; color: #E0E0F0 !important; border: 1px solid rgba(255,255,255,0.15) !important; }
+[data-theme="glass"] .btn-danger { background: rgba(239,68,68,0.8) !important; color: #fff !important; }
+[data-theme="glass"] input { background: rgba(0,0,0,0.4) !important; color: #E0E0F0 !important; border: 1px solid rgba(255,255,255,0.15) !important; }
+[data-theme="glass"] .footer, [data-theme="glass"] .footer a, [data-theme="glass"] .updated, [data-theme="glass"] .note, [data-theme="glass"] .mit { color: #8a8aa0 !important; }
+[data-theme="glass"] .server-row .id, [data-theme="glass"] .role-row .role-url, [data-theme="glass"] .show-hidden { color: #8a8aa0 !important; }
+[data-theme="glass"] .role-row:hover { background: rgba(255,255,255,0.05) !important; }
+[data-theme="glass"] .role-divider { border-top-color: rgba(255,255,255,0.08) !important; }
+[data-theme="glass"] .copy-box:hover { background: rgba(0,0,0,0.6) !important; }
+[data-theme="glass"] .copy-btn { background: none !important; border: 1px solid #00BCD4 !important; color: #00BCD4 !important; }
+[data-theme="glass"] .copy-btn.copied { border-color: #22c55e !important; color: #22c55e !important; }
+[data-theme="glass"] .role-row .role-name { color: #00BCD4 !important; }
+
+/* ============ 70s DARK THEME — Terminal.css philosophy: monochrome, bordered, no fills ============
+   Inspired by terminalcss.xyz (MIT). Authentic VT100/Apple IIe rules:
+   - Single phosphor color throughout (text, borders, accents — no second color)
+   - Buttons: transparent bg + 1px border + phosphor text. Hover inverts.
+   - No scanlines, no big colored fills. Subtle text glow only.
+*/
+[data-theme="70s-dark"] body {
+  background: #0c0e0c !important;
+  color: var(--phosphor, #33ff33) !important;
+  font-family: 'IBM Plex Mono', 'VT323', 'Courier New', monospace !important;
+  font-size: 15px !important;
+  line-height: 1.5 !important;
+}
+[data-theme="70s-dark"] h1, [data-theme="70s-dark"] h2, [data-theme="70s-dark"] h3 {
+  color: var(--phosphor, #33ff33) !important;
+  font-family: 'IBM Plex Mono', monospace !important;
+  font-weight: 600 !important;
+  text-shadow: 0 0 2px currentColor;
+  letter-spacing: 0.5px;
+}
+[data-theme="70s-dark"] h1 { font-size: 1.8em !important; }
+[data-theme="70s-dark"] h2 { font-size: 1.25em !important; }
+[data-theme="70s-dark"] p, [data-theme="70s-dark"] li {
+  color: var(--phosphor, #33ff33) !important;
+  font-family: 'IBM Plex Mono', monospace !important;
+  text-shadow: 0 0 1px currentColor;
+}
+[data-theme="70s-dark"] .tagline { color: var(--phosphor, #33ff33) !important; font-family: 'IBM Plex Mono', monospace !important; font-size: 1.05em !important; opacity: 0.85; }
+[data-theme="70s-dark"] .subtitle, [data-theme="70s-dark"] .pitch { color: var(--phosphor, #33ff33) !important; opacity: 0.75; }
+[data-theme="70s-dark"] a { color: var(--phosphor, #33ff33) !important; text-decoration: underline; }
+[data-theme="70s-dark"] a:hover { background: var(--phosphor, #33ff33) !important; color: #0c0e0c !important; text-decoration: none; }
+[data-theme="70s-dark"] .card, [data-theme="70s-dark"] .features, [data-theme="70s-dark"] .info, [data-theme="70s-dark"] .claude-hint {
+  background: transparent !important;
+  border: 1px solid var(--phosphor, #33ff33) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  color: var(--phosphor, #33ff33) !important;
+}
+[data-theme="70s-dark"] pre, [data-theme="70s-dark"] code, [data-theme="70s-dark"] .copy-box {
+  background: transparent !important;
+  color: var(--phosphor, #33ff33) !important;
+  border: 1px solid var(--phosphor, #33ff33) !important;
+  border-radius: 0 !important;
+  font-family: 'IBM Plex Mono', monospace !important;
+}
+[data-theme="70s-dark"] a.btn, [data-theme="70s-dark"] .btn-primary, [data-theme="70s-dark"] button.btn-primary,
+[data-theme="70s-dark"] button:not(#theme-toggle button), [data-theme="70s-dark"] .btn {
+  background: transparent !important;
+  color: var(--phosphor, #33ff33) !important;
+  border: 1px solid var(--phosphor, #33ff33) !important;
+  border-radius: 0 !important;
+  font-family: 'IBM Plex Mono', monospace !important;
+  font-weight: 500 !important;
+  font-size: 13px !important;
+  box-shadow: none !important;
+  text-shadow: 0 0 1px currentColor !important;
+  padding: 6px 14px !important;
+  cursor: pointer;
+  transition: none !important;
+}
+[data-theme="70s-dark"] a.btn:hover, [data-theme="70s-dark"] .btn-primary:hover, [data-theme="70s-dark"] button.btn-primary:hover,
+[data-theme="70s-dark"] button:not(#theme-toggle button):hover, [data-theme="70s-dark"] .btn:hover {
+  background: var(--phosphor, #33ff33) !important;
+  color: #0c0e0c !important;
+  text-shadow: none !important;
+}
+[data-theme="70s-dark"] .btn-secondary { background: transparent !important; color: var(--phosphor, #33ff33) !important; border: 1px solid var(--phosphor, #33ff33) !important; opacity: 0.8; }
+[data-theme="70s-dark"] .btn-danger { background: transparent !important; color: var(--phosphor, #33ff33) !important; border: 1px solid var(--phosphor, #33ff33) !important; }
+[data-theme="70s-dark"] .btn-danger:hover { background: var(--phosphor, #33ff33) !important; color: #0c0e0c !important; }
+[data-theme="70s-dark"] .btn-ghost { background: none !important; color: var(--phosphor, #33ff33) !important; box-shadow: none !important; border: 1px solid var(--phosphor, #33ff33) !important; opacity: 0.7; }
+[data-theme="70s-dark"] input { background: transparent !important; color: var(--phosphor, #33ff33) !important; border: 1px solid var(--phosphor, #33ff33) !important; border-radius: 0 !important; font-family: 'IBM Plex Mono', monospace !important; }
+[data-theme="70s-dark"] input::placeholder { color: var(--phosphor, #33ff33) !important; opacity: 0.4; }
+[data-theme="70s-dark"] .role-row .role-name { color: var(--phosphor, #33ff33) !important; font-family: 'IBM Plex Mono', monospace !important; }
+[data-theme="70s-dark"] .role-row .role-url, [data-theme="70s-dark"] .server-row .id, [data-theme="70s-dark"] .show-hidden { color: var(--phosphor, #33ff33) !important; opacity: 0.55; }
+[data-theme="70s-dark"] .role-row:hover { background: rgba(51,255,51,0.06) !important; }
+[data-theme="70s-dark"] .role-divider { border-top-color: var(--phosphor, #33ff33) !important; opacity: 0.2; }
+[data-theme="70s-dark"] .footer, [data-theme="70s-dark"] .footer a, [data-theme="70s-dark"] .updated, [data-theme="70s-dark"] .note, [data-theme="70s-dark"] .mit { color: var(--phosphor, #33ff33) !important; opacity: 0.55; }
+[data-theme="70s-dark"] .copy-btn { background: transparent !important; color: var(--phosphor, #33ff33) !important; border: 1px solid var(--phosphor, #33ff33) !important; }
+[data-theme="70s-dark"] .copy-btn:hover { background: var(--phosphor, #33ff33) !important; color: #0c0e0c !important; }
+[data-theme="70s-dark"] .claude-hint strong { color: var(--phosphor, #33ff33) !important; }
+[data-theme="70s-dark"] .brand-name { color: var(--phosphor, #33ff33) !important; text-shadow: 0 0 2px currentColor; }
+
+/* ============ 70s LIGHT THEME — same philosophy, parchment background ============ */
+[data-theme="70s-light"] body {
+  background: #f4ecd8 !important;
+  color: #2d1810 !important;
+  font-family: 'IBM Plex Mono', 'VT323', 'Courier New', monospace !important;
+  font-size: 15px !important;
+  line-height: 1.5 !important;
+}
+[data-theme="70s-light"] h1, [data-theme="70s-light"] h2, [data-theme="70s-light"] h3 { color: #2d1810 !important; font-family: 'IBM Plex Mono', monospace !important; font-weight: 600 !important; }
+[data-theme="70s-light"] h1 { font-size: 1.8em !important; }
+[data-theme="70s-light"] h2 { font-size: 1.25em !important; }
+[data-theme="70s-light"] p, [data-theme="70s-light"] li { color: #3d2818 !important; font-family: 'IBM Plex Mono', monospace !important; }
+[data-theme="70s-light"] .tagline { color: #6b1f0a !important; font-family: 'IBM Plex Mono', monospace !important; font-size: 1.05em !important; }
+[data-theme="70s-light"] .subtitle, [data-theme="70s-light"] .pitch { color: #5a3820 !important; }
+[data-theme="70s-light"] a { color: #6b1f0a !important; text-decoration: underline; }
+[data-theme="70s-light"] a:hover { background: #2d1810 !important; color: #f4ecd8 !important; text-decoration: none; }
+[data-theme="70s-light"] .card, [data-theme="70s-light"] .features, [data-theme="70s-light"] .info, [data-theme="70s-light"] .claude-hint {
+  background: transparent !important;
+  border: 1px solid #2d1810 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  color: #2d1810 !important;
+}
+[data-theme="70s-light"] pre, [data-theme="70s-light"] code, [data-theme="70s-light"] .copy-box {
+  background: transparent !important;
+  color: #2d1810 !important;
+  border: 1px solid #2d1810 !important;
+  border-radius: 0 !important;
+  font-family: 'IBM Plex Mono', monospace !important;
+}
+[data-theme="70s-light"] a.btn, [data-theme="70s-light"] .btn-primary, [data-theme="70s-light"] button.btn-primary,
+[data-theme="70s-light"] button:not(#theme-toggle button), [data-theme="70s-light"] .btn {
+  background: transparent !important;
+  color: #2d1810 !important;
+  border: 1px solid #2d1810 !important;
+  border-radius: 0 !important;
+  font-family: 'IBM Plex Mono', monospace !important;
+  font-weight: 500 !important;
+  font-size: 13px !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+  padding: 6px 14px !important;
+  cursor: pointer;
+  transition: none !important;
+}
+[data-theme="70s-light"] a.btn:hover, [data-theme="70s-light"] .btn-primary:hover, [data-theme="70s-light"] button.btn-primary:hover,
+[data-theme="70s-light"] button:not(#theme-toggle button):hover, [data-theme="70s-light"] .btn:hover {
+  background: #2d1810 !important;
+  color: #f4ecd8 !important;
+}
+[data-theme="70s-light"] .btn-secondary { background: transparent !important; color: #2d1810 !important; border: 1px solid #2d1810 !important; opacity: 0.8; }
+[data-theme="70s-light"] .btn-danger { background: transparent !important; color: #2d1810 !important; border: 1px solid #2d1810 !important; }
+[data-theme="70s-light"] .btn-danger:hover { background: #2d1810 !important; color: #f4ecd8 !important; }
+[data-theme="70s-light"] .btn-ghost { background: none !important; box-shadow: none !important; border: 1px solid #2d1810 !important; opacity: 0.7; }
+[data-theme="70s-light"] input { background: transparent !important; color: #2d1810 !important; border: 1px solid #2d1810 !important; border-radius: 0 !important; font-family: 'IBM Plex Mono', monospace !important; }
+[data-theme="70s-light"] input::placeholder { color: #2d1810 !important; opacity: 0.4; }
+[data-theme="70s-light"] .role-row .role-name { color: #6b1f0a !important; font-family: 'IBM Plex Mono', monospace !important; }
+[data-theme="70s-light"] .role-row .role-url, [data-theme="70s-light"] .server-row .id, [data-theme="70s-light"] .show-hidden { color: #2d1810 !important; opacity: 0.55; }
+[data-theme="70s-light"] .role-row:hover { background: rgba(45,24,16,0.06) !important; }
+[data-theme="70s-light"] .role-divider { border-top-color: #2d1810 !important; opacity: 0.2; }
+[data-theme="70s-light"] .footer a, [data-theme="70s-light"] .updated, [data-theme="70s-light"] .note, [data-theme="70s-light"] .mit { color: #2d1810 !important; opacity: 0.6; }
+[data-theme="70s-light"] .copy-btn { background: transparent !important; color: #2d1810 !important; border: 1px solid #2d1810 !important; }
+[data-theme="70s-light"] .copy-btn:hover { background: #2d1810 !important; color: #f4ecd8 !important; }
+[data-theme="70s-light"] .claude-hint strong { color: #6b1f0a !important; }
+[data-theme="70s-light"] .brand-name { color: #2d1810 !important; }
+
+/* ============ CORPORATE THEME ============ */
+[data-theme="corporate"] body {
+  background: #ffffff !important;
+  color: #374151 !important;
+  font-family: 'Helvetica Neue', Arial, sans-serif !important;
+}
+[data-theme="corporate"] h1, [data-theme="corporate"] h2, [data-theme="corporate"] h3 { color: #1f2937 !important; font-weight: 600 !important; }
+[data-theme="corporate"] p, [data-theme="corporate"] li { color: #4b5563 !important; }
+[data-theme="corporate"] .tagline { color: #6b7280 !important; font-weight: 400 !important; }
+[data-theme="corporate"] a { color: #1e40af !important; }
+[data-theme="corporate"] .card, [data-theme="corporate"] .features, [data-theme="corporate"] .info, [data-theme="corporate"] .claude-hint {
+  background: #f9fafb !important;
+  border: 1px solid #e5e7eb !important;
+  border-radius: 4px !important;
+  box-shadow: none !important;
+  color: #374151 !important;
+}
+[data-theme="corporate"] pre, [data-theme="corporate"] code, [data-theme="corporate"] .copy-box { background: #f3f4f6 !important; color: #374151 !important; border: 1px solid #e5e7eb !important; }
+[data-theme="corporate"] a.btn, [data-theme="corporate"] .btn-primary, [data-theme="corporate"] button.btn-primary { background: #1e40af !important; color: #ffffff !important; border: none !important; font-weight: 500 !important; box-shadow: none !important; }
+[data-theme="corporate"] .btn-secondary { background: #e5e7eb !important; color: #374151 !important; }
+[data-theme="corporate"] .btn-danger { background: #dc2626 !important; color: #fff !important; }
+[data-theme="corporate"] input { background: #fff !important; color: #374151 !important; border: 1px solid #d1d5db !important; }
+[data-theme="corporate"] .footer, [data-theme="corporate"] .footer a, [data-theme="corporate"] .updated, [data-theme="corporate"] .note, [data-theme="corporate"] .mit { color: #9ca3af !important; }
+[data-theme="corporate"] .role-row .role-name { color: #1e40af !important; }
+
+/* ============ Theme toggle widget ============
+   IMPORTANT: every rule here is scoped under #theme-toggle and uses !important so
+   that no theme override (e.g. [data-theme="70s-dark"] button {...}) can leak in
+   and recolor the swatches. The swatch backgrounds are set via the CSS rules below
+   (not inline styles), one rule per phosphor color, with high specificity. */
+#theme-toggle { position: fixed !important; top: 12px !important; right: 12px !important; z-index: 9999 !important; display: flex !important; flex-direction: column !important; gap: 4px !important; align-items: flex-end !important; font-family: ui-monospace, 'Menlo', monospace !important; font-size: 10px !important; user-select: none !important; }
+#theme-toggle .row { display: flex !important; gap: 3px !important; background: rgba(0,0,0,0.7) !important; backdrop-filter: blur(8px) !important; -webkit-backdrop-filter: blur(8px) !important; padding: 4px !important; border-radius: 6px !important; border: 1px solid rgba(255,255,255,0.15) !important; box-shadow: 0 4px 12px rgba(0,0,0,0.3) !important; }
+#theme-toggle button { all: unset !important; cursor: pointer !important; padding: 4px 8px !important; border-radius: 3px !important; color: #d0d0d0 !important; font-size: 10px !important; font-family: ui-monospace, 'Menlo', monospace !important; text-transform: lowercase !important; letter-spacing: 0.5px !important; transition: background 0.15s !important; box-shadow: none !important; text-shadow: none !important; }
+#theme-toggle button[data-theme-btn]:hover { background: rgba(255,255,255,0.1) !important; color: #fff !important; }
+#theme-toggle button[data-theme-btn].active { background: rgba(255,255,255,0.18) !important; color: #fff !important; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.3) !important; }
+#theme-toggle .swatch { width: 18px !important; height: 18px !important; padding: 0 !important; border-radius: 50% !important; border: 2px solid rgba(255,255,255,0.2) !important; box-shadow: none !important; }
+#theme-toggle .swatch[data-phosphor-btn="green"] { background: #33ff33 !important; }
+#theme-toggle .swatch[data-phosphor-btn="amber"] { background: #ffb000 !important; }
+#theme-toggle .swatch[data-phosphor-btn="white"] { background: #f0f0f0 !important; }
+#theme-toggle .swatch[data-phosphor-btn="cyan"]  { background: #00ffff !important; }
+#theme-toggle .swatch[data-phosphor-btn="red"]   { background: #ff5050 !important; }
+#theme-toggle .swatch.active { border-color: #fff !important; box-shadow: 0 0 0 1px #000, 0 0 6px rgba(255,255,255,0.6) !important; }
+#theme-toggle #phosphor-row { display: none !important; }
+html[data-theme="70s-light"] #theme-toggle #phosphor-row,
+html[data-theme="70s-dark"] #theme-toggle #phosphor-row { display: flex !important; }
+</style>
+`;
+
+const THEME_TOGGLE_HTML = `
+<div id="theme-toggle">
+  <div class="row">
+    <button data-theme-btn="70s-light" title="70s Light">70s-L</button>
+    <button data-theme-btn="70s-dark" title="70s Dark">70s-D</button>
+    <button data-theme-btn="glass" title="Glass UI">glass</button>
+    <button data-theme-btn="corporate" title="Plain Corporate">plain</button>
+  </div>
+  <div class="row" id="phosphor-row">
+    <button class="swatch" data-phosphor-btn="green" title="Green" style="background:#33ff33"></button>
+    <button class="swatch" data-phosphor-btn="amber" title="Amber" style="background:#ffb000"></button>
+    <button class="swatch" data-phosphor-btn="white" title="White" style="background:#f0f0f0"></button>
+    <button class="swatch" data-phosphor-btn="cyan" title="Cyan" style="background:#00ffff"></button>
+    <button class="swatch" data-phosphor-btn="red" title="Red" style="background:#ff5050"></button>
+  </div>
+</div>
+<script>
+(function() {
+  function syncActive() {
+    var t = document.documentElement.getAttribute('data-theme');
+    var p = document.documentElement.getAttribute('data-phosphor');
+    document.querySelectorAll('[data-theme-btn]').forEach(function(b) {
+      b.classList.toggle('active', b.getAttribute('data-theme-btn') === t);
+    });
+    document.querySelectorAll('[data-phosphor-btn]').forEach(function(b) {
+      b.classList.toggle('active', b.getAttribute('data-phosphor-btn') === p);
+    });
+  }
+  document.querySelectorAll('[data-theme-btn]').forEach(function(b) {
+    b.addEventListener('click', function() {
+      var t = b.getAttribute('data-theme-btn');
+      document.documentElement.setAttribute('data-theme', t);
+      localStorage.setItem('sg_theme', t);
+      syncActive();
+    });
+  });
+  document.querySelectorAll('[data-phosphor-btn]').forEach(function(b) {
+    b.addEventListener('click', function() {
+      var p = b.getAttribute('data-phosphor-btn');
+      document.documentElement.setAttribute('data-phosphor', p);
+      localStorage.setItem('sg_phosphor', p);
+      syncActive();
+    });
+  });
+  syncActive();
+})();
+</script>
+`;
 
 // --- Initialize ---
 
@@ -103,6 +428,17 @@ app.use("*", authMiddleware());
 
 // --- Routes ---
 
+// Latest spaiglass install version. Read from RELEASE_DIR/VERSION on every
+// request so a new release tarball can be dropped in without restarting the
+// relay. Falls back to "unknown" if the file is missing.
+function getLatestSpaiglassVersion(): string {
+  try {
+    return readFileSync(pathJoin(RELEASE_DIR, "VERSION"), "utf-8").trim() || "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 // Health check (before auth-required routes)
 app.get("/api/health", (c) => {
   const cm = getChannelManager();
@@ -110,61 +446,120 @@ app.get("/api/health", (c) => {
   return c.json({
     status: "ok",
     version: "0.1.0",
+    spaiglassVersion: getLatestSpaiglassVersion(),
     connectors: stats.connectors,
     browsers: stats.browsers,
   });
+});
+
+// Public release info — clients can poll this to see the latest available version
+// without authenticating. Used by install.sh and could be used by /api/version on
+// the VM side too.
+app.get("/api/release", (c) => {
+  return c.json({
+    version: getLatestSpaiglassVersion(),
+    tarball: `${PUBLIC_URL}/dist.tar.gz`,
+    install: `${PUBLIC_URL}/install.sh`,
+  });
+});
+
+// Serve install.sh — `curl -fsSL https://spaiglass.xyz/install.sh | bash`
+// Reads from RELEASE_DIR/install.sh. Cache-busted via mtime.
+app.get("/install.sh", (c) => {
+  const path = pathJoin(RELEASE_DIR, "install.sh");
+  if (!existsSync(path)) return c.text("install.sh not yet published", 503);
+  const body = readFileSync(path, "utf-8");
+  c.header("Content-Type", "text/x-shellscript; charset=utf-8");
+  c.header("Cache-Control", "no-cache");
+  return c.body(body);
+});
+
+// Serve install.ps1 — `iwr https://spaiglass.xyz/install.ps1 -useb | iex`
+// Same release dir; Windows installer counterpart to install.sh.
+app.get("/install.ps1", (c) => {
+  const path = pathJoin(RELEASE_DIR, "install.ps1");
+  if (!existsSync(path)) return c.text("install.ps1 not yet published", 503);
+  const body = readFileSync(path, "utf-8");
+  c.header("Content-Type", "text/plain; charset=utf-8");
+  c.header("Cache-Control", "no-cache");
+  return c.body(body);
+});
+
+// Serve the latest frontend+backend bundle tarball.
+// Streamed because it's a few MB. Pinned versions can be requested via
+// /dist-<version>.tar.gz once we publish multiple releases (not yet implemented).
+app.get("/dist.tar.gz", (c) => {
+  const path = pathJoin(RELEASE_DIR, "dist.tar.gz");
+  if (!existsSync(path)) return c.text("dist.tar.gz not yet published", 503);
+  const stat = statSync(path);
+  c.header("Content-Type", "application/gzip");
+  c.header("Content-Length", String(stat.size));
+  c.header("Cache-Control", "no-cache");
+  c.header("X-Spaiglass-Version", getLatestSpaiglassVersion());
+  // @ts-expect-error Hono accepts a Node Readable as the body
+  return c.body(createReadStream(path));
 });
 
 // --- Single-source setup content ---
 // Both /setup (HTML) and /api/setup (JSON) render from this.
 function getSetupData() {
   return {
-    project: "SpAIglass",
-    description: "Browser-based multi-VM interface for Claude Code. SpAIglass is a custom relay service that routes browser WebSocket connections to Claude Code running on remote VMs.",
+    project: "spAiglass",
+    description: "Browser-based multi-VM interface for Claude Code. spAiglass is a stateless relay that routes browser WebSocket connections to Claude Code running on your own machines.",
     license: "MIT",
     source: "https://github.com/c0inz/spaiglass",
     relay: PUBLIC_URL,
+    supportedPlatforms: {
+      hosts: [
+        { os: "Linux",   detail: "Ubuntu / Debian / Fedora / Arch — anything with bash, tar, node>=20. Installs as a systemd --user service with linger." },
+        { os: "macOS",   detail: "macOS 12+ on Intel or Apple Silicon. Installs as a launchd LaunchAgent under ~/Library/LaunchAgents." },
+        { os: "Windows", detail: "Windows 10 build 17063+ / Windows 11. Installs as a per-user Scheduled Task that runs at logon (no admin needed)." },
+      ],
+      claudeCli: "Anthropic's Claude Code CLI must be installed and authenticated on the host before running the spaiglass installer. See https://claude.ai/install.sh (Linux/macOS) or https://claude.ai/install.ps1 (Windows).",
+    },
     steps: [
       {
         title: "Authenticate",
-        description: "Exchange a GitHub PAT for a SpAIglass agent key. The PAT proves your GitHub identity. The agent key is used for all subsequent API calls.",
+        description: "Exchange a GitHub PAT for a spAiglass agent key. The PAT proves your GitHub identity. The agent key is used for all subsequent API calls.",
         endpoint: `POST ${PUBLIC_URL}/api/auth/token-exchange`,
         body: '{ "github_pat": "ghp_YOUR_TOKEN", "key_name": "my-agent" }',
         note: "Save the agent_key — it is shown only once. If you already have an agent key, skip this step. If using the browser dashboard, sign in with GitHub instead.",
       },
       {
         title: "Register a VM",
-        description: "Register a new VM connector. The name is a label for your reference — it becomes part of the URL slug.",
+        description: "Register a new VM connector. The name is a label for your reference — it becomes part of the URL slug. From the dashboard, the Add-VM modal will hand you the install command for Linux/macOS or Windows; via API, register here and grab the token from the response.",
         endpoint: `POST ${PUBLIC_URL}/api/connectors`,
         body: '{ "name": "my-vm" }',
-        note: "Requires Authorization: Bearer sg_YOUR_KEY header. You can also register VMs from the dashboard.",
+        note: "Requires Authorization: Bearer sg_YOUR_KEY header. The token is shown ONCE in the response — save it before moving on.",
       },
       {
-        title: "Download config",
-        description: "Download the connector .env config file. It contains the relay URL, connector token, and connector ID.",
-        endpoint: `GET ${PUBLIC_URL}/api/connectors/:id/config`,
-        note: "Save this file — the connector token is shown only at registration time. Also available via the dashboard 'Download Config' button.",
-      },
-      {
-        title: "Install on the VM",
-        description: "Clone the repo, build the frontend, and install backend dependencies.",
-        requirements: ["Node.js >= 20", "npm", "Claude Code CLI installed and authenticated (npm install -g @anthropic-ai/claude-code && claude login)"],
+        title: "Install Claude Code CLI on the host",
+        description: "Spaiglass spawns the official Anthropic Claude Code CLI to run sessions. It must be installed and authenticated before the spaiglass installer runs.",
+        requirements: ["Node.js >= 20", "Claude Code CLI authenticated (claude --version should work)"],
         commands: [
-          "git clone https://github.com/c0inz/spaiglass.git /opt/spaiglass",
-          "cd /opt/spaiglass/frontend && npm install && npx vite build",
-          "cd /opt/spaiglass/backend && npm install",
-          "ln -sf /opt/spaiglass/frontend/dist /opt/spaiglass/backend/static",
-          "cp /path/to/connector.env /opt/spaiglass/backend/.env",
+          "# Linux / macOS:",
+          "curl -fsSL https://claude.ai/install.sh | bash",
+          "claude  # one-time interactive auth",
+          "",
+          "# Windows (PowerShell):",
+          "irm https://claude.ai/install.ps1 | iex",
+          "claude  # one-time interactive auth",
         ],
+        note: "Spaiglass looks for the binary at ~/.local/bin/claude on Linux/macOS and %USERPROFILE%\\.local\\bin\\claude.exe on Windows.",
       },
       {
-        title: "Start services",
-        description: "Start two processes on the VM: the backend (local web UI + Claude Code bridge) and the connector (outbound WebSocket to relay).",
+        title: "Install spaiglass on the host (one liner)",
+        description: "The installer downloads a slim tarball (~130 KB) from the relay, extracts it under ~/spaiglass, installs production node dependencies, writes the .env, and registers a service that launches the backend + relay connector at boot/logon. Re-running upgrades in place and preserves credentials.",
         commands: [
-          "cd /opt/spaiglass/backend && npx tsx cli/node.ts --host 0.0.0.0 --port 8080",
-          "cd /opt/spaiglass/backend && npx tsx connector.ts",
+          "# Linux / macOS:",
+          "curl -fsSL " + PUBLIC_URL + "/install.sh | bash -s -- \\",
+          "    --token=YOUR_TOKEN --id=YOUR_ID --name=YOUR_VM_NAME",
+          "",
+          "# Windows (PowerShell — run as your normal user, no admin needed):",
+          "& ([scriptblock]::Create((iwr " + PUBLIC_URL + "/install.ps1 -useb))) `",
+          "    -Token YOUR_TOKEN -Id YOUR_ID -Name YOUR_VM_NAME",
         ],
-        note: "No inbound ports or firewall changes needed — all relay traffic is outbound. Both processes must be running for relay access to work.",
+        note: "Installs a systemd --user unit on Linux, a launchd LaunchAgent on macOS, and a per-user Scheduled Task on Windows. All three start automatically and restart on crash. No inbound ports are opened — the connector dials out over WSS to the relay.",
       },
       {
         title: "Access your VM",
@@ -183,9 +578,53 @@ function getSetupData() {
         example: `${PUBLIC_URL}/vm/octocat.dev-server/myproject-developer/`,
         note: "Each .md file in agents/ becomes a selectable role. The role appears on the dashboard automatically. The project must be registered in ~/.claude.json to appear in the API.",
       },
+      {
+        title: "Add architecture.json (optional)",
+        description: "The Arch button in the chat view shows an ASCII architecture diagram for the current project. It reads from architecture/architecture.json inside the project directory.",
+        commands: [
+          "mkdir -p ~/projects/myproject/architecture",
+        ],
+        example: JSON.stringify({
+          project: { name: "MyProject", summary: "Brief description of what this project does" },
+          components: [
+            { id: "api", name: "API Server", type: "service", runsOn: ["vm1"], status: "active" },
+            { id: "db", name: "Database", type: "datastore", runsOn: ["vm1"] },
+          ],
+          connections: [
+            { from: "api", to: "db", purpose: "queries" },
+          ],
+          infrastructure: [
+            { id: "vm1", name: "Production VM", type: "vm" },
+          ],
+          architectureRules: ["All traffic must go through the API gateway"],
+        }, null, 2),
+        note: "Save the JSON above as ~/projects/myproject/architecture/architecture.json. The Arch button in the chat UI reads this file and renders it as an ASCII diagram. Without this file, the Arch button shows a link to this setup guide.",
+      },
     ],
-    addMoreVms: "The agent key is reusable. To add another VM, repeat steps 2-5 with the same key — each VM gets its own connector token.",
-    shortcut: "If someone gave you a .env file with RELAY_URL, CONNECTOR_TOKEN, and CONNECTOR_ID, skip to step 4.",
+    addMoreVms: "The agent key is reusable. To add another VM, repeat steps 2-4 with the same key — each VM gets its own connector token. Mix and match Linux, macOS, and Windows hosts under the same account.",
+    shortcut: "If you already have a token/id/name from the dashboard, skip straight to step 4.",
+    features: [
+      "Chat with Claude Code from any browser — laptop, phone, tablet",
+      "Project file browser — see and edit your files while you chat",
+      "Markdown editor — Monaco-powered, syntax highlighted, Ctrl+S to save",
+      "Six themes including 70s amber/green CRT phosphor + corporate plain",
+      "Role-based sessions — define agent roles per project via agents/*.md files",
+      "Architecture viewer — ASCII diagrams from architecture.json",
+      "Multi-VM fleet management — one dashboard for all your machines, across Linux/macOS/Windows",
+      "Frontend served by the relay — your VMs only ship the backend; UI updates ship without VM redeploys",
+      "Version-skew banner — the dashboard tells you when a VM is running an older spaiglass build than the relay",
+    ],
+    security: {
+      summary: "Open source, risk-avoidance architecture, fully auditable, full encryption",
+      details: [
+        "Open source — MIT licensed, every line auditable on GitHub",
+        "Risk-avoidance architecture — the relay routes traffic, never stores code, conversations, or files",
+        "Full encryption — all relay traffic is TLS-encrypted end to end (HTTPS/WSS)",
+        "Fully auditable — relay is ~800 lines of TypeScript with minimal dependencies",
+        "Outbound-only — VMs connect out to the relay, no inbound ports or firewall holes needed",
+        "Your data stays on your machine — Claude Code runs locally, project files never leave the VM",
+      ],
+    },
   };
 }
 
@@ -201,18 +640,20 @@ app.get("/setup", (c) => {
       ${s.requirements ? `<p><strong>Requirements:</strong> ${s.requirements.join(", ")}</p>` : ""}
       ${s.commands ? `<pre>${s.commands.join("\n")}</pre>` : ""}
       ${s.url ? `<code class="block">${s.url}</code>` : ""}
-      ${s.example ? `<p>Example: <code>${s.example}</code></p>` : ""}
+      ${s.example ? (s.example.includes("\n") ? `<p>Example:</p><pre>${s.example}</pre>` : `<p>Example: <code>${s.example}</code></p>`) : ""}
       ${s.note ? `<p class="note">${s.note}</p>` : ""}
     </div>
   `).join("");
 
   return c.html(`<!DOCTYPE html>
-<html><head><title>Setup — SpAIglass</title>
+<html><head><title>Setup — spAiglass</title>
 ${FAVICON}
+${THEME_HEAD}
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 0 20px; color: #1a1a2e; background: #f0f0f5; }
   h1 { font-size: 1.8em; }
+  h2 { margin-top: 32px; }
   h3 { margin: 0 0 8px; }
   .card { background: white; border-radius: 8px; padding: 16px 20px; margin: 12px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
   pre { background: #1e293b; color: #e2e8f0; padding: 12px 16px; border-radius: 6px; overflow-x: auto; font-size: 0.85em; white-space: pre-wrap; }
@@ -222,11 +663,54 @@ ${FAVICON}
   .subtitle { color: #666; }
   a { color: #3b82f6; }
   .info { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 12px 16px; margin: 12px 0; font-size: 0.9em; }
+  .features { background: white; border-radius: 8px; padding: 20px 24px; margin: 16px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  .features h2 { margin-top: 0; font-size: 1.3em; }
+  .features ul { margin: 8px 0; padding-left: 20px; line-height: 1.7; }
+  .features li { margin: 4px 0; }
+  .nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .nav a { font-size: 0.95em; }
 </style>
 </head><body>
-<h1>SpAIglass Setup Guide</h1>
+${THEME_TOGGLE_HTML}
+<div class="nav">
+  <a href="/">&larr; Home</a>
+  <a href="https://github.com/c0inz/spaiglass">GitHub</a>
+</div>
+<h1>spAiglass Setup Guide</h1>
 <p class="subtitle">${data.description}</p>
-<p>Source: <a href="${data.source}">${data.source}</a> &middot; <a href="/">Back to Dashboard</a></p>
+
+<div class="features">
+  <h2>Supported Platforms</h2>
+  <p style="margin: 4px 0 10px; font-size: 0.92em; color: #475569;">Spaiglass runs anywhere the Anthropic Claude Code CLI runs. Mix and match in the same fleet.</p>
+  <ul>
+    <li><strong>Linux</strong> — Ubuntu, Debian, Fedora, Arch, etc. Installs as a <code>systemd --user</code> service with linger so it survives logout.</li>
+    <li><strong>macOS</strong> 12+ (Intel or Apple Silicon) — installs as a launchd LaunchAgent under <code>~/Library/LaunchAgents</code>.</li>
+    <li><strong>Windows</strong> 10 (build 17063+) and 11 — installs as a per-user Scheduled Task that runs at logon, no admin required.</li>
+  </ul>
+  <p style="margin: 10px 0 0; font-size: 0.88em; color: #64748b;">Install the official Anthropic Claude Code CLI first (<a href="https://claude.ai">claude.ai</a>), then run the spaiglass installer for your platform.</p>
+
+  <h2>What You Get</h2>
+  <ul>
+    <li><strong>Chat with Claude Code</strong> from any browser — laptop, phone, tablet</li>
+    <li><strong>Project file browser</strong> — see and edit your files while you chat</li>
+    <li><strong>Markdown editor</strong> — Monaco-powered, syntax highlighted, Ctrl+S to save</li>
+    <li><strong>Six themes</strong> including 70s amber/green CRT phosphor and corporate plain</li>
+    <li><strong>Role-based sessions</strong> — define agent roles per project via agents/*.md files</li>
+    <li><strong>Architecture viewer</strong> — ASCII diagrams from architecture.json</li>
+    <li><strong>Multi-VM fleet management</strong> — one dashboard for all your machines, across Linux/macOS/Windows</li>
+    <li><strong>Frontend served by the relay</strong> — your VMs ship only the backend, so UI updates roll out without redeploying every VM</li>
+    <li><strong>Version-skew banner</strong> — the dashboard warns when a VM is running an older build than the relay</li>
+  </ul>
+  <h2>Security &amp; Trust</h2>
+  <ul>
+    <li><strong>Open source</strong> — MIT licensed, every line auditable on <a href="https://github.com/c0inz/spaiglass">GitHub</a></li>
+    <li><strong>Risk-avoidance architecture</strong> — the relay routes traffic, it never stores your code, conversations, or files</li>
+    <li><strong>Full encryption</strong> — all relay traffic is TLS-encrypted end to end (HTTPS/WSS)</li>
+    <li><strong>Fully auditable</strong> — relay source is ~800 lines of TypeScript, no dependencies beyond Hono and SQLite</li>
+    <li><strong>Outbound-only</strong> — VMs connect out to the relay, no inbound ports or firewall holes needed</li>
+    <li><strong>Your data stays on your machine</strong> — the relay stores only GitHub identity and connector tokens</li>
+  </ul>
+</div>
 
 <div class="info">
   <strong>Shortcut:</strong> ${data.shortcut}
@@ -239,6 +723,7 @@ ${stepsHtml}
 
 <h2>Machine-readable</h2>
 <p>Agents and scripts can fetch <a href="/api/setup"><code>/api/setup</code></a> for the same content as JSON.</p>
+<p style="margin-top: 24px;"><a href="/">&larr; Back to Home</a></p>
 </body></html>`);
 });
 
@@ -256,8 +741,9 @@ app.get("/api/setup", (c) => {
 // Terms of Service
 app.get("/terms", (c) => {
   return c.html(`<!DOCTYPE html>
-<html><head><title>Terms of Service - SpAIglass</title>
+<html><head><title>Terms of Service - spAiglass</title>
 ${FAVICON}
+${THEME_HEAD}
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   body { font-family: system-ui; max-width: 700px; margin: 60px auto; padding: 0 20px; color: #1a1a2e; background: #f0f0f5; line-height: 1.6; }
@@ -267,11 +753,12 @@ ${FAVICON}
   .updated { color: #666; font-size: 0.9em; }
 </style>
 </head><body>
+${THEME_TOGGLE_HTML}
 <h1>Terms of Service</h1>
 <p class="updated">Last updated: April 9, 2026</p>
 
 <h2>1. Service Description</h2>
-<p>SpAIglass ("the Service") is a fleet gateway that routes browser connections to your virtual machines through a relay server. The Service is operated by ReadyStack.dev.</p>
+<p>spAiglass ("the Service") is a browser-based interface that routes connections to your virtual machines through a relay server. The Service is operated by ReadyStack.dev.</p>
 
 <h2>2. Eligibility</h2>
 <p>You must have a valid GitHub account to use the Service. By signing in, you agree to these terms.</p>
@@ -298,20 +785,21 @@ ${FAVICON}
 <p>We may suspend or terminate your access at any time for violation of these terms. You may stop using the Service at any time.</p>
 
 <h2>8. Open Source</h2>
-<p>SpAIglass is open source software released under the <a href="https://github.com/c0inz/spaiglass/blob/main/LICENSE">MIT License</a>. The complete source code is available at <a href="https://github.com/c0inz/spaiglass">github.com/c0inz/spaiglass</a>.</p>
+<p>spAiglass is open source software released under the <a href="https://github.com/c0inz/spaiglass/blob/main/LICENSE">MIT License</a>. The complete source code is available at <a href="https://github.com/c0inz/spaiglass">github.com/c0inz/spaiglass</a>.</p>
 
 <h2>9. Changes</h2>
 <p>We may update these terms. Continued use after changes constitutes acceptance.</p>
 
-<p><a href="/">&larr; Back to SpAIglass</a></p>
+<p><a href="/">&larr; Back to spAiglass</a></p>
 </body></html>`);
 });
 
 // Privacy Policy
 app.get("/privacy", (c) => {
   return c.html(`<!DOCTYPE html>
-<html><head><title>Privacy Policy - SpAIglass</title>
+<html><head><title>Privacy Policy - spAiglass</title>
 ${FAVICON}
+${THEME_HEAD}
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   body { font-family: system-ui; max-width: 700px; margin: 60px auto; padding: 0 20px; color: #1a1a2e; background: #f0f0f5; line-height: 1.6; }
@@ -321,6 +809,7 @@ ${FAVICON}
   .updated { color: #666; font-size: 0.9em; }
 </style>
 </head><body>
+${THEME_TOGGLE_HTML}
 <h1>Privacy Policy</h1>
 <p class="updated">Last updated: April 9, 2026</p>
 
@@ -354,12 +843,12 @@ ${FAVICON}
 <p>We use GitHub OAuth for authentication. GitHub's privacy policy applies to data they collect during the sign-in process. We use Cloudflare for DNS and Caddy for TLS — standard infrastructure that does not process your VM traffic.</p>
 
 <h2>7. Open Source</h2>
-<p>SpAIglass is open source under the <a href="https://github.com/c0inz/spaiglass/blob/main/LICENSE">MIT License</a>. You can audit the complete relay source code at <a href="https://github.com/c0inz/spaiglass/tree/main/relay/src">github.com/c0inz/spaiglass</a> to verify exactly what data is collected and how it flows.</p>
+<p>spAiglass is open source under the <a href="https://github.com/c0inz/spaiglass/blob/main/LICENSE">MIT License</a>. You can audit the complete relay source code at <a href="https://github.com/c0inz/spaiglass/tree/main/relay/src">github.com/c0inz/spaiglass</a> to verify exactly what data is collected and how it flows.</p>
 
 <h2>8. Changes</h2>
 <p>We may update this policy. Material changes will be noted on this page with an updated date.</p>
 
-<p><a href="/">&larr; Back to SpAIglass</a></p>
+<p><a href="/">&larr; Back to spAiglass</a></p>
 </body></html>`);
 });
 
@@ -372,38 +861,77 @@ app.route("/", connectorRoutes());
 // Agent key management (has its own requireAuth)
 app.route("/", agentKeyRoutes());
 
-// Dashboard (simple HTML)
-app.get("/", (c) => {
+// Fleet Relay (canonical at /fleetrelay; / is also served for back-compat).
+// Authenticated users get the fleet management UI; anonymous users get the
+// landing/marketing page from the same handler.
+function renderFleetRelay(c: Context<RelayEnv>) {
   const user = c.get("user");
   if (!user) {
     return c.html(`<!DOCTYPE html>
-<html><head><title>SpAIglass Relay</title>
+<html><head><title>spAiglass</title>
 ${FAVICON}
+${THEME_HEAD}
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  body { font-family: system-ui; max-width: 600px; margin: 80px auto; padding: 0 20px; color: #1a1a2e; background: #f0f0f5; }
-  h1 { font-size: 2em; }
+  body { font-family: system-ui; max-width: 640px; margin: 60px auto; padding: 0 20px; color: #1a1a2e; background: #f0f0f5; }
+  h1 { font-size: 2.2em; margin-bottom: 4px; }
+  .tagline { font-size: 1.3em; color: #3b82f6; font-weight: 600; margin: 0 0 24px; }
+  .pitch { font-size: 1.05em; line-height: 1.6; color: #444; margin-bottom: 24px; }
+  .claude-hint { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 14px 18px; margin-bottom: 24px; font-size: 1em; }
+  .claude-hint strong { color: #1e40af; }
+  .claude-hint a { color: #3b82f6; font-weight: 600; }
+  .copy-box { position: relative; background: #1e293b; border-radius: 8px; padding: 14px 48px 14px 16px; margin-bottom: 24px; font-family: ui-monospace, monospace; font-size: 0.9em; color: #e2e8f0; line-height: 1.5; cursor: pointer; }
+  .copy-box:hover { background: #263548; }
+  .copy-btn { position: absolute; top: 50%; right: 12px; transform: translateY(-50%); background: none; border: 1px solid #475569; border-radius: 4px; color: #94a3b8; cursor: pointer; padding: 4px 6px; font-size: 0.85em; line-height: 1; transition: all 0.15s; }
+  .copy-btn:hover { border-color: #94a3b8; color: #e2e8f0; }
+  .copy-btn.copied { border-color: #22c55e; color: #22c55e; }
   a.btn { display: inline-block; padding: 12px 24px; background: #24292e; color: white; text-decoration: none; border-radius: 8px; font-size: 1.1em; }
   a.btn:hover { background: #444d56; }
-  .subtitle { color: #666; margin-top: -10px; }
+  .footer { margin-top: 40px; font-size: 0.85em; color: #999; }
+  .footer a { color: #999; }
+  .mit { margin-top: 16px; font-size: 0.9em; color: #666; }
 </style>
 </head><body>
-<h1>SpAIglass Relay</h1>
-<p class="subtitle">Fleet gateway for SpAIglass VMs</p>
-<p>Sign in with GitHub to manage your VM fleet.</p>
+${THEME_TOGGLE_HTML}
+<h1>spAiglass</h1>
+<p class="tagline">Claude chat w/.md access from ANYWHERE</p>
+<p class="pitch">Browser-based interface for Claude Code across your machines. See your project files, edit markdown, run tools, and chat with Claude — from any device, anywhere. Open source. Fully auditable. Your code never leaves your machine.</p>
+<p class="pitch" style="font-size: 0.95em; color: #475569;">Runs anywhere the Claude Code CLI runs: <strong>Linux</strong>, <strong>macOS</strong> (Intel + Apple Silicon), and <strong>Windows&nbsp;10/11</strong>. One dashboard, mixed fleet, one-line installer per platform.</p>
+<div class="copy-box" onclick="copyPrompt(this)">
+  <span id="prompt-text">Claude, tell me what spaiglass.xyz does, if its safe and how long it would take you to configure</span>
+  <button class="copy-btn" onclick="event.stopPropagation();copyPrompt(this.parentElement);" title="Copy to clipboard">&#x1F4CB;</button>
+</div>
+<script>
+function copyPrompt(el) {
+  var text = document.getElementById('prompt-text').textContent;
+  navigator.clipboard.writeText(text).then(function() {
+    var btn = el.querySelector('.copy-btn');
+    btn.classList.add('copied');
+    btn.innerHTML = '&#x2713;';
+    setTimeout(function() { btn.classList.remove('copied'); btn.innerHTML = '&#x1F4CB;'; }, 2000);
+  });
+}
+</script>
+<div class="claude-hint"><strong>Claude, start here &rarr;</strong> <a href="/setup">Setup</a></div>
 <a class="btn" href="/auth/github">Sign in with GitHub</a>
-<div style="margin-top: 40px; font-size: 0.85em; color: #999;"><a href="/terms" style="color: #999;">Terms</a> &middot; <a href="/privacy" style="color: #999;">Privacy</a></div>
+<p class="mit">Released under the <a href="https://github.com/c0inz/spaiglass/blob/main/LICENSE" style="color: #3b82f6;">MIT License</a>. Full source on <a href="https://github.com/c0inz/spaiglass" style="color: #3b82f6;">GitHub</a>.</p>
+<div class="footer"><a href="/terms">Terms</a> &middot; <a href="/privacy">Privacy</a> &middot; <a href="https://github.com/c0inz/spaiglass">github.com/c0inz/spaiglass</a></div>
 </body></html>`);
   }
 
   return c.html(`<!DOCTYPE html>
-<html><head><title>SpAIglass Fleet</title>
+<html><head><title>spAiglass Fleet</title>
 ${FAVICON}
+${THEME_HEAD}
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   body { font-family: system-ui; max-width: 900px; margin: 40px auto; padding: 0 20px; color: #1a1a2e; background: #f0f0f5; }
   h1 { font-size: 1.8em; }
-  .user { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+  .brand { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; }
+  .brand-link { display: flex; align-items: center; gap: 10px; text-decoration: none; color: inherit; }
+  .brand-logo { width: 36px; height: 36px; flex-shrink: 0; }
+  .brand-name { font-size: 1.4em; font-weight: 700; letter-spacing: 0.5px; }
+  .user { display: flex; align-items: center; gap: 12px; margin-left: auto; }
   .user img { width: 40px; height: 40px; border-radius: 50%; }
   .card { background: white; border-radius: 8px; margin: 10px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1); overflow: hidden; }
   .online { color: #22c55e; }
@@ -439,18 +967,65 @@ ${FAVICON}
   /* Hidden roles checkbox */
   .show-hidden { font-size: 0.75em; color: #94a3b8; cursor: pointer; display: flex; align-items: center; gap: 3px; white-space: nowrap; }
   .show-hidden input { width: 12px; height: 12px; margin: 0; }
+
+  /* Add-VM modal */
+  .modal-backdrop { display: none; position: fixed; inset: 0; background: rgba(15,23,42,0.55); z-index: 9998; }
+  .modal-backdrop.show { display: flex; align-items: center; justify-content: center; }
+  .modal { background: white; border-radius: 10px; padding: 22px 24px; max-width: 640px; width: calc(100% - 32px); box-shadow: 0 20px 50px rgba(0,0,0,0.3); }
+  .modal h2 { margin: 0 0 4px; font-size: 1.25em; }
+  .modal .modal-sub { color: #64748b; font-size: 0.88em; margin-bottom: 16px; }
+  .modal .platform-tabs { display: flex; gap: 6px; margin-bottom: 12px; border-bottom: 1px solid #e2e8f0; }
+  .modal .platform-tab { padding: 8px 14px; background: none; border: none; font-size: 0.85em; color: #64748b; cursor: pointer; border-bottom: 2px solid transparent; }
+  .modal .platform-tab.active { color: #1a1a2e; border-bottom-color: #3b82f6; font-weight: 600; }
+  .modal .platform-pane { display: none; }
+  .modal .platform-pane.active { display: block; }
+  .modal pre.cmd { background: #1e293b; color: #e2e8f0; padding: 14px; border-radius: 6px; overflow-x: auto; font-size: 0.78em; line-height: 1.5; white-space: pre-wrap; word-break: break-all; user-select: all; margin: 0; }
+  .modal .pane-hint { font-size: 0.78em; color: #64748b; margin: 6px 0 10px; }
+  .modal .modal-actions { display: flex; gap: 8px; align-items: center; margin-top: 14px; }
+  .modal .modal-actions .spacer { flex: 1; }
+  .modal .copy-status { font-size: 0.78em; color: #22c55e; min-height: 1em; }
+  .modal .warn { background: #fef3c7; border: 1px solid #fde68a; color: #78350f; font-size: 0.82em; padding: 8px 12px; border-radius: 6px; margin-top: 10px; }
 </style>
 </head><body>
-<div class="user">
-  <img src="${user.github_avatar}" alt="${user.github_login}">
-  <div>
-    <strong>${user.github_name || user.github_login}</strong>
-    <div style="font-size: 0.85em; color: #666;">@${user.github_login}</div>
+${THEME_TOGGLE_HTML}
+<div class="brand">
+  <a href="/" class="brand-link">
+    <svg class="brand-logo" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <defs>
+        <linearGradient id="hb" x1=".2" y1="0" x2=".8" y2="1"><stop offset="0%" stop-color="#c49a3c"/><stop offset="50%" stop-color="#a07828"/><stop offset="100%" stop-color="#7a5c1c"/></linearGradient>
+        <linearGradient id="hr" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#dab45c"/><stop offset="30%" stop-color="#c49a3c"/><stop offset="70%" stop-color="#8a6a24"/><stop offset="100%" stop-color="#6b5020"/></linearGradient>
+        <radialGradient id="hl" cx=".4" cy=".35" r=".55"><stop offset="0%" stop-color="#5a9ee0"/><stop offset="40%" stop-color="#2563a0"/><stop offset="80%" stop-color="#132d4f"/><stop offset="100%" stop-color="#0a1622"/></radialGradient>
+      </defs>
+      <polygon points="4,2 10,0 28,18 24,22" fill="url(#hb)"/>
+      <circle cx="34" cy="34" r="27" fill="url(#hr)" stroke="#6b5020" stroke-width=".8"/>
+      <circle cx="34" cy="34" r="21.5" fill="none" stroke="#e8c86c" stroke-width=".8"/>
+      <circle cx="34" cy="34" r="20" fill="url(#hl)"/>
+      <ellipse cx="26" cy="25" rx="3.5" ry="2.8" fill="white" opacity=".25"/>
+    </svg>
+    <span class="brand-name">Spaiglass</span>
+  </a>
+  <div class="user">
+    <img src="${user.github_avatar}" alt="${user.github_login}">
+    <div>
+      <strong>${user.github_name || user.github_login}</strong>
+      <div style="font-size: 0.85em; color: #666;">@${user.github_login}</div>
+    </div>
+    <button class="btn-secondary" onclick="logout()" style="padding: 6px 14px; font-size: 0.9em;">Sign out</button>
   </div>
-  <button class="btn-secondary" onclick="logout()" style="margin-left: auto; padding: 6px 14px; font-size: 0.9em;">Sign out</button>
 </div>
 
-<h1>Your Fleet</h1>
+<h1>Fleet Relay</h1>
+
+<div id="versionBanner" style="display:none; margin: 0 0 14px; padding: 12px 16px; background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; color: #78350f; font-size: 0.92em;">
+  <div style="display:flex; align-items:center; gap:10px;">
+    <span style="font-size:1.2em;">&#9888;</span>
+    <span id="versionBannerText" style="flex:1;"></span>
+    <button class="btn-secondary" id="versionBannerDismiss" style="padding: 4px 10px; font-size: 0.85em;">Dismiss</button>
+  </div>
+  <div style="margin-top: 8px; padding: 8px 10px; background: #fffbeb; border: 1px solid #fde68a; border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; user-select: all;">
+    curl -fsSL ${PUBLIC_URL}/install.sh | bash
+  </div>
+</div>
 
 <div style="display: flex; gap: 8px; align-items: center;">
   <input id="vmName" placeholder="VM name (e.g. dev-server)" />
@@ -458,6 +1033,35 @@ ${FAVICON}
 </div>
 
 <div id="connectors"></div>
+
+<div class="modal-backdrop" id="addVmModal" onclick="if(event.target===this)closeAddVmModal()">
+  <div class="modal" role="dialog" aria-labelledby="addVmTitle">
+    <h2 id="addVmTitle">VM registered</h2>
+    <div class="modal-sub">Run the install command below on the machine you want to enroll. The token is shown only once &mdash; copy it now.</div>
+    <div class="platform-tabs" role="tablist">
+      <button type="button" class="platform-tab active" data-pane="pane-linux" onclick="switchPlatformTab('pane-linux')">Linux / macOS</button>
+      <button type="button" class="platform-tab" data-pane="pane-windows" onclick="switchPlatformTab('pane-windows')">Windows 10 / 11</button>
+    </div>
+
+    <div class="platform-pane active" id="pane-linux">
+      <div class="pane-hint">Paste into a terminal. Installs a systemd user service on Linux or a launchd agent on macOS.</div>
+      <pre class="cmd" id="cmdLinux"></pre>
+    </div>
+
+    <div class="platform-pane" id="pane-windows">
+      <div class="pane-hint">Paste into PowerShell (no admin required). Installs a Scheduled Task that runs at logon.</div>
+      <pre class="cmd" id="cmdWindows"></pre>
+    </div>
+
+    <div class="warn">Save this token somewhere safe. You'll need it if you reinstall on a fresh machine &mdash; it cannot be shown again.</div>
+    <div class="modal-actions">
+      <button type="button" class="btn-secondary" onclick="copyActivePlatformCmd()">Copy command</button>
+      <span class="copy-status" id="copyStatus"></span>
+      <span class="spacer"></span>
+      <button type="button" class="btn-primary" onclick="closeAddVmModal()">Done</button>
+    </div>
+  </div>
+</div>
 
 <h2>Agent Keys</h2>
 <p style="font-size: 0.9em; color: #666;">Agent keys let scripts and LLM agents register VMs on your behalf without a browser.</p>
@@ -476,6 +1080,23 @@ ${FAVICON}
 <script>
 const LOGIN = '${user.github_login}';
 let hiddenRoles = JSON.parse(localStorage.getItem('sg_hidden_roles') || '[]');
+let roleLabels = JSON.parse(localStorage.getItem('sg_role_labels') || '{}');
+
+function labelKey(connId, projBase, roleFile) { return connId + ':' + projBase + ':' + roleFile; }
+function getCustomLabel(connId, projBase, roleFile) { return roleLabels[labelKey(connId, projBase, roleFile)] || null; }
+function setCustomLabel(connId, projBase, roleFile, label) {
+  var k = labelKey(connId, projBase, roleFile);
+  if (label && label.trim()) roleLabels[k] = label.trim();
+  else delete roleLabels[k];
+  localStorage.setItem('sg_role_labels', JSON.stringify(roleLabels));
+}
+function editLabel(connId, projBase, roleFile, fallback) {
+  var current = getCustomLabel(connId, projBase, roleFile) || fallback;
+  var next = prompt('Short name for this role (blank = reset to default):', current);
+  if (next === null) return; // cancelled
+  setCustomLabel(connId, projBase, roleFile, next);
+  loadConnectors();
+}
 
 function abbreviate(word, maxLen) {
   if (word.length <= maxLen) return word;
@@ -535,12 +1156,16 @@ function toggleShowHidden(connId) {
   });
 }
 
+// Per-grid fingerprint of roles + visibility/label state. Re-rendering wipes
+// any in-progress UI (edit pencil prompt, hover state), so we only do it when
+// something the user can see actually changed.
+var rolesFingerprint = {};
 async function loadRoles(connId, connName, slug) {
   var grid = document.getElementById('rg-' + connId);
   if (!grid) return;
   try {
     var projRes = await fetch('/vm/' + slug + '/api/projects');
-    if (!projRes.ok) { grid.innerHTML = '<div class="no-roles">Unable to reach VM</div>'; return; }
+    if (!projRes.ok) { grid.innerHTML = '<div class="no-roles">Unable to reach VM</div>'; rolesFingerprint[connId] = 'unreach'; return; }
     var projData = await projRes.json();
     var roles = [];
     for (var proj of projData.projects) {
@@ -555,18 +1180,39 @@ async function loadRoles(connId, connName, slug) {
         roles.push({ projPath: proj.path, projBase: projBase, roleFile: ctx.filename, roleBase: roleBase, roleName: ctx.name, segment: segment });
       }
     }
-    if (roles.length === 0) { grid.innerHTML = '<div class="no-roles">No roles configured</div>'; return; }
+    if (roles.length === 0) {
+      if (rolesFingerprint[connId] !== 'empty') {
+        grid.innerHTML = '<div class="no-roles">No roles configured</div>';
+        rolesFingerprint[connId] = 'empty';
+      }
+      return;
+    }
     var cb = document.getElementById('sh-' + connId);
     var showHidden = cb && cb.checked;
+    // Fingerprint includes the role identity AND the per-role custom label /
+    // hidden state, so editing a label or toggling hide forces a re-render.
+    // showHidden is intentionally NOT in the fingerprint — toggleShowHidden
+    // mutates CSS display directly so its state persists between ticks.
+    var fp = roles.map(function(r) {
+      var hidden = isHidden(connId, r.projBase, r.roleFile);
+      var custom = getCustomLabel(connId, r.projBase, r.roleFile) || '';
+      return r.projBase + '/' + r.roleFile + '|' + (hidden ? '1' : '0') + '|' + custom;
+    }).join(';');
+    if (fp === rolesFingerprint[connId]) return;
+    rolesFingerprint[connId] = fp;
     grid.innerHTML = roles.map(function(r) {
       var hidden = isHidden(connId, r.projBase, r.roleFile);
-      var label = compactName(r.projBase, r.roleBase);
+      var fallback = compactName(r.projBase, r.roleBase);
+      var custom = getCustomLabel(connId, r.projBase, r.roleFile);
+      var label = custom || fallback;
       var url = '/vm/' + slug + '/' + r.segment + '/';
       var display = hidden && !showHidden ? 'none' : 'flex';
+      var keyArgs = "'" + connId + "','" + r.projBase + "','" + r.roleFile + "'";
       return '<div class="role-row' + (hidden ? ' hidden-role' : '') + '" style="display:' + display + '">' +
-        '<a href="' + url + '" target="_blank" class="role-name" style="text-decoration:none;color:#3b82f6;">' + label + '</a>' +
+        '<a href="' + url + '" target="_blank" class="role-name" style="text-decoration:none;color:#3b82f6;" title="' + (custom ? 'Custom: ' + label + ' (default ' + fallback + ')' : 'Default label') + '">' + label + '</a>' +
+        '<button class="btn-ghost edit-pencil" title="Edit short name" onclick="event.stopPropagation();editLabel(' + keyArgs + ',\\'' + fallback + '\\')">&#9998;</button>' +
         '<span class="role-url">' + url + '</span>' +
-        '<button class="btn-ghost" onclick="event.stopPropagation();toggleHide(\\'' + connId + '\\',\\'' + r.projBase + '\\',\\'' + r.roleFile + '\\')">' + (hidden ? 'Show' : 'Hide') + '</button>' +
+        '<button class="btn-ghost" onclick="event.stopPropagation();toggleHide(' + keyArgs + ')">' + (hidden ? 'Show' : 'Hide') + '</button>' +
       '</div>';
     }).join('');
   } catch(e) {
@@ -574,26 +1220,113 @@ async function loadRoles(connId, connName, slug) {
   }
 }
 
+// Compare two date-based version strings ("YYYY.MM.DD"). Returns -1/0/1.
+// Anything not matching that shape is treated as "older" so unknown VMs surface in the banner.
+function compareVersion(a, b) {
+  if (a === b) return 0;
+  var re = /^(\\d{4})\\.(\\d{2})\\.(\\d{2})$/;
+  var ma = re.exec(a || ''), mb = re.exec(b || '');
+  if (!ma && !mb) return 0;
+  if (!ma) return -1;
+  if (!mb) return 1;
+  for (var i = 1; i <= 3; i++) {
+    var na = parseInt(ma[i], 10), nb = parseInt(mb[i], 10);
+    if (na !== nb) return na < nb ? -1 : 1;
+  }
+  return 0;
+}
+
+// Cached latest version from /api/health. Refreshed each loadConnectors tick.
+var latestSpaiglassVersion = null;
+var bannerDismissedFor = sessionStorage.getItem('sg_banner_dismissed') || '';
+
+document.getElementById('versionBannerDismiss').addEventListener('click', function() {
+  sessionStorage.setItem('sg_banner_dismissed', latestSpaiglassVersion || '');
+  bannerDismissedFor = latestSpaiglassVersion || '';
+  document.getElementById('versionBanner').style.display = 'none';
+});
+
+function updateVersionBanner(connectors) {
+  var banner = document.getElementById('versionBanner');
+  if (!latestSpaiglassVersion || latestSpaiglassVersion === 'unknown') {
+    banner.style.display = 'none';
+    return;
+  }
+  // Only count online VMs whose reported version is older than latest
+  var stale = connectors.filter(function(c) {
+    return c.online && compareVersion(c.spaiglassVersion, latestSpaiglassVersion) < 0;
+  });
+  if (stale.length === 0 || bannerDismissedFor === latestSpaiglassVersion) {
+    banner.style.display = 'none';
+    return;
+  }
+  var names = stale.map(function(c) { return c.name; }).join(', ');
+  document.getElementById('versionBannerText').innerHTML =
+    '<strong>' + stale.length + ' of ' + connectors.filter(function(c){return c.online;}).length +
+    ' online VM(s) running an out-of-date Spaiglass</strong> &nbsp; ' +
+    '(latest <code>' + latestSpaiglassVersion + '</code>) &nbsp; ' +
+    '<span style="color:#92400e;">' + names + '</span><br>' +
+    '<span style="font-size:0.92em;">Run this on each VM to upgrade. The installer reuses the existing token.</span>';
+  banner.style.display = 'block';
+}
+
+var connectorsFingerprint = '';
 async function loadConnectors() {
+  // Refresh latest-version metadata in parallel with the connector list.
+  // /api/health is unauthenticated, so it's cheap and shareable across browsers.
+  fetch('/api/health').then(function(r) { return r.json(); }).then(function(h) {
+    latestSpaiglassVersion = h.spaiglassVersion || null;
+  }).catch(function() { /* ignore */ });
+
   var res = await fetch('/api/connectors');
   var data = await res.json();
   var el = document.getElementById('connectors');
+
+  // Update the banner on every tick (cheap; the DOM only changes on transitions)
+  updateVersionBanner(data);
+
   if (data.length === 0) {
-    el.innerHTML = '<div class="card" style="padding: 14px; color: #94a3b8;">No VMs registered yet. Add one above.</div>';
+    var emptyFp = 'empty';
+    if (connectorsFingerprint !== emptyFp) {
+      el.innerHTML = '<div class="card" style="padding: 14px; color: #94a3b8;">No VMs registered yet. Add one above.</div>';
+      connectorsFingerprint = emptyFp;
+    }
     return;
   }
+  // Structural fingerprint. Re-rendering wipes the role grid, so only do it
+  // when something the user can see (id/name/online/hidden/version) has changed.
+  var fp = data.map(function(c) {
+    var hasHidden = hiddenRoles.some(function(h) { return h.startsWith(c.id + ':'); });
+    return c.id + '|' + c.name + '|' + (c.online ? '1' : '0') + '|' + (hasHidden ? '1' : '0') + '|' + (c.spaiglassVersion || '');
+  }).join(';');
+  if (fp === connectorsFingerprint) {
+    // Nothing structural changed — just refresh role grids in place for online VMs.
+    data.forEach(function(c) {
+      if (c.online) loadRoles(c.id, c.name, LOGIN + '.' + c.name);
+    });
+    return;
+  }
+  connectorsFingerprint = fp;
   el.innerHTML = data.map(function(c) {
     var slug = LOGIN + '.' + c.name;
     var hasHidden = hiddenRoles.some(function(h) { return h.startsWith(c.id + ':'); });
+    var verPill = '';
+    if (c.online && c.spaiglassVersion) {
+      var stale = latestSpaiglassVersion && compareVersion(c.spaiglassVersion, latestSpaiglassVersion) < 0;
+      var color = stale ? '#92400e' : '#475569';
+      var bg = stale ? '#fef3c7' : '#f1f5f9';
+      var title = stale ? ('Out of date — latest is ' + latestSpaiglassVersion) : 'Up to date';
+      verPill = '<span title="' + title + '" style="font-size:0.75em; padding: 2px 8px; border-radius: 10px; background: ' + bg + '; color: ' + color + '; font-family: ui-monospace, monospace;">' + c.spaiglassVersion + '</span>';
+    }
     return '<div class="card">' +
       '<div class="server-row">' +
         '<span class="dot ' + (c.online ? 'online' : 'offline') + '">&bull;</span>' +
         '<span class="name">' + c.name + '</span>' +
         '<span class="id">' + c.id.slice(0, 8) + '</span>' +
+        verPill +
         '<span class="spacer"></span>' +
         (hasHidden ? '<label class="show-hidden"><input type="checkbox" id="sh-' + c.id + '" onchange="toggleShowHidden(\\'' + c.id + '\\')"> Show hidden</label>' : '') +
         '<span class="actions">' +
-          '<a href="/api/connectors/' + c.id + '/config" class="btn btn-secondary">Config</a>' +
           '<button class="btn btn-danger" onclick="deleteConnector(\\'' + c.id + '\\')">Delete</button>' +
         '</span>' +
       '</div>' +
@@ -616,10 +1349,57 @@ async function addConnector() {
   });
   var data = await res.json();
   if (data.token) {
-    alert('Connector created!\\n\\nToken (save this — shown only once):\\n' + data.token);
+    var relayUrl = '${PUBLIC_URL}';
+    var linuxCmd =
+      'curl -fsSL ' + relayUrl + '/install.sh | bash -s -- ' +
+      '--token=' + data.token + ' --id=' + data.id + ' --name=' + data.name;
+    var windowsCmd =
+      '& ([scriptblock]::Create((iwr ' + relayUrl + '/install.ps1 -useb))) ' +
+      "-Token '" + data.token + "' -Id '" + data.id + "' -Name '" + data.name + "'";
+    document.getElementById('cmdLinux').textContent = linuxCmd;
+    document.getElementById('cmdWindows').textContent = windowsCmd;
+    switchPlatformTab('pane-linux');
+    document.getElementById('copyStatus').textContent = '';
+    document.getElementById('addVmModal').classList.add('show');
+    // Pre-copy the Linux/macOS command since that's the default tab
+    if (navigator.clipboard) {
+      try {
+        await navigator.clipboard.writeText(linuxCmd);
+        document.getElementById('copyStatus').textContent = 'Copied!';
+      } catch(e) { /* ignore */ }
+    }
   }
   document.getElementById('vmName').value = '';
   loadConnectors();
+}
+
+function switchPlatformTab(paneId) {
+  var tabs = document.querySelectorAll('#addVmModal .platform-tab');
+  for (var i = 0; i < tabs.length; i++) {
+    tabs[i].classList.toggle('active', tabs[i].getAttribute('data-pane') === paneId);
+  }
+  var panes = document.querySelectorAll('#addVmModal .platform-pane');
+  for (var j = 0; j < panes.length; j++) {
+    panes[j].classList.toggle('active', panes[j].id === paneId);
+  }
+  document.getElementById('copyStatus').textContent = '';
+}
+
+async function copyActivePlatformCmd() {
+  var active = document.querySelector('#addVmModal .platform-pane.active pre.cmd');
+  if (!active || !navigator.clipboard) return;
+  try {
+    await navigator.clipboard.writeText(active.textContent || '');
+    var status = document.getElementById('copyStatus');
+    status.textContent = 'Copied!';
+    setTimeout(function() { if (status.textContent === 'Copied!') status.textContent = ''; }, 2000);
+  } catch(e) { /* ignore */ }
+}
+
+function closeAddVmModal() {
+  document.getElementById('addVmModal').classList.remove('show');
+  document.getElementById('cmdLinux').textContent = '';
+  document.getElementById('cmdWindows').textContent = '';
 }
 
 async function deleteConnector(id) {
@@ -677,7 +1457,12 @@ setInterval(loadConnectors, 30000);
 </script>
 <div style="margin-top: 40px; padding-top: 16px; border-top: 1px solid #e2e8f0; font-size: 0.85em; color: #999;"><a href="/terms" style="color: #999;">Terms</a> &middot; <a href="/privacy" style="color: #999;">Privacy</a></div>
 </body></html>`);
-});
+}
+
+// Mount the fleet relay UI at both / (back-compat) and /fleetrelay (canonical).
+// Login flows redirect to /fleetrelay so users see a meaningful URL.
+app.get("/", renderFleetRelay);
+app.get("/fleetrelay", renderFleetRelay);
 
 // --- WebSocket Setup ---
 
@@ -740,16 +1525,19 @@ app.get("/vm/:slug/api/ws", upgradeWebSocket((c) => {
 }));
 
 // Auth + resolve middleware for all /vm/:slug routes
-async function vmAuth(c: Parameters<Parameters<typeof app.get>[1]>[0]): Promise<{ user: NonNullable<ReturnType<typeof getUserBySessionToken>>; connector: NonNullable<ReturnType<typeof resolveVmSlug>> } | Response> {
+async function vmAuth(c: Context<RelayEnv>): Promise<{ user: NonNullable<ReturnType<typeof getUserBySessionToken>>; connector: NonNullable<ReturnType<typeof resolveVmSlug>> } | Response> {
   const slug = c.req.param("slug")!;
   // Use the user already resolved by authMiddleware (supports both session cookie and agent key)
   const user = c.get("user");
 
   if (!user) {
-    const isAjax = c.req.header("accept")?.includes("application/json") ||
-                   c.req.header("x-requested-with") === "XMLHttpRequest";
-    if (isAjax) return c.json({ error: "Authentication required" }, 401);
-    return c.redirect(`/auth/github?redirect=${encodeURIComponent(c.req.path)}`);
+    const isApi = c.req.path.includes("/api/") ||
+                  c.req.header("accept")?.includes("application/json") ||
+                  c.req.header("x-requested-with") === "XMLHttpRequest";
+    if (isApi) return c.json({ error: "Authentication required" }, 401);
+    // Only redirect to auth for HTML page navigations; strip any trailing /api/... from redirect
+    const redirectPath = c.req.path.replace(/\/api\/.*$/, "/");
+    return c.redirect(`/auth/github?redirect=${encodeURIComponent(redirectPath)}`);
   }
 
   const connector = resolveVmSlug(slug);
@@ -760,10 +1548,174 @@ ${FAVICON}
 <style>body{font-family:system-ui;max-width:600px;margin:80px auto;padding:0 20px;color:#1a1a2e;background:#f0f0f5;}</style>
 </head><body><h1>VM not found</h1>
 <p>No VM matching "${slug}" was found on your account.</p>
-<p><a href="/">Back to dashboard</a></p></body></html>`, 404);
+<p><a href="/fleetrelay">Back to fleet relay</a></p></body></html>`, 404);
   }
 
   return { user, connector };
+}
+
+// MIME types for files we serve from RELAY_FRONTEND_DIR. Anything not in this
+// table falls back to application/octet-stream.
+const STATIC_MIME: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js":   "application/javascript; charset=utf-8",
+  ".mjs":  "application/javascript; charset=utf-8",
+  ".css":  "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg":  "image/svg+xml",
+  ".png":  "image/png",
+  ".jpg":  "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".gif":  "image/gif",
+  ".ico":  "image/x-icon",
+  ".woff": "font/woff",
+  ".woff2":"font/woff2",
+  ".map":  "application/json; charset=utf-8",
+  ".txt":  "text/plain; charset=utf-8",
+};
+
+function mimeFor(filePath: string): string {
+  const dot = filePath.lastIndexOf(".");
+  if (dot < 0) return "application/octet-stream";
+  return STATIC_MIME[filePath.slice(dot).toLowerCase()] || "application/octet-stream";
+}
+
+/**
+ * Resolve a request path inside RELAY_FRONTEND_DIR safely.
+ * Returns null if the path escapes the dir or doesn't exist.
+ * Treats trailing slash as index.html (SPA root).
+ */
+function resolveFrontendFile(relPath: string): string | null {
+  // Strip query string defensively (Hono usually does this, but just in case)
+  const clean = relPath.split("?")[0];
+  // Treat root and any trailing-slash directory request as index.html
+  let rel = clean === "" || clean === "/" || clean.endsWith("/") ? "/index.html" : clean;
+  // Reject anything containing .. segments
+  if (rel.includes("..")) return null;
+  // Strip leading slash so pathJoin doesn't treat it as absolute
+  rel = rel.replace(/^\/+/, "");
+  const full = pathJoin(RELAY_FRONTEND_DIR, rel);
+  // Ensure resolved path is still inside the frontend dir
+  if (!full.startsWith(RELAY_FRONTEND_DIR + "/") && full !== RELAY_FRONTEND_DIR) return null;
+  if (!existsSync(full)) return null;
+  const st = statSync(full);
+  if (!st.isFile()) return null;
+  return full;
+}
+
+/**
+ * Try to serve a /vm/:slug/<vmPath> request from the relay's local frontend
+ * bundle. Returns a Response on hit, undefined to fall through to the tunnel.
+ *
+ * Routing rules:
+ *   /api/*           → undefined (caller tunnels)
+ *   /assets/*        → serve the asset file (404 if missing)
+ *   /favicon.svg etc → serve the file
+ *   anything else    → SPA fallback: serve index.html with inject script
+ *
+ * If RELAY_FRONTEND_DIR is missing entirely we return undefined for ALL paths
+ * so the legacy tunneled flow keeps working — that way a fresh relay deploy
+ * without the frontend copy doesn't break the fleet.
+ */
+function tryServeFromRelayFrontend(
+  c: Context<RelayEnv>,
+  slug: string,
+  vmPath: string,
+  connectorName: string,
+): Response | undefined {
+  if (vmPath.startsWith("/api/") || vmPath === "/api") return undefined;
+  if (!existsSync(RELAY_FRONTEND_DIR)) return undefined;
+
+  // Asset / static file path: try to serve directly. 404 if missing.
+  const isAssetPath = vmPath.startsWith("/assets/") || /^\/[^/]+\.(svg|png|jpg|jpeg|gif|ico|webp|woff2?|css|js|map|txt)$/i.test(vmPath);
+  if (isAssetPath) {
+    const file = resolveFrontendFile(vmPath);
+    if (!file) return new Response("Not found", { status: 404 });
+    const buf = readFileSync(file);
+    c.header("Content-Type", mimeFor(file));
+    // Vite asset filenames are content-hashed → safe to cache aggressively
+    c.header("Cache-Control", "public, max-age=31536000, immutable");
+    return new Response(buf, { status: 200, headers: c.res.headers });
+  }
+
+  // SPA fallback: serve index.html with inject script + tab title rewrite.
+  const indexFile = resolveFrontendFile("/index.html");
+  if (!indexFile) return undefined; // no index.html → fall through to tunnel
+  let html = readFileSync(indexFile, "utf-8");
+
+  // Tab title from /vm/:slug/<project>-<role>/ segment
+  const afterSlug = vmPath.replace(/^\//, "").replace(/\/$/, "");
+  const segment = afterSlug.split("/")[0] || "";
+  const lastHyphen = segment.lastIndexOf("-");
+  const project = lastHyphen > 0 ? segment.slice(0, lastHyphen) : segment;
+  const role = lastHyphen > 0 ? segment.slice(lastHyphen + 1) : "";
+  let tabTitle: string;
+  if (project && role) tabTitle = serverCompactName(project, role);
+  else if (project)    tabTitle = serverAbbreviate(project, 8);
+  else                 tabTitle = connectorName;
+
+  const prefix = `/vm/${slug}`;
+  const relayVersion = getLatestSpaiglassVersion();
+  html = html.replace(/<title>[^<]*<\/title>/, `<title>${tabTitle}</title>`);
+  html = html.replace(/<link rel="icon"[^>]*>/, FAVICON);
+  // Embed served version + skew detector + URL inject. Order matters: the
+  // skew detector must run BEFORE makeInjectScript so it captures the
+  // original (unpatched) fetch before the inject script rewrites it.
+  html = html.replace(
+    "<head>",
+    "<head>" +
+      `<meta name="spaiglass-version" content="${relayVersion}">` +
+      `<script>window.__SG_VERSION=${JSON.stringify(relayVersion)}</script>` +
+      makeVersionSkewScript() +
+      makeInjectScript(slug),
+  );
+  // Rewrite absolute src/href paths so /assets/... becomes /vm/:slug/assets/...
+  // (We serve those via the asset branch above.)
+  html = html.replace(/((?:src|href|action)=["'])\/(?!\/)/g, `$1${prefix}/`);
+
+  c.header("Content-Type", "text/html; charset=utf-8");
+  c.header("Cache-Control", "no-cache, no-store, must-revalidate");
+  c.header("X-Spaiglass-Version", relayVersion);
+  return new Response(html, { status: 200, headers: c.res.headers });
+}
+
+// Frontend version-skew detector. Polls /api/release every 5 minutes; when
+// the relay's version rolls forward past the version we were served with,
+// shows a small "reload to update" banner. Pure inline JS — no React deps.
+//
+// IMPORTANT: must run BEFORE makeInjectScript so it captures the original
+// (unpatched) fetch reference. After that the page-level fetch wrapper
+// rewrites /api/* to /vm/:slug/api/* (which would tunnel to the VM and 404).
+function makeVersionSkewScript(): string {
+  return `<script>(function(){
+var _origFetch=window.fetch.bind(window);
+var SHOWN=false;
+function show(latest){
+  if(SHOWN)return;SHOWN=true;
+  var b=document.createElement('div');
+  b.id='sg-skew-banner';
+  b.style.cssText='position:fixed;bottom:16px;right:16px;z-index:99999;background:#1a1a2e;color:#f0f0f5;padding:10px 14px;border-radius:8px;font:13px system-ui,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,.3);border:1px solid #4a4a6e;max-width:320px';
+  b.innerHTML='<div style="margin-bottom:6px;font-weight:600">Update available</div>'+
+    '<div style="opacity:.8;margin-bottom:8px">Spaiglass '+latest+' was released. Reload to refresh this page.</div>'+
+    '<button id="sg-skew-reload" style="background:#5a9ee0;color:#fff;border:0;padding:5px 12px;border-radius:5px;cursor:pointer;font:inherit;margin-right:6px">Reload</button>'+
+    '<button id="sg-skew-dismiss" style="background:transparent;color:#aaa;border:0;padding:5px 8px;cursor:pointer;font:inherit">Dismiss</button>';
+  document.body.appendChild(b);
+  document.getElementById('sg-skew-reload').onclick=function(){location.reload()};
+  document.getElementById('sg-skew-dismiss').onclick=function(){b.remove()};
+}
+function check(){
+  var have=window.__SG_VERSION;
+  if(!have||have==='unknown')return;
+  // Use the captured original fetch so the request goes to the relay,
+  // not through the /vm/:slug rewrite that the inject script installs.
+  _origFetch('/api/release',{cache:'no-store'}).then(function(r){return r.json()}).then(function(d){
+    if(d&&d.version&&d.version!==have&&d.version!=='unknown')show(d.version);
+  }).catch(function(){});
+}
+setTimeout(check,30000);
+setInterval(check,5*60*1000);
+})()</script>`;
 }
 
 // URL rewriting script injected into HTML responses from the VM backend.
@@ -833,13 +1785,23 @@ ${FAVICON}
 </head><body><h1>VM offline</h1>
 <p>${connector.name} is not connected to the relay.</p>
 <p>Start the connector on the VM to bring it online.</p>
-<p><a href="/">Back to dashboard</a></p></body></html>`, 503);
+<p><a href="/fleetrelay">Back to fleet relay</a></p></body></html>`, 503);
   }
 
   // Strip /vm/:slug prefix — the VM backend serves from root
   const vmPath = c.req.path.replace(`/vm/${slug}`, "") || "/";
   const queryString = new URL(c.req.url).search;
   const fullVmPath = vmPath + queryString;
+
+  // Try the relay's local frontend bundle first. HTML pages and Vite assets
+  // are served straight from /opt/sgcleanrelay/frontend so the browser doesn't
+  // have to round-trip every page load through the connector tunnel. /api/*
+  // requests (and anything else the helper can't satisfy) fall through to the
+  // tunneled flow below.
+  if (c.req.method === "GET" || c.req.method === "HEAD") {
+    const localResp = tryServeFromRelayFrontend(c, slug, vmPath, connector.name);
+    if (localResp) return localResp;
+  }
 
   // Forward relevant request headers
   const fwdHeaders: Record<string, string> = {};
@@ -850,10 +1812,24 @@ ${FAVICON}
     }
   });
 
-  const body = !["GET", "HEAD"].includes(c.req.method) ? await c.req.text() : undefined;
+  // Read body as binary and base64-encode for the WS tunnel (preserves multipart/form-data)
+  let body: string | undefined;
+  let bodyEncoding: "utf-8" | "base64" | undefined;
+  if (!["GET", "HEAD"].includes(c.req.method)) {
+    const contentType = c.req.header("content-type") || "";
+    const isText = /text|json|xml|x-www-form-urlencoded/.test(contentType);
+    if (isText) {
+      body = await c.req.text();
+      bodyEncoding = "utf-8";
+    } else {
+      const buf = Buffer.from(await c.req.arrayBuffer());
+      body = buf.toString("base64");
+      bodyEncoding = "base64";
+    }
+  }
 
   try {
-    const resp = await cm.httpRequest(connector.id, c.req.method, fullVmPath, fwdHeaders, body);
+    const resp = await cm.httpRequest(connector.id, c.req.method, fullVmPath, fwdHeaders, body, bodyEncoding);
 
     // Set response headers (skip hop-by-hop)
     for (const [key, value] of Object.entries(resp.headers)) {
@@ -878,14 +1854,14 @@ ${FAVICON}
       const project = lastHyphen > 0 ? segment.slice(0, lastHyphen) : segment;
       const role = lastHyphen > 0 ? segment.slice(lastHyphen + 1) : "";
 
-      // Build compact tab title: "DevOps-Dev — DevOps-VM" or "vm-name — SpAIglass"
+      // Build compact tab title
       let tabTitle: string;
       if (project && role) {
-        tabTitle = `${serverCompactName(project, role)} — ${connector.name}`;
+        tabTitle = serverCompactName(project, role);
       } else if (project) {
-        tabTitle = `${serverAbbreviate(project, 8)} — ${connector.name}`;
+        tabTitle = serverAbbreviate(project, 8);
       } else {
-        tabTitle = `${connector.name} — SpAIglass`;
+        tabTitle = connector.name;
       }
 
       // Rewrite <title>
@@ -917,7 +1893,7 @@ ${FAVICON}
 <style>body{font-family:system-ui;max-width:600px;margin:80px auto;padding:0 20px;color:#1a1a2e;background:#f0f0f5;}</style>
 </head><body><h1>Proxy error</h1>
 <p>${message}</p>
-<p><a href="/">Back to dashboard</a></p></body></html>`, 502);
+<p><a href="/fleetrelay">Back to fleet relay</a></p></body></html>`, 502);
   }
 });
 

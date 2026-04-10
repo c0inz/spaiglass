@@ -133,6 +133,12 @@ export function createApp(
 
 /**
  * Add SPA fallback catch-all. Call this AFTER registering any WebSocket routes.
+ *
+ * If the local static bundle is missing, the backend assumes the relay is
+ * serving the frontend (the new architecture as of 2026.04.10). We return a
+ * small placeholder page rather than crashing — direct LAN access keeps
+ * working enough to surface a hint, and relay traffic never lands here in
+ * the first place because the relay short-circuits HTML/asset requests.
  */
 export function finalizeSpa(app: Hono<ConfigContext>, staticPath: string) {
   app.get("*", async (c) => {
@@ -146,9 +152,18 @@ export function finalizeSpa(app: Hono<ConfigContext>, staticPath: string) {
       const indexPath = `${staticPath}/index.html`;
       const indexFile = await readBinaryFile(indexPath);
       return c.html(new TextDecoder().decode(indexFile));
-    } catch (error) {
-      logger.app.error("Error serving index.html: {error}", { error });
-      return c.text("Internal server error", 500);
+    } catch {
+      // No local frontend bundle — direct LAN visitor. Point them at the relay.
+      return c.html(
+        `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Spaiglass VM</title>` +
+          `<style>body{font-family:system-ui;max-width:560px;margin:80px auto;padding:0 20px;color:#1a1a2e;background:#f0f0f5;line-height:1.5}h1{margin-bottom:.4em}code{background:#e4e4ec;padding:2px 6px;border-radius:4px}</style>` +
+          `</head><body><h1>Spaiglass VM backend</h1>` +
+          `<p>This VM ships its API only. The frontend is served by the relay.</p>` +
+          `<p>Open <a href="https://spaiglass.xyz/fleetrelay">spaiglass.xyz/fleetrelay</a> and pick this VM from the dashboard.</p>` +
+          `<p style="color:#555;font-size:.9em">If you reached this page directly via the VM's LAN address, that's expected — direct LAN access still works for the API (<code>/api/*</code>) but the UI now lives on the relay.</p>` +
+          `</body></html>`,
+        200,
+      );
     }
   });
 }

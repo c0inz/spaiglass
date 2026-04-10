@@ -1,6 +1,19 @@
-# Spyglass Features
+# SpAIglass Features
 
-Spyglass is a browser-based interface for managing Claude Code instances across multiple VMs. It extends [claude-code-webui](https://github.com/sugyan/claude-code-webui) with file management, role-based sessions, fleet orchestration, and deployment tooling.
+SpAIglass is a browser-based interface for managing Claude Code instances across multiple VMs. It extends [claude-code-webui](https://github.com/sugyan/claude-code-webui) with file management, role-based sessions, fleet orchestration, and deployment tooling.
+
+**Claude chat and markdown access from ANYWHERE.**
+
+---
+
+## Open Source & Security
+
+- **Open source** — Released under the [MIT License](https://github.com/c0inz/spaiglass/blob/main/LICENSE). Full source at [github.com/c0inz/spaiglass](https://github.com/c0inz/spaiglass).
+- **Risk-avoidance architecture** — The relay is a stateless routing proxy. It never stores, inspects, or logs your code, conversations, or files. All project data stays on your VMs. The relay only persists GitHub identity and connector tokens — the minimum needed to authenticate and route connections.
+- **Fully auditable** — The relay is ~800 lines of TypeScript with minimal dependencies (Hono, SQLite, ws). Anyone can read the complete source and verify exactly what data flows through it.
+- **Full encryption** — All traffic between your browser and the relay, and between VMs and the relay, is TLS-encrypted (HTTPS/WSS). No plaintext data ever traverses the network.
+- **Outbound-only connectivity** — VMs connect outbound to the relay via WebSocket. No inbound ports, no firewall holes, no VPN required. Your VMs are never directly exposed to the internet.
+- **Your data stays on your machine** — Claude Code runs locally on each VM. Your project files, conversation history, and session state never leave the VM. The relay routes keystrokes and text in real time — nothing is persisted.
 
 ---
 
@@ -56,63 +69,86 @@ Spyglass is a browser-based interface for managing Claude Code instances across 
 - **Header badge** — The VM's role (from `VM_ROLE` env var) is shown in the header next to the Spyglass title.
 - **Health endpoint** — `GET /api/health` returns `{ "status": "ok", "role": "<VM_ROLE>" }` for monitoring and fleet portal status checks.
 
-## Fleet Portal
+## Themes
 
-A separate lightweight web app (port 9090) for managing multiple Spyglass instances across VMs.
+SpAIglass ships six themes plus a five-color picker for the 70s themes. Theme is persisted in `localStorage` (versioned settings, auto-migrated).
 
-- **Server list** — Reads `fleet.json` to display all registered servers with their health status.
-- **Role discovery** — Queries each server's `/api/discover` endpoint to find projects with `agents/*.md` files.
-- **Role rows** — Each server/project/role combination is a clickable row that opens Spyglass with the correct project and role pre-selected.
-- **Search/filter** — Filter the list by server name, project, or role.
-- **Hide roles** — Red X button to hide roles you don't need. Hidden state is persisted to `fleet.json`.
-- **Create roles** — Create new role files for projects that don't have any yet.
+- **Light** — Bright default.
+- **Dark** — Classic dark mode.
+- **Glass** — Glassmorphism over the dark base: dark gradient background with cyan/purple radial highlights, frosted blur on panels, gradient accent buttons.
+- **Plain** — Boring corporate light theme: removes gradients, mutes accent colors, squares off rounded corners.
+- **70s Light** — Parchment background (`#f4ecd8`) with dark ink, IBM Plex Mono / VT323 typography, no rounded corners or shadows.
+- **70s Dark** — CRT phosphor terminal: black background, monochrome glyphs in the selected phosphor color, monospace typography, faint glow via `text-shadow`.
+- **Phosphor color picker** — When either 70s theme is active, the General Settings panel exposes a 5-swatch picker (green / amber / white / cyan / red) that drives every label, border, button outline, and accent through the `--phosphor` CSS variable.
+
+## Multi-VM Fleet Management
+
+Fleet management is built into the relay dashboard at `spaiglass.xyz` — no separate portal process.
+
+- **One dashboard, all platforms** — Linux, macOS, and Windows hosts appear in the same connector list under one GitHub identity.
+- **Add VM modal** — Click *Register VM*, enter a name, and the modal generates a one-time install token. Two tabs (Linux/macOS and Windows) provide a clipboard-ready one-line installer pre-filled with the token, connector id, and host name.
+- **Live status** — Connector last-seen timestamps and online/offline indicators pulled from the relay's WebSocket registry.
+- **Per-VM URLs** — Each connector renders as `https://spaiglass.xyz/vm/<github-login>.<vm-name>/`. Clicking opens the host's tunneled UI in the browser.
+- **Version-skew banner** — The relay-served frontend polls `/api/release` and surfaces a per-VM warning when a backend reports an older release than the relay.
+- **Connector lifecycle** — Rename, regenerate token, or delete connectors from the dashboard. Tokens are stored as SHA-256 hashes only.
+- **Agent keys** — `sg_...` API keys (also stored hashed) let LLM agents and provisioning scripts hit `/api/connectors` without a browser session.
+
+## Supported Host Platforms
+
+SpAIglass spawns sessions through the official **Anthropic Claude Code CLI**, so it runs anywhere the CLI does.
+
+| Platform | Versions | Service mechanism | Installer |
+|---|---|---|---|
+| **Linux** | Ubuntu, Debian, Fedora, Arch — anything with bash, tar, node >= 20 | `systemd --user` unit with `loginctl enable-linger` | `curl -fsSL https://spaiglass.xyz/install.sh \| bash -s -- ...` |
+| **macOS** | macOS 12+ on Intel or Apple Silicon | `launchd` LaunchAgent under `~/Library/LaunchAgents` | `curl -fsSL https://spaiglass.xyz/install.sh \| bash -s -- ...` |
+| **Windows** | Windows 10 build 17063+ and Windows 11 | Per-user Scheduled Task that runs at logon (no admin) | `& ([scriptblock]::Create((iwr https://spaiglass.xyz/install.ps1 -useb))) ...` |
+
+The Claude Code CLI must be installed and authenticated on the host first (`claude.ai/install.sh` on Linux/macOS, `claude.ai/install.ps1` on Windows). After that, run the spaiglass installer for the host platform.
 
 ## Deployment
 
-### Systemd Services
+### One-line installers
 
-Three unit files plus a grouping target:
+The relay generates these for you in the Add VM modal, but the form is the same for both browser and agentic enrollment.
 
-- `spyglass-backend.service` — Backend API on port 8080
-- `spyglass-frontend.service` — Vite dev server on port 3000
-- `spyglass-portal.service` — Fleet portal on port 9090
-- `spyglass.target` — Groups all three, enabled on boot
-
-Install with `sudo bash systemd/install.sh`. Auto-restarts on crash.
-
-### Deploy Script
-
-`deploy-webui.sh` automates deployment to remote VMs via SSH.
-
-**Single host:**
-```
-./deploy-webui.sh --host 192.168.1.200 --role Designer --password secret
+**Linux / macOS:**
+```bash
+curl -fsSL https://spaiglass.xyz/install.sh | bash -s -- \
+    --token=TOKEN --id=CONNECTOR_ID --name=HOST_NAME
 ```
 
-**Bulk deploy from manifest:**
-```
-./deploy-webui.sh --manifest deploy-manifest.json
-```
-
-Manifest format:
-```json
-[
-  { "host": "192.168.1.200", "role": "Designer", "password": "secret" },
-  { "host": "192.168.1.201", "role": "QA" }
-]
+**Windows 10 / 11 (PowerShell, no admin):**
+```powershell
+& ([scriptblock]::Create((iwr https://spaiglass.xyz/install.ps1 -useb))) `
+    -Token TOKEN -Id CONNECTOR_ID -Name HOST_NAME
 ```
 
-The script clones/pulls the repo, installs dependencies, writes `.env`, installs systemd services, starts everything, and verifies the health endpoint.
+What the installers do:
+- Download a slim ~130 KB tarball containing only the backend (the relay serves the frontend, so hosts never ship `dist/`)
+- Run `npm install --omit=dev`
+- Write a per-user `.env` with the connector id, token, and relay URL
+- Install a per-user service that launches at boot/logon (no admin/sudo required)
+- Restart the service if a previous install exists (idempotent — re-run to upgrade in place)
+- Pass `--uninstall` (or `-Uninstall` on Windows) to remove the install and the service
 
-### Environment Variables
+### Agentic enrollment
+
+For LLM agents and provisioning scripts, the relay also exposes:
+
+- `POST /api/auth/token-exchange` — exchange a GitHub PAT for a reusable `sg_...` agent key
+- `POST /api/connectors` — register a host and get a one-time install token
+- `GET /api/setup` — machine-readable setup instructions (same content as the human `/setup` page)
+
+### Environment variables
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `VM_ROLE` | Yes | Agent | Role label shown in header |
-| `AUTH_PASSWORD` | No | (none) | Password for login |
-| `PORT` | No | 8080 | Backend port |
-| `HOST` | No | 127.0.0.1 | Bind address |
-| `DEBUG` | No | false | Enable debug logging |
+| `SPAIGLASS_RELAY_URL` | Yes | (set by installer) | `wss://spaiglass.xyz` |
+| `SPAIGLASS_CONNECTOR_ID` | Yes | (set by installer) | UUID issued by `/api/connectors` |
+| `SPAIGLASS_CONNECTOR_TOKEN` | Yes | (set by installer) | One-time token used to authenticate the WSS dial |
+| `VM_ROLE` | No | Agent | Role label shown in the header |
+| `PORT` | No | 8080 | Backend port (bound to `127.0.0.1` only) |
+| `CLAUDE_WORKING_DIR` | No | `$HOME` | Project root surfaced to the file browser |
 
 See `.env.example` for a template.
 
