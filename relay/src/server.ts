@@ -13,7 +13,7 @@ import { createNodeWebSocket } from "@hono/node-ws";
 import { getCookie } from "hono/cookie";
 import { readFileSync, existsSync, statSync, createReadStream } from "node:fs";
 import { join as pathJoin } from "node:path";
-import { initDb, cleanExpiredSessions, getUserBySessionToken, getConnectorById, getConnectorBySlug } from "./db.ts";
+import { initDb, cleanExpiredSessions, getUserBySessionToken, getConnectorById, getConnectorBySlug, getConnectorAccess, type ConnectorRole } from "./db.ts";
 import { authRoutes, SESSION_COOKIE } from "./auth.ts";
 import { connectorRoutes } from "./connectors.ts";
 import { agentKeyRoutes } from "./agent-keys.ts";
@@ -1063,6 +1063,28 @@ ${THEME_TOGGLE_HTML}
   </div>
 </div>
 
+<!-- Phase 2: collaborators modal — populated by manageCollaborators(id, name) -->
+<div class="modal-backdrop" id="collabModal" onclick="if(event.target===this)closeCollabModal()">
+  <div class="modal" role="dialog" aria-labelledby="collabTitle">
+    <h2 id="collabTitle">Collaborators</h2>
+    <div class="modal-sub" id="collabSub">Invite people by their GitHub login. They must have signed in to spaiglass at least once.</div>
+    <div style="display: flex; gap: 6px; align-items: center; margin-bottom: 12px;">
+      <input id="collabLogin" placeholder="GitHub login" style="flex:1;" />
+      <select id="collabRole">
+        <option value="editor">Editor</option>
+        <option value="viewer">Viewer</option>
+      </select>
+      <button class="btn-primary" onclick="inviteCollaborator()">Invite</button>
+    </div>
+    <div id="collabError" style="color:#b91c1c; font-size:0.85em; min-height:1em; margin-bottom:8px;"></div>
+    <div id="collabList"></div>
+    <div class="modal-actions">
+      <span class="spacer"></span>
+      <button type="button" class="btn-secondary" onclick="closeCollabModal()">Close</button>
+    </div>
+  </div>
+</div>
+
 <h2>Agent Keys</h2>
 <p style="font-size: 0.9em; color: #666;">Agent keys let scripts and LLM agents register VMs on your behalf without a browser.</p>
 <div style="display: flex; gap: 8px; align-items: center;">
@@ -1293,22 +1315,27 @@ async function loadConnectors() {
     }
     return;
   }
+  // Phase 2: split into owned vs shared. Each entry has a role field.
+  var owned = data.filter(function(c) { return c.role === 'owner'; });
+  var shared = data.filter(function(c) { return c.role !== 'owner'; });
   // Structural fingerprint. Re-rendering wipes the role grid, so only do it
-  // when something the user can see (id/name/online/hidden/version) has changed.
+  // when something the user can see (id/name/online/hidden/version/role/section) has changed.
   var fp = data.map(function(c) {
     var hasHidden = hiddenRoles.some(function(h) { return h.startsWith(c.id + ':'); });
-    return c.id + '|' + c.name + '|' + (c.online ? '1' : '0') + '|' + (hasHidden ? '1' : '0') + '|' + (c.spaiglassVersion || '');
+    return c.id + '|' + c.name + '|' + (c.online ? '1' : '0') + '|' + (hasHidden ? '1' : '0') + '|' + (c.spaiglassVersion || '') + '|' + c.role;
   }).join(';');
   if (fp === connectorsFingerprint) {
     // Nothing structural changed — just refresh role grids in place for online VMs.
     data.forEach(function(c) {
-      if (c.online) loadRoles(c.id, c.name, LOGIN + '.' + c.name);
+      var slug = c.role === 'owner' ? (LOGIN + '.' + c.name) : (c.ownerLogin + '.' + c.name);
+      if (c.online) loadRoles(c.id, c.name, slug);
     });
     return;
   }
   connectorsFingerprint = fp;
-  el.innerHTML = data.map(function(c) {
-    var slug = LOGIN + '.' + c.name;
+
+  function renderCard(c) {
+    var slug = c.role === 'owner' ? (LOGIN + '.' + c.name) : (c.ownerLogin + '.' + c.name);
     var hasHidden = hiddenRoles.some(function(h) { return h.startsWith(c.id + ':'); });
     var verPill = '';
     if (c.online && c.spaiglassVersion) {
@@ -1318,24 +1345,45 @@ async function loadConnectors() {
       var title = stale ? ('Out of date — latest is ' + latestSpaiglassVersion) : 'Up to date';
       verPill = '<span title="' + title + '" style="font-size:0.75em; padding: 2px 8px; border-radius: 10px; background: ' + bg + '; color: ' + color + '; font-family: ui-monospace, monospace;">' + c.spaiglassVersion + '</span>';
     }
+    var rolePill = '';
+    if (c.role !== 'owner') {
+      var rbg = c.role === 'editor' ? '#dbeafe' : '#f1f5f9';
+      var rfg = c.role === 'editor' ? '#1e40af' : '#475569';
+      rolePill = '<span style="font-size:0.72em; padding: 2px 8px; border-radius: 10px; background: ' + rbg + '; color: ' + rfg + '; text-transform: uppercase; letter-spacing: 0.04em;">' + c.role + '</span>';
+    }
+    var ownerLabel = c.role !== 'owner' ? '<span style="font-size:0.78em; color:#64748b;">' + c.ownerLogin + '</span>' : '';
+    var actions = '';
+    if (c.role === 'owner') {
+      actions =
+        '<button class="btn" onclick="manageCollaborators(\\'' + c.id + '\\', \\'' + c.name + '\\')">Manage</button> ' +
+        '<button class="btn btn-danger" onclick="deleteConnector(\\'' + c.id + '\\')">Delete</button>';
+    }
     return '<div class="card">' +
       '<div class="server-row">' +
         '<span class="dot ' + (c.online ? 'online' : 'offline') + '">&bull;</span>' +
         '<span class="name">' + c.name + '</span>' +
+        ownerLabel +
         '<span class="id">' + c.id.slice(0, 8) + '</span>' +
         verPill +
+        rolePill +
         '<span class="spacer"></span>' +
         (hasHidden ? '<label class="show-hidden"><input type="checkbox" id="sh-' + c.id + '" onchange="toggleShowHidden(\\'' + c.id + '\\')"> Show hidden</label>' : '') +
-        '<span class="actions">' +
-          '<button class="btn btn-danger" onclick="deleteConnector(\\'' + c.id + '\\')">Delete</button>' +
-        '</span>' +
+        '<span class="actions">' + actions + '</span>' +
       '</div>' +
       (c.online ? '<div class="role-divider"></div><div class="role-grid" id="rg-' + c.id + '"><div class="no-roles">Loading roles...</div></div>' : '') +
     '</div>';
-  }).join('');
+  }
+
+  var ownedHtml = owned.map(renderCard).join('');
+  var sharedHtml = shared.length
+    ? '<div style="margin-top: 24px;"><h3 style="font-size: 0.95em; color: #475569; margin: 0 0 8px;">Shared with me</h3>' + shared.map(renderCard).join('') + '</div>'
+    : '';
+  el.innerHTML = ownedHtml + sharedHtml;
+
   // Load roles for online VMs
   data.forEach(function(c) {
-    if (c.online) loadRoles(c.id, c.name, LOGIN + '.' + c.name);
+    var slug = c.role === 'owner' ? (LOGIN + '.' + c.name) : (c.ownerLogin + '.' + c.name);
+    if (c.online) loadRoles(c.id, c.name, slug);
   });
 }
 
@@ -1406,6 +1454,103 @@ async function deleteConnector(id) {
   if (!confirm('Delete this connector?')) return;
   await fetch('/api/connectors/' + id, { method: 'DELETE' });
   loadConnectors();
+}
+
+// --- Phase 2: collaborators ---
+var currentCollabConnectorId = null;
+function manageCollaborators(id, name) {
+  currentCollabConnectorId = id;
+  document.getElementById('collabTitle').textContent = 'Collaborators — ' + name;
+  document.getElementById('collabError').textContent = '';
+  document.getElementById('collabLogin').value = '';
+  document.getElementById('collabRole').value = 'editor';
+  document.getElementById('collabModal').classList.add('show');
+  loadCollabsList();
+}
+
+function closeCollabModal() {
+  document.getElementById('collabModal').classList.remove('show');
+  currentCollabConnectorId = null;
+}
+
+async function loadCollabsList() {
+  var id = currentCollabConnectorId;
+  if (!id) return;
+  var listEl = document.getElementById('collabList');
+  listEl.innerHTML = '<div style="color:#94a3b8; font-size:0.85em;">Loading...</div>';
+  try {
+    var res = await fetch('/api/connectors/' + id + '/collaborators');
+    var data = await res.json();
+    if (!data.collaborators || data.collaborators.length === 0) {
+      listEl.innerHTML = '<div style="color:#94a3b8; font-size:0.85em; padding: 8px 0;">No collaborators yet. Invite someone above.</div>';
+      return;
+    }
+    listEl.innerHTML = data.collaborators.map(function(cb) {
+      var rbg = cb.role === 'editor' ? '#dbeafe' : '#f1f5f9';
+      var rfg = cb.role === 'editor' ? '#1e40af' : '#475569';
+      var avatar = cb.avatar
+        ? '<img src="' + cb.avatar + '" style="width:24px;height:24px;border-radius:50%;" />'
+        : '<span style="width:24px;height:24px;border-radius:50%;background:#e2e8f0;display:inline-block;"></span>';
+      return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid #f1f5f9;">' +
+        avatar +
+        '<strong>' + cb.login + '</strong>' +
+        '<span style="font-size:0.72em; padding: 2px 8px; border-radius: 10px; background: ' + rbg + '; color: ' + rfg + '; text-transform: uppercase; letter-spacing: 0.04em;">' + cb.role + '</span>' +
+        '<span style="flex:1;"></span>' +
+        '<select onchange="changeCollabRole(\\'' + cb.userId + '\\', this.value)" style="font-size:0.85em;">' +
+          '<option value="editor"' + (cb.role === 'editor' ? ' selected' : '') + '>editor</option>' +
+          '<option value="viewer"' + (cb.role === 'viewer' ? ' selected' : '') + '>viewer</option>' +
+        '</select>' +
+        '<button class="btn btn-danger" onclick="removeCollab(\\'' + cb.userId + '\\')">Remove</button>' +
+      '</div>';
+    }).join('');
+  } catch(e) {
+    listEl.innerHTML = '<div style="color:#b91c1c;">Failed to load collaborators.</div>';
+  }
+}
+
+async function inviteCollaborator() {
+  var id = currentCollabConnectorId;
+  if (!id) return;
+  var login = document.getElementById('collabLogin').value.trim();
+  var role = document.getElementById('collabRole').value;
+  var errEl = document.getElementById('collabError');
+  errEl.textContent = '';
+  if (!login) { errEl.textContent = 'Enter a GitHub login.'; return; }
+  try {
+    var res = await fetch('/api/connectors/' + id + '/collaborators', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ login: login, role: role }),
+    });
+    if (!res.ok) {
+      var err = await res.json();
+      errEl.textContent = err.error || 'Invite failed.';
+      return;
+    }
+    document.getElementById('collabLogin').value = '';
+    loadCollabsList();
+  } catch(e) {
+    errEl.textContent = 'Network error.';
+  }
+}
+
+async function changeCollabRole(userId, role) {
+  var id = currentCollabConnectorId;
+  if (!id) return;
+  await fetch('/api/connectors/' + id + '/collaborators/' + userId, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role: role }),
+  });
+  loadCollabsList();
+}
+
+async function removeCollab(userId) {
+  var id = currentCollabConnectorId;
+  if (!id) return;
+  if (!confirm('Remove this collaborator?')) return;
+  await fetch('/api/connectors/' + id + '/collaborators/' + userId, { method: 'DELETE' });
+  loadCollabsList();
 }
 
 async function logout() {
@@ -1506,7 +1651,18 @@ app.get("/vm/:slug/api/ws", upgradeWebSocket((c) => {
   }
 
   const connector = resolveVmSlug(slug);
-  if (!connector || connector.user_id !== user.id) {
+  if (!connector) {
+    return {
+      onOpen(_event, ws) {
+        ws.send(JSON.stringify({ type: "error", message: "Connector not found" }));
+        ws.close();
+      },
+    };
+  }
+  // Phase 2: owner OR explicit collaborator may attach. Role decides whether
+  // the relay forwards write-type frames to the VM (see tunnel.ts viewer mode).
+  const role = getConnectorAccess(connector.id, user.id);
+  if (!role) {
     return {
       onOpen(_event, ws) {
         ws.send(JSON.stringify({ type: "error", message: "Connector not found" }));
@@ -1515,7 +1671,7 @@ app.get("/vm/:slug/api/ws", upgradeWebSocket((c) => {
     };
   }
 
-  const handler = createBrowserWsHandler(connector.id, user.id);
+  const handler = createBrowserWsHandler(connector.id, user.id, role);
   return {
     onOpen(event, ws) { handler.onOpen(ws); },
     onMessage(event, ws) { handler.onMessage(ws, event); },
@@ -1525,7 +1681,7 @@ app.get("/vm/:slug/api/ws", upgradeWebSocket((c) => {
 }));
 
 // Auth + resolve middleware for all /vm/:slug routes
-async function vmAuth(c: Context<RelayEnv>): Promise<{ user: NonNullable<ReturnType<typeof getUserBySessionToken>>; connector: NonNullable<ReturnType<typeof resolveVmSlug>> } | Response> {
+async function vmAuth(c: Context<RelayEnv>): Promise<{ user: NonNullable<ReturnType<typeof getUserBySessionToken>>; connector: NonNullable<ReturnType<typeof resolveVmSlug>>; role: ConnectorRole } | Response> {
   const slug = c.req.param("slug")!;
   // Use the user already resolved by authMiddleware (supports both session cookie and agent key)
   const user = c.get("user");
@@ -1541,7 +1697,10 @@ async function vmAuth(c: Context<RelayEnv>): Promise<{ user: NonNullable<ReturnT
   }
 
   const connector = resolveVmSlug(slug);
-  if (!connector || connector.user_id !== user.id) {
+  // Phase 2: any user with owner/editor/viewer role can pass; downstream
+  // handlers must consult `role` before permitting write operations.
+  const role = connector ? getConnectorAccess(connector.id, user.id) : null;
+  if (!connector || !role) {
     return c.html(`<!DOCTYPE html>
 <html><head><title>VM Not Found</title>
 ${FAVICON}
@@ -1551,7 +1710,16 @@ ${FAVICON}
 <p><a href="/fleetrelay">Back to fleet relay</a></p></body></html>`, 404);
   }
 
-  return { user, connector };
+  // Phase 2: viewer mode is read-only at the HTTP layer.
+  // Any non-safe method against /vm/:slug/* is rejected.
+  if (role === "viewer") {
+    const method = c.req.method.toUpperCase();
+    if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
+      return c.json({ error: "Read-only access (viewer role)" }, 403);
+    }
+  }
+
+  return { user, connector, role };
 }
 
 // MIME types for files we serve from RELAY_FRONTEND_DIR. Anything not in this

@@ -21,6 +21,13 @@ interface WSSessionState {
   slashCommands: string[];
   /** True after we've successfully attached/resumed at least once. */
   attached: boolean;
+  /**
+   * Phase 2: role granted by the relay for this VM. "owner" / "editor" can
+   * write; "viewer" is read-only and the input bar should be hidden.
+   * Null until we receive the relay's `connected` handshake (or null if
+   * connecting directly to a backend without a relay in front).
+   */
+  role: "owner" | "editor" | "viewer" | null;
 }
 
 export function useWebSocketSession(options: WSSessionOptions = {}) {
@@ -42,7 +49,11 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
     sessionId: null,
     slashCommands: [],
     attached: false,
+    role: null,
   });
+  // Mirror of state.role kept in a ref so onmessage handlers (which have a
+  // stale closure over state) can read the latest role without re-binding.
+  const roleRef = useRef<"owner" | "editor" | "viewer" | null>(null);
 
   // Message callbacks — set by the consumer (ChatPage)
   const callbacksRef = useRef<{
@@ -126,6 +137,25 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
     }
 
     switch (msg.type) {
+      case "connected": {
+        // Phase 2: relay handshake. Tells us our role on this VM so the UI
+        // can hide the input bar for viewers.
+        const role = (msg.role as "owner" | "editor" | "viewer" | undefined) ?? null;
+        roleRef.current = role;
+        setState((s) => ({ ...s, role }));
+        break;
+      }
+
+      case "viewer_blocked":
+        // Relay refused a write-type frame. Surface a one-time banner.
+        cbs.addMessage({
+          type: "system",
+          subtype: "abort",
+          message: "Read-only access — this action is blocked for viewers.",
+          timestamp: Date.now(),
+        });
+        break;
+
       case "session_ack":
         setState((s) => ({
           ...s,
@@ -153,8 +183,18 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
       case "resume_failed": {
         // Backend has no session for us, or buffer aged out and resume_lost
         // was already sent. Fall back to a fresh session_start using the
-        // last params we know.
+        // last params we know — but ONLY if we're allowed to write.
+        // Viewers stay in "waiting for session" mode instead of spawning one.
         lastCursorRef.current = 0;
+        if (roleRef.current === "viewer") {
+          cbs.addMessage({
+            type: "system",
+            subtype: "abort",
+            message: "Read-only mode — waiting for the owner to start a session.",
+            timestamp: Date.now(),
+          });
+          break;
+        }
         const params = lastSessionParamsRef.current;
         const ws = wsRef.current;
         if (params && ws && ws.readyState === WebSocket.OPEN) {
@@ -346,11 +386,13 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
     } catch {
       // Non-fatal
     }
+    roleRef.current = null;
     setState({
       connected: false,
       sessionId: null,
       slashCommands: [],
       attached: false,
+      role: null,
     });
   }, []);
 

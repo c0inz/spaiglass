@@ -17,6 +17,7 @@ SpAIglass lets you run Claude Code on remote VMs and access them through your br
 
 - **Chat with Claude Code** from any browser — laptop, phone, tablet
 - **Survives disconnect** — close your laptop, switch wifi, lose signal: when you reconnect, the session replays missed output and continues live (30-min idle window)
+- **Share VMs with collaborators** — invite teammates by GitHub login as `editor` (full chat access) or `viewer` (read-only), with an audit log of every membership change
 - **Cross-platform host support** — Linux, macOS (Intel + Apple Silicon), and Windows 10/11 in the same fleet
 - **One-line install per platform** — `curl install.sh | bash` on Linux/macOS, `iwr install.ps1 | iex` on Windows
 - **Project file browser** — see and edit your files while you chat
@@ -101,6 +102,8 @@ SpAIglass is open source specifically so that you (and your LLM agents) can veri
 - **Session tokens:** random values, expire automatically, cleaned hourly
 - **Connector records:** VM name, hashed auth token, last-seen timestamp
 - **Agent API keys:** SHA-256 hashed only -- plaintext shown once at creation, never stored
+- **Collaborator records:** for each shared VM, the GitHub user ID of each invited collaborator and their role (`editor` or `viewer`)
+- **Collaboration audit log:** add/remove/role-change events with actor + target user IDs and timestamps (no message content)
 
 ### What the relay does NOT store
 
@@ -109,6 +112,8 @@ SpAIglass is open source specifically so that you (and your LLM agents) can veri
 - No files or code -- the relay has no access to your VM filesystem
 - No long-lived OAuth tokens -- GitHub tokens are used once during sign-in and discarded
 - No analytics, tracking cookies, or third-party scripts
+
+> **Viewer-mode caveat:** for connections by users with the `viewer` role, the relay parses *only* the `type` field of each browser→VM JSON frame to enforce read-only access (e.g. blocking `message` and `interrupt`). Frame *content* is never read or logged. Owner and editor traffic is forwarded fully opaquely.
 
 ### Data flow transparency
 
@@ -234,6 +239,22 @@ curl -fsSL https://spaiglass.xyz/install.sh | bash -s -- \
   - Windows: `irm https://claude.ai/install.ps1 | iex` then `claude` (one-time auth)
 - Linux only: `tar` and `bash`
 - Windows only: PowerShell 5.1+ and `tar.exe` (ships with Windows 10 1803+)
+
+### Sharing a VM with a collaborator
+
+Each VM has one owner (the GitHub user who registered it) and zero or more collaborators. Collaborators get one of two roles:
+
+- **Editor** — full chat, file browsing, editing, and interruption. Can do everything the owner can except manage other collaborators or delete the VM.
+- **Viewer** — read-only. Can navigate the dashboard, browse files, and watch a live chat session, but cannot send messages, interrupt the agent, or edit files. The relay enforces this; viewers can only attach to a session the owner has already started.
+
+To invite someone:
+
+1. Open the dashboard at [spaiglass.xyz](https://spaiglass.xyz)
+2. Click **Manage** on the VM you want to share
+3. Enter the collaborator's GitHub login and pick a role
+4. They'll see the VM under **Shared with me** the next time they sign in
+
+The invitee must have signed in to spaiglass at least once so the relay has a user record to invite. Collaborator add/remove/role-change events are recorded in the per-VM audit log, visible to the owner via `GET /api/connectors/:id/audit`.
 
 ### Adding more VMs to the same account
 

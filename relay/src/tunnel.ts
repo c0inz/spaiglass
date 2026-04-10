@@ -10,7 +10,25 @@
  */
 
 import type { WSContext } from "hono/ws";
-import { getConnectorByToken, getConnectorById, touchConnector } from "./db.ts";
+import {
+  getConnectorByToken,
+  getConnectorById,
+  touchConnector,
+  getConnectorAccess,
+  type ConnectorRole,
+} from "./db.ts";
+
+/**
+ * Phase 2: write-type WS message kinds that a viewer is NOT allowed to send.
+ * Anything not in this set (e.g. `resume`) is forwarded so viewers can still
+ * attach to live sessions and replay buffered frames.
+ */
+const VIEWER_BLOCKED_TYPES = new Set([
+  "message",
+  "interrupt",
+  "session_start",
+  "session_restart",
+]);
 
 export interface HttpProxyResponse {
   status: number;
@@ -300,17 +318,32 @@ const connectorWsMap = new WeakMap<WSContext, string>();
 
 /**
  * Handle browser WebSocket to a specific VM.
- * Validates ownership before connecting.
+ * Validates access (owner or collaborator) before connecting.
+ *
+ * Phase 2: `role` is passed in by server.ts after consulting vm_collaborators.
+ * For `viewer`, the relay enforces read-only by:
+ *   - Blocking write-type WS messages (message/interrupt) entirely
+ *   - Rewriting session_start/session_restart to `resume` with lastCursor=0,
+ *     so a viewer "attach" never spawns a Claude process — it can only attach
+ *     to a session the owner already started.
+ *   - Surfacing the role in the `connected` frame so the frontend can hide
+ *     the input bar and show a viewer banner.
  */
-export function createBrowserWsHandler(connectorId: string, userId: string) {
+export function createBrowserWsHandler(
+  connectorId: string,
+  userId: string,
+  role: ConnectorRole,
+) {
   const cm = getChannelManager();
   const browserId = crypto.randomUUID();
 
   return {
     onOpen(ws: WSContext) {
-      // Validate connector exists and belongs to user
-      const connector = getConnectorById(connectorId);
-      if (!connector || connector.user_id !== userId) {
+      // Re-check access at attach time. The role passed in by server.ts is the
+      // snapshot from the upgrade handshake; if the owner removed this user
+      // between then and now (rare), reject here.
+      const currentRole = getConnectorAccess(connectorId, userId);
+      if (!currentRole) {
         ws.send(JSON.stringify({ type: "error", message: "Connector not found" }));
         ws.close();
         return;
@@ -330,11 +363,57 @@ export function createBrowserWsHandler(connectorId: string, userId: string) {
         type: "connected",
         connectorId,
         browserId,
+        role: currentRole,
       }));
     },
 
     onMessage(ws: WSContext, event: MessageEvent) {
       const raw = typeof event.data === "string" ? event.data : event.data.toString();
+
+      // Owners and editors: forward opaquely (the relay does not inspect content).
+      if (role !== "viewer") {
+        cm.browserToVm(connectorId, browserId, raw);
+        return;
+      }
+
+      // Viewers: parse only the `type` field for permission enforcement.
+      // We do NOT read or log message content.
+      let parsed: { type?: unknown; roleFile?: unknown; workingDirectory?: unknown } | null = null;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        // Non-JSON frame from a viewer is dropped.
+        ws.send(JSON.stringify({ type: "error", message: "Invalid frame (viewer)" }));
+        return;
+      }
+
+      const type = typeof parsed?.type === "string" ? parsed.type : "";
+
+      if (VIEWER_BLOCKED_TYPES.has(type)) {
+        // session_start / session_restart are rewritten to a passive resume so
+        // the viewer can attach without spawning a new Claude process.
+        if (type === "session_start" || type === "session_restart") {
+          const rewritten = JSON.stringify({
+            type: "resume",
+            roleFile: parsed?.roleFile,
+            workingDirectory: parsed?.workingDirectory,
+            lastCursor: 0,
+          });
+          cm.browserToVm(connectorId, browserId, rewritten);
+          return;
+        }
+        // message / interrupt are hard-blocked.
+        ws.send(
+          JSON.stringify({
+            type: "viewer_blocked",
+            blockedType: type,
+            message: "Read-only access (viewer role)",
+          }),
+        );
+        return;
+      }
+
+      // Anything else (resume, ping, etc.) flows through.
       cm.browserToVm(connectorId, browserId, raw);
     },
 

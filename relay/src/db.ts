@@ -1,6 +1,6 @@
 /**
  * SQLite database for SGCleanRelay.
- * Tables: users, connectors, sessions, agent_keys
+ * Tables: users, connectors, sessions, agent_keys, vm_collaborators, vm_audit_log
  */
 
 import Database from "better-sqlite3";
@@ -51,6 +51,34 @@ export function initDb(path = "./relay.db"): Database.Database {
       prefix TEXT NOT NULL,
       created_at TEXT DEFAULT (datetime('now'))
     );
+
+    -- Phase 2: multi-user collaboration. The connector owner (connectors.user_id)
+    -- always has implicit "owner" role and is NOT stored in this table — only
+    -- explicit collaborators. role is one of: 'editor' | 'viewer'.
+    CREATE TABLE IF NOT EXISTS vm_collaborators (
+      connector_id TEXT NOT NULL REFERENCES connectors(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      role TEXT NOT NULL CHECK (role IN ('editor', 'viewer')),
+      invited_by TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (connector_id, user_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_vm_collab_user ON vm_collaborators(user_id);
+
+    -- Phase 2: audit log for collaboration events.
+    -- action: 'collaborator_added' | 'collaborator_removed' | 'collaborator_role_changed'
+    CREATE TABLE IF NOT EXISTS vm_audit_log (
+      id TEXT PRIMARY KEY,
+      connector_id TEXT NOT NULL REFERENCES connectors(id) ON DELETE CASCADE,
+      actor_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      target_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      action TEXT NOT NULL,
+      details TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_vm_audit_connector ON vm_audit_log(connector_id, created_at DESC);
   `);
 
   return db;
@@ -86,6 +114,12 @@ export function upsertUser(githubId: number, login: string, name: string | null,
 
 export function getUserById(id: string): User | undefined {
   return getDb().prepare("SELECT * FROM users WHERE id = ?").get(id) as User | undefined;
+}
+
+export function findUserByLogin(login: string): User | undefined {
+  return getDb()
+    .prepare("SELECT * FROM users WHERE LOWER(github_login) = LOWER(?)")
+    .get(login) as User | undefined;
 }
 
 // --- Sessions ---
@@ -205,4 +239,176 @@ export function getUserByAgentKeyHash(keyHash: string): User | undefined {
 export function deleteAgentKey(id: string, userId: string): boolean {
   const result = getDb().prepare("DELETE FROM agent_keys WHERE id = ? AND user_id = ?").run(id, userId);
   return result.changes > 0;
+}
+
+// --- Collaborators (Phase 2) ---
+
+export type ConnectorRole = "owner" | "editor" | "viewer";
+
+export interface Collaborator {
+  connector_id: string;
+  user_id: string;
+  role: "editor" | "viewer";
+  invited_by: string;
+  created_at: string;
+  github_login: string;
+  github_name: string | null;
+  github_avatar: string | null;
+}
+
+/**
+ * Resolve the role a given user has on a given connector.
+ *
+ * Returns:
+ * - "owner" if userId === connector.user_id
+ * - "editor" / "viewer" if there's a row in vm_collaborators
+ * - null otherwise (no access)
+ *
+ * Single source of truth for permission checks. Replaces the bare
+ * `connector.user_id !== user.id` ownership comparison everywhere.
+ */
+export function getConnectorAccess(
+  connectorId: string,
+  userId: string,
+): ConnectorRole | null {
+  const conn = getDb()
+    .prepare("SELECT user_id FROM connectors WHERE id = ?")
+    .get(connectorId) as { user_id: string } | undefined;
+  if (!conn) return null;
+  if (conn.user_id === userId) return "owner";
+  const collab = getDb()
+    .prepare("SELECT role FROM vm_collaborators WHERE connector_id = ? AND user_id = ?")
+    .get(connectorId, userId) as { role: "editor" | "viewer" } | undefined;
+  return collab?.role ?? null;
+}
+
+/**
+ * List explicit collaborators (excludes the owner) on a connector,
+ * joined with user profile data so the dashboard can render avatars.
+ */
+export function listCollaborators(connectorId: string): Collaborator[] {
+  return getDb()
+    .prepare(
+      `SELECT vc.*, u.github_login, u.github_name, u.github_avatar
+       FROM vm_collaborators vc
+       JOIN users u ON u.id = vc.user_id
+       WHERE vc.connector_id = ?
+       ORDER BY vc.created_at ASC`,
+    )
+    .all(connectorId) as Collaborator[];
+}
+
+/**
+ * Add a collaborator to a connector. Throws if userId already has a row
+ * (caller should use updateCollaboratorRole instead) or if the user is the owner.
+ */
+export function addCollaborator(
+  connectorId: string,
+  userId: string,
+  role: "editor" | "viewer",
+  invitedBy: string,
+): void {
+  const access = getConnectorAccess(connectorId, userId);
+  if (access === "owner") {
+    throw new Error("Cannot add the owner as a collaborator");
+  }
+  getDb()
+    .prepare(
+      `INSERT INTO vm_collaborators (connector_id, user_id, role, invited_by)
+       VALUES (?, ?, ?, ?)`,
+    )
+    .run(connectorId, userId, role, invitedBy);
+}
+
+export function updateCollaboratorRole(
+  connectorId: string,
+  userId: string,
+  role: "editor" | "viewer",
+): boolean {
+  const result = getDb()
+    .prepare(
+      `UPDATE vm_collaborators SET role = ? WHERE connector_id = ? AND user_id = ?`,
+    )
+    .run(role, connectorId, userId);
+  return result.changes > 0;
+}
+
+export function removeCollaborator(connectorId: string, userId: string): boolean {
+  const result = getDb()
+    .prepare(`DELETE FROM vm_collaborators WHERE connector_id = ? AND user_id = ?`)
+    .run(connectorId, userId);
+  return result.changes > 0;
+}
+
+/**
+ * Connectors that a given user has explicit (non-owner) access to.
+ * Used by GET /api/connectors to populate the "Shared with me" section.
+ */
+export interface SharedConnector extends Connector {
+  role: "editor" | "viewer";
+  owner_login: string;
+}
+
+export function getSharedConnectorsForUser(userId: string): SharedConnector[] {
+  return getDb()
+    .prepare(
+      `SELECT c.*, vc.role as role, u.github_login as owner_login
+       FROM vm_collaborators vc
+       JOIN connectors c ON c.id = vc.connector_id
+       JOIN users u ON u.id = c.user_id
+       WHERE vc.user_id = ?
+       ORDER BY c.created_at DESC`,
+    )
+    .all(userId) as SharedConnector[];
+}
+
+// --- Audit log (Phase 2) ---
+
+export interface AuditLogEntry {
+  id: string;
+  connector_id: string;
+  actor_user_id: string;
+  target_user_id: string | null;
+  action: string;
+  details: string | null;
+  created_at: string;
+  actor_login?: string;
+  target_login?: string | null;
+}
+
+export function appendAuditLog(
+  connectorId: string,
+  actorUserId: string,
+  action: string,
+  targetUserId: string | null,
+  details: Record<string, unknown> | null = null,
+): void {
+  const id = randomUUID();
+  getDb()
+    .prepare(
+      `INSERT INTO vm_audit_log (id, connector_id, actor_user_id, target_user_id, action, details)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      connectorId,
+      actorUserId,
+      targetUserId,
+      action,
+      details ? JSON.stringify(details) : null,
+    );
+}
+
+export function listAuditLog(connectorId: string, limit = 100): AuditLogEntry[] {
+  return getDb()
+    .prepare(
+      `SELECT al.*, ua.github_login as actor_login, ut.github_login as target_login
+       FROM vm_audit_log al
+       LEFT JOIN users ua ON ua.id = al.actor_user_id
+       LEFT JOIN users ut ON ut.id = al.target_user_id
+       WHERE al.connector_id = ?
+       ORDER BY al.created_at DESC
+       LIMIT ?`,
+    )
+    .all(connectorId, limit) as AuditLogEntry[];
 }

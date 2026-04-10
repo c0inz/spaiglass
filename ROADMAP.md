@@ -83,7 +83,15 @@ Default to NDJSON unless a concrete need pushes us to SQLite.
 
 # Phase 2 — Multi-user collaboration (shared access)
 
-**Status:** not started. **Estimate:** 1-2 weeks. **Owner:** TBD. **Depends on:** Phase 1.
+**Status:** ✅ shipped (relay-side). **Owner:** done. **Depends on:** Phase 1.
+
+> **Implementation notes (shipped):**
+> - Schema: `vm_collaborators` keyed on `(connector_id, user_id)` (FK to `users.id`, not raw github_login — survives login changes), and `vm_audit_log` with actor/target user IDs.
+> - The owner is **implicit** — `connectors.user_id` defines ownership, no row in `vm_collaborators`.
+> - Single source of truth: `getConnectorAccess(connectorId, userId)` returns `'owner' | 'editor' | 'viewer' | null`. All permission checks consult it.
+> - Viewer mode is enforced at the relay: HTTP layer rejects any non-safe method (POST/PUT/PATCH/DELETE), and the WS tunnel parses *only* the `type` field of each browser→VM frame to drop write-type messages (`message`, `interrupt`) and rewrite `session_start`/`session_restart` into a passive `resume` so a viewer can never spawn a Claude process.
+> - The frontend hook (`useWebSocketSession`) captures the role from the relay's `connected` handshake and skips the resume→session_start fallback when the user is a viewer. Viewer UI binding lands when ChatPage migrates onto the WS hook.
+> - Endpoints shipped: `GET /api/connectors` (now returns owned + shared), `GET/POST/PATCH/DELETE /api/connectors/:id/collaborators`, `GET /api/connectors/:id/audit`. Dashboard has a "Manage" modal and a "Shared with me" section.
 
 **This has to exist.** Spaiglass VMs are not single-tenant. Today only the GitHub user who registered a connector can access it — there is no way to share a VM with a teammate, no concept of viewer-only access. This is a hard gap for any team use case.
 
