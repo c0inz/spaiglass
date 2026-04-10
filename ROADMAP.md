@@ -193,7 +193,39 @@ GET    /api/shared-with-me                        → connectors I can access as
 
 # Phase 3 — Single-binary host with no Node prerequisite
 
-**Status:** not started. **Estimate:** 1 week. **Owner:** TBD.
+**Status:** ✅ shipped (binary build + installer rewrite). **Owner:** Claude.
+
+## Implementation notes
+
+- Unified entry point at `backend/cli/spaiglass-host.ts` boots the local
+  backend then starts the connector in the same process. Replaces the
+  legacy two-process layout (`node cli/node.js` + `node connector.js`).
+- `bun build --compile --target=bun-<target>` produces a self-contained
+  ~50 MB binary per platform. All 5 targets cross-compile from a single
+  Linux host (`backend/scripts/build-binary.sh all`).
+- Static frontend ships as a sibling `static/` dir next to the binary
+  inside the per-platform tarball — bun-compile only bundles JS modules,
+  so frontend assets travel alongside. `cli/node.ts` detects compiled
+  mode (`__dirname` starts with `/$bunfs`) and resolves staticPath
+  relative to `process.execPath`.
+- `~/projects/<name>/agents/` auto-registration in `~/.claude.json`
+  moved from `install.sh`'s inline `node -e` snippet into
+  `backend/utils/register-projects.ts`, called from spaiglass-host
+  startup. The installer no longer needs node at all.
+- Per-platform tarballs at
+  `https://spaiglass.xyz/releases/spaiglass-host-<target>.tar.gz`
+  (relay route added with hard-coded allowlist of the 5 valid targets).
+- Build matrix CI in `.github/workflows/host-binaries.yml` — fan-out
+  on the 5 targets, attaches tarballs + sha256 checksums to draft
+  GitHub releases.
+- Risk that didn't materialize: bun's `node:child_process.spawn` works
+  cleanly under the compiled binary — Claude Code CLI 2.1.101 was
+  detected and version-checked end-to-end on the linux-x64 binary
+  smoke test. The CLI script-path detection in `validation.ts` falls
+  back to using the `claude` executable directly under bun (one
+  warning, non-blocking).
+
+**Original spec preserved below for reference.**
 
 Today the host install requires Node >= 20, npm, and `npm install` of ~280 packages. On Windows this means asking users to install Node first. The reviewer's recommendation was a full Go/Rust rewrite. We are not doing that. Two cheaper paths achieve the same outcome:
 

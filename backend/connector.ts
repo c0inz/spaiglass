@@ -17,31 +17,19 @@
 import WebSocket from "ws";
 import { config } from "dotenv";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-// Load .env from same directory
-config({ path: resolve(import.meta.dirname ?? ".", ".env") });
+// Module-scope state — populated by startConnector() so this file can be
+// imported by cli/spaiglass-host.ts without auto-running, or executed
+// standalone via `node connector.js` (legacy npm install path).
+let RELAY_URL: string | undefined;
+let CONNECTOR_TOKEN: string | undefined;
+let CONNECTOR_ID: string | undefined;
+let LOCAL_PORT = "8080";
+let LOCAL_WS = "";
+let SPAIGLASS_VERSION = "unknown";
+let relayWsUrl = "";
 
-const RELAY_URL = process.env.RELAY_URL;
-const CONNECTOR_TOKEN = process.env.CONNECTOR_TOKEN;
-const CONNECTOR_ID = process.env.CONNECTOR_ID;
-const LOCAL_PORT = process.env.PORT || "8080";
-const LOCAL_HOST = process.env.HOST || "0.0.0.0";
-const LOCAL_WS = `ws://127.0.0.1:${LOCAL_PORT}/api/ws`;
-// Spaiglass install version (date string like "2026.04.10"). Written into .env
-// by install.sh from the VERSION file shipped in the dist tarball, so the relay
-// can detect VMs running an out-of-date install and surface an update banner.
-const SPAIGLASS_VERSION = process.env.SPAIGLASS_VERSION || "unknown";
-
-if (!RELAY_URL || !CONNECTOR_TOKEN) {
-  console.error("Missing RELAY_URL or CONNECTOR_TOKEN in .env");
-  process.exit(1);
-}
-
-// Convert RELAY_URL to WebSocket URL
-const relayWsUrl =
-  RELAY_URL.replace(/^https:/, "wss:").replace(/^http:/, "ws:") + "/connector";
-
-// Track local WebSocket connections per browser session
 const localSockets = new Map<string, WebSocket>();
 
 let relayWs: WebSocket | null = null;
@@ -314,9 +302,50 @@ process.on("SIGTERM", () => {
   process.exit(0);
 });
 
-// Start
-log("SpAIglass Relay Connector Client");
-log(`Relay: ${RELAY_URL}`);
-log(`Local backend: ${LOCAL_WS}`);
-log(`Connector ID: ${CONNECTOR_ID || "(from token)"}`);
-connectToRelay();
+/**
+ * Initialise the connector and dial the relay.
+ *
+ * Reads RELAY_URL / CONNECTOR_TOKEN / CONNECTOR_ID / PORT / SPAIGLASS_VERSION
+ * from process.env at call time. The unified spaiglass-host binary calls
+ * this after the local backend is listening; the legacy `node connector.js`
+ * standalone path calls it from the auto-run shim below.
+ */
+export function startConnector(): void {
+  RELAY_URL = process.env.RELAY_URL;
+  CONNECTOR_TOKEN = process.env.CONNECTOR_TOKEN;
+  CONNECTOR_ID = process.env.CONNECTOR_ID;
+  LOCAL_PORT = process.env.PORT || "8080";
+  // Spaiglass install version (date string like "2026.04.10"). Written into
+  // .env by install.sh so the relay can detect VMs on out-of-date installs.
+  SPAIGLASS_VERSION = process.env.SPAIGLASS_VERSION || "unknown";
+  LOCAL_WS = `ws://127.0.0.1:${LOCAL_PORT}/api/ws`;
+
+  if (!RELAY_URL || !CONNECTOR_TOKEN) {
+    console.error("Missing RELAY_URL or CONNECTOR_TOKEN in .env");
+    process.exit(1);
+  }
+
+  relayWsUrl =
+    RELAY_URL.replace(/^https:/, "wss:").replace(/^http:/, "ws:") +
+    "/connector";
+
+  log("SpAIglass Relay Connector Client");
+  log(`Relay: ${RELAY_URL}`);
+  log(`Local backend: ${LOCAL_WS}`);
+  log(`Connector ID: ${CONNECTOR_ID || "(from token)"}`);
+  connectToRelay();
+}
+
+// Auto-run when this file is loaded directly via `node connector.js` (the
+// legacy npm-based install path). Skip auto-run when bundled into the
+// bun-compiled single binary — there, cli/spaiglass-host.ts is the unique
+// entry point and calls startConnector() explicitly after the backend is
+// listening.
+const here =
+  import.meta.dirname ?? fileURLToPath(new URL(".", import.meta.url));
+const isCompiledBundle = here.startsWith("/$bunfs");
+
+if (!isCompiledBundle) {
+  config({ path: resolve(here, ".env") });
+  startConnector();
+}

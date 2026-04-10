@@ -500,6 +500,38 @@ app.get("/dist.tar.gz", (c) => {
   return c.body(createReadStream(path));
 });
 
+// Phase 3: serve per-platform single-binary tarballs at
+// /releases/spaiglass-host-<target>.tar.gz. The new install.sh / install.ps1
+// download from here and drop the binary + static dir under ~/spaiglass.
+// Allowed targets are pinned to the build matrix to prevent path traversal.
+const PHASE3_TARGETS = new Set([
+  "linux-x64",
+  "linux-arm64",
+  "darwin-x64",
+  "darwin-arm64",
+  "windows-x64",
+]);
+app.get("/releases/spaiglass-host-:target{.+\\.tar\\.gz}", (c) => {
+  const raw = c.req.param("target");
+  if (!raw) return c.text("Missing target", 400);
+  // raw is like "linux-x64.tar.gz" — strip the suffix and validate.
+  const target = raw.replace(/\.tar\.gz$/, "");
+  if (!PHASE3_TARGETS.has(target)) {
+    return c.text("Unknown target", 404);
+  }
+  const path = pathJoin(RELEASE_DIR, `spaiglass-host-${target}.tar.gz`);
+  if (!existsSync(path)) {
+    return c.text(`spaiglass-host-${target}.tar.gz not yet published`, 503);
+  }
+  const stat = statSync(path);
+  c.header("Content-Type", "application/gzip");
+  c.header("Content-Length", String(stat.size));
+  c.header("Cache-Control", "no-cache");
+  c.header("X-Spaiglass-Version", getLatestSpaiglassVersion());
+  // @ts-expect-error Hono accepts a Node Readable as the body
+  return c.body(createReadStream(path));
+});
+
 // --- Single-source setup content ---
 // Both /setup (HTML) and /api/setup (JSON) render from this.
 function getSetupData() {

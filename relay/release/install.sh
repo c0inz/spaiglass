@@ -1,33 +1,45 @@
 #!/usr/bin/env bash
 #
-# Spaiglass VM installer (Linux + macOS).
+# Spaiglass VM installer (Linux + macOS) — Phase 3 binary edition.
 #
-# Run on a fresh Linux VM or macOS host after registering it on https://spaiglass.xyz:
+# Run on a fresh host after registering it on https://spaiglass.xyz:
 #
 #     curl -fsSL https://spaiglass.xyz/install.sh | bash -s -- \
 #         --token=YOUR_TOKEN --id=YOUR_ID --name=YOUR_VM_NAME
 #
-# Idempotent — re-running upgrades the install in place, preserves the .env,
+# This installer downloads a single self-contained binary (no Node, no npm,
+# no node_modules) for your platform, drops it under ~/spaiglass, writes a
+# .env, and registers a per-user service that runs at boot/login.
+#
+# Idempotent — re-running upgrades the binary in place, preserves the .env,
 # and restarts the service. To uninstall: pass --uninstall.
 #
-# Requires:  bash, curl, tar, node>=20, npm, ~/.local/bin/claude (Claude Code CLI)
-# Installs:  ~/spaiglass/{backend,VERSION,.env}
+# Requires:  bash, curl, ~/.local/bin/claude (Anthropic Claude Code CLI).
+#            No Node, no npm, no developer tools.
+# Installs:  ~/spaiglass/{spaiglass-host[.exe],static/,VERSION,.env}
 #            Linux:  ~/.config/systemd/user/spaiglass.service
 #            macOS:  ~/Library/LaunchAgents/xyz.spaiglass.vm.plist
-#            Auto-registers ~/projects/*/agents/ in ~/.claude.json
 #
-# Windows users: use install.ps1 instead — `iwr https://spaiglass.xyz/install.ps1 -useb | iex`.
+# Windows users: use install.ps1 instead — `iwr https://spaiglass.xyz/install.ps1 -useb`.
 #
 set -euo pipefail
 
 # ----- platform detection -----
 case "$(uname -s)" in
   Linux)  PLATFORM="linux"  ;;
-  Darwin) PLATFORM="macos"  ;;
+  Darwin) PLATFORM="darwin" ;;
   *)      printf 'Unsupported platform: %s\n' "$(uname -s)" >&2
           printf 'Linux + macOS use install.sh; Windows uses install.ps1.\n' >&2
           exit 1 ;;
 esac
+
+case "$(uname -m)" in
+  x86_64|amd64)  ARCH="x64"   ;;
+  aarch64|arm64) ARCH="arm64" ;;
+  *) printf 'Unsupported architecture: %s\n' "$(uname -m)" >&2; exit 1 ;;
+esac
+
+TARGET="${PLATFORM}-${ARCH}"
 
 # ----- defaults -----
 RELAY_URL="${RELAY_URL:-https://spaiglass.xyz}"
@@ -39,8 +51,7 @@ UNINSTALL=0
 PORT="${PORT:-8080}"
 # By default the local backend binds to 127.0.0.1 — the connector reaches it
 # over loopback, and nothing on the VM's LAN can hit it directly. Pass
-# --lan-bind to listen on 0.0.0.0 instead (e.g. so a teammate on the same
-# network can open the UI without going through spaiglass.xyz).
+# --lan-bind to listen on 0.0.0.0 instead.
 LAN_BIND=0
 
 # ----- pretty output -----
@@ -62,7 +73,7 @@ for arg in "$@"; do
     --lan-bind)    LAN_BIND=1 ;;
     --uninstall)   UNINSTALL=1 ;;
     -h|--help)
-      sed -n '2,15p' "$0" 2>/dev/null || true
+      sed -n '2,18p' "$0" 2>/dev/null || true
       exit 0
       ;;
     *) fail "Unknown argument: $arg" ;;
@@ -93,7 +104,6 @@ fi
 log "Pre-flight checks"
 
 # Upgrade-in-place: if no --token was given but a previous .env exists, reuse it.
-# Lets users re-run "curl ... | bash" to upgrade without re-typing credentials.
 if [ -z "$TOKEN" ] && [ -f "$INSTALL_DIR/.env" ]; then
   # shellcheck disable=SC1090
   set -a; . "$INSTALL_DIR/.env"; set +a
@@ -111,16 +121,6 @@ fi
 
 command -v curl >/dev/null || fail "curl not found"
 command -v tar  >/dev/null || fail "tar not found"
-command -v node >/dev/null || fail "node not found — install Node.js >= 20 (https://nodejs.org)"
-command -v npm  >/dev/null || fail "npm not found"
-
-NODE_MAJOR=$(node -e 'process.stdout.write(String(process.versions.node.split(".")[0]))')
-[ "$NODE_MAJOR" -ge 20 ] || fail "Node $NODE_MAJOR is too old; need >= 20"
-
-# Resolve absolute node path so the systemd unit works in environments where
-# node is only on PATH inside an interactive shell (nvm/fnm/asdf).
-NODE_BIN=$(command -v node)
-[ -x "$NODE_BIN" ] || fail "Could not resolve absolute path to node binary"
 
 CLAUDE_BIN="$HOME/.local/bin/claude"
 if [ ! -x "$CLAUDE_BIN" ]; then
@@ -131,48 +131,45 @@ if [ ! -x "$CLAUDE_BIN" ]; then
     fail "Claude Code CLI not found. Install with: curl -fsSL https://claude.ai/install.sh | bash"
   fi
 fi
-ok "Node $(node --version), Claude $("$CLAUDE_BIN" --version 2>&1 | head -1)"
+ok "Claude $("$CLAUDE_BIN" --version 2>&1 | head -1)"
+ok "Target platform: $TARGET"
 
-# ----- download tarball -----
-log "Fetching latest bundle from $RELAY_URL"
-TMP_TAR="$(mktemp --suffix=.tar.gz)"
+# ----- download binary tarball -----
+# The relay publishes per-platform tarballs at /releases/spaiglass-host-<target>.tar.gz.
+# Each tarball contains the binary, the static frontend dir, and a VERSION file.
+log "Fetching $TARGET binary from $RELAY_URL"
+TMP_TAR="$(mktemp --suffix=.tar.gz 2>/dev/null || mktemp -t spaiglass)"
 trap 'rm -f "$TMP_TAR"' EXIT
-if ! curl -fsSL --connect-timeout 10 -o "$TMP_TAR" "$RELAY_URL/dist.tar.gz"; then
-  fail "Could not download $RELAY_URL/dist.tar.gz"
+TARBALL_URL="$RELAY_URL/releases/spaiglass-host-${TARGET}.tar.gz"
+if ! curl -fsSL --connect-timeout 10 -o "$TMP_TAR" "$TARBALL_URL"; then
+  fail "Could not download $TARBALL_URL"
 fi
 TAR_SIZE=$(stat -c%s "$TMP_TAR" 2>/dev/null || stat -f%z "$TMP_TAR")
-ok "Downloaded $(( TAR_SIZE / 1024 )) KB"
+ok "Downloaded $(( TAR_SIZE / 1024 / 1024 )) MB"
 
 # ----- extract -----
 log "Installing to $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
-# Save existing .env if upgrading so we don't lose the token
-EXISTING_ENV=""
-if [ -f "$INSTALL_DIR/.env" ]; then
-  EXISTING_ENV="$(cat "$INSTALL_DIR/.env")"
-fi
-# Extract over the install dir, stripping the top-level "spaiglass/" component
+# Extract over the install dir, stripping the top-level "spaiglass-host-<target>/" component.
 tar -xzf "$TMP_TAR" -C "$INSTALL_DIR" --strip-components=1
 [ -f "$INSTALL_DIR/VERSION" ] || fail "Tarball is missing VERSION file"
+[ -x "$INSTALL_DIR/spaiglass-host" ] || fail "Tarball is missing the spaiglass-host binary"
 VERSION=$(cat "$INSTALL_DIR/VERSION")
 ok "Extracted spaiglass $VERSION"
 
-# As of 2026.04.10 the relay serves the frontend; the VM tarball no longer
-# ships backend/dist/static. Old installs leave a stale static/ behind because
-# tar doesn't delete files that aren't in the archive — clean it up so the
-# backend's SPA fallback returns the "served by the relay" placeholder
-# instead of an out-of-date local index.html.
-if [ -d "$INSTALL_DIR/backend/dist/static" ]; then
-  rm -rf "$INSTALL_DIR/backend/dist/static"
-  ok "Removed legacy backend/dist/static (frontend now served by relay)"
+# Clean stale files from a pre-Phase-3 npm-based install if present.
+if [ -d "$INSTALL_DIR/backend" ]; then
+  rm -rf "$INSTALL_DIR/backend"
+  ok "Removed legacy backend/ dir from previous npm-based install"
+fi
+if [ -d "$INSTALL_DIR/node_modules" ]; then
+  rm -rf "$INSTALL_DIR/node_modules"
+  ok "Removed legacy node_modules"
 fi
 
-# ----- install backend deps -----
-log "Installing backend dependencies (npm install --omit=dev)"
-( cd "$INSTALL_DIR/backend" && npm install --omit=dev --no-audit --no-fund --silent ) || fail "npm install failed"
-ok "Backend dependencies installed"
+BIN_PATH="$INSTALL_DIR/spaiglass-host"
 
-# ----- write .env (preserves existing keys, overlays new ones) -----
+# ----- write .env -----
 if [ "$LAN_BIND" = "1" ]; then
   BIND_HOST="0.0.0.0"
   BIND_LABEL="all interfaces — LAN-accessible"
@@ -197,84 +194,17 @@ EOF
 chmod 600 "$INSTALL_DIR/.env"
 ok "Wrote $INSTALL_DIR/.env (mode 600)"
 
-# ----- auto-register projects in ~/.claude.json -----
-log "Auto-registering ~/projects/*/agents/ in ~/.claude.json"
-node - "$HOME" <<'NODEJS'
-const fs = require("node:fs");
-const path = require("node:path");
-const HOME = process.argv[2];
-const projectsRoot = path.join(HOME, "projects");
-const claudeJsonPath = path.join(HOME, ".claude.json");
-const claudeProjectsDir = path.join(HOME, ".claude", "projects");
-
-if (!fs.existsSync(projectsRoot)) {
-  console.log(`  (no ~/projects directory yet — skipping)`);
-  process.exit(0);
-}
-
-// Encode a path the same way Claude Code does: replace /, \, :, ., _ with -
-function encodePath(p) {
-  return p.replace(/[/\\:._]/g, "-");
-}
-
-let claudeJson = { projects: {} };
-if (fs.existsSync(claudeJsonPath)) {
-  try { claudeJson = JSON.parse(fs.readFileSync(claudeJsonPath, "utf-8")); }
-  catch { claudeJson = { projects: {} }; }
-}
-claudeJson.projects = claudeJson.projects || {};
-
-const entries = fs.readdirSync(projectsRoot, { withFileTypes: true });
-let registered = 0;
-let createdDirs = 0;
-for (const entry of entries) {
-  if (!entry.isDirectory()) continue;
-  const projDir = path.join(projectsRoot, entry.name);
-  const agentsDir = path.join(projDir, "agents");
-  if (!fs.existsSync(agentsDir)) continue;
-
-  // Register in ~/.claude.json if missing
-  if (!claudeJson.projects[projDir]) {
-    claudeJson.projects[projDir] = {
-      allowedTools: [],
-      history: [],
-      mcpContextUris: [],
-      mcpServers: {},
-      enabledMcpjsonServers: [],
-      disabledMcpjsonServers: [],
-      hasTrustDialogAccepted: false,
-      projectOnboardingSeenCount: 0,
-      hasClaudeMdExternalIncludesApproved: false,
-      hasClaudeMdExternalIncludesWarningShown: false,
-    };
-    registered++;
-  }
-
-  // Ensure ~/.claude/projects/<encoded>/ exists
-  const encoded = encodePath(projDir);
-  const targetDir = path.join(claudeProjectsDir, encoded);
-  if (!fs.existsSync(targetDir)) {
-    fs.mkdirSync(targetDir, { recursive: true });
-    createdDirs++;
-  }
-}
-
-fs.writeFileSync(claudeJsonPath, JSON.stringify(claudeJson, null, 2));
-console.log(`  ${registered} project(s) registered, ${createdDirs} project dir(s) created`);
-NODEJS
-ok "Project auto-registration done"
+# Note: ~/projects/*/agents/ auto-registration in ~/.claude.json is now done
+# by the binary itself on every boot (see backend/utils/register-projects.ts),
+# so the installer no longer needs node to set it up.
 
 # ----- service installation (per-platform) -----
-# Both processes (backend + connector) live under one user-level unit so they
-# share lifecycle. The wrapper traps SIGTERM/SIGINT and forwards to children.
-SPAIGLASS_LAUNCH_CMD='$NODE_BIN $INSTALL_DIR/backend/dist/cli/node.js --host ${HOST} --port ${PORT} --claude-path $CLAUDE_BIN & BACKEND_PID=$!; sleep 1; $NODE_BIN $INSTALL_DIR/backend/dist/connector.js & CONN_PID=$!; trap "kill $BACKEND_PID $CONN_PID 2>/dev/null" TERM INT; wait'
-
 if [ "$PLATFORM" = "linux" ]; then
   log "Installing systemd --user service"
   mkdir -p "$HOME/.config/systemd/user"
   cat > "$HOME/.config/systemd/user/spaiglass.service" <<EOF
 [Unit]
-Description=Spaiglass VM (backend + relay connector)
+Description=Spaiglass VM (single-binary host)
 After=network-online.target
 Wants=network-online.target
 
@@ -282,9 +212,7 @@ Wants=network-online.target
 Type=simple
 EnvironmentFile=$INSTALL_DIR/.env
 WorkingDirectory=$INSTALL_DIR
-# Run the bundled backend, then the connector. We use a small wrapper script
-# so both processes share the unit's lifecycle.
-ExecStart=/usr/bin/env bash -c '$NODE_BIN $INSTALL_DIR/backend/dist/cli/node.js --host \${HOST} --port \${PORT} --claude-path $CLAUDE_BIN & BACKEND_PID=\$!; sleep 1; $NODE_BIN $INSTALL_DIR/backend/dist/connector.js & CONN_PID=\$!; trap "kill \$BACKEND_PID \$CONN_PID 2>/dev/null" TERM INT; wait'
+ExecStart=$BIN_PATH --host \${HOST} --port \${PORT} --claude-path $CLAUDE_BIN
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
@@ -300,7 +228,6 @@ EOF
   systemctl --user restart spaiglass.service
   ok "systemd --user service installed and started"
 
-  # Linger reminder — without it the service stops at logout
   if ! loginctl show-user "$USER" 2>/dev/null | grep -q "Linger=yes"; then
     warn "User lingering is OFF — service will stop when you log out."
     warn "  Enable persistence with:  sudo loginctl enable-linger $USER"
@@ -314,9 +241,7 @@ else
   LOGS_DIR="$INSTALL_DIR/logs"
   mkdir -p "$PLIST_DIR" "$LOGS_DIR"
 
-  # launchd doesn't read .env files — we have to inline the values into
-  # EnvironmentVariables. Re-source the .env we just wrote so we can pluck
-  # the keys back out without re-parsing them ourselves.
+  # launchd doesn't read .env files — inline the values into EnvironmentVariables.
   # shellcheck disable=SC1090
   set -a; . "$INSTALL_DIR/.env"; set +a
 
@@ -329,9 +254,10 @@ else
   <key>WorkingDirectory</key><string>$INSTALL_DIR</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/bin/bash</string>
-    <string>-c</string>
-    <string>$NODE_BIN $INSTALL_DIR/backend/dist/cli/node.js --host \$HOST --port \$PORT --claude-path $CLAUDE_BIN &amp; BACKEND_PID=\$!; sleep 1; $NODE_BIN $INSTALL_DIR/backend/dist/connector.js &amp; CONN_PID=\$!; trap "kill \$BACKEND_PID \$CONN_PID 2&gt;/dev/null" TERM INT; wait</string>
+    <string>$BIN_PATH</string>
+    <string>--host</string><string>$BIND_HOST</string>
+    <string>--port</string><string>$PORT</string>
+    <string>--claude-path</string><string>$CLAUDE_BIN</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
@@ -358,8 +284,6 @@ else
 </plist>
 EOF
 
-  # bootstrap into the per-user GUI domain so it survives logout/login on
-  # macOS 10.10+. Fall back to the legacy load command for older systems.
   launchctl bootout "gui/$(id -u)/xyz.spaiglass.vm" 2>/dev/null || true
   launchctl unload "$PLIST" 2>/dev/null || true
   if launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null; then
