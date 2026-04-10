@@ -12,13 +12,15 @@ _Last updated: 2026-04-10_
 
 ## How to use this document
 
-- **Phases 1-6** are committed product engineering, in execution order. Don't reorder without an explicit decision. Phase 6 is the *last* product phase by explicit decision — don't start it until P1-P5 are shipped or unblocked.
-- **Phase 7** is the open-source repo hygiene work (CONTRIBUTING/SECURITY/release/badges). It is in flight on disk but is **not** blocking product work — finish it when there is a natural seam.
-- **Phases 8-9** are security hardening of the live relay and the documentation that ships with it. Phase 9 is doc-only and lands BEFORE Phase 8's technical work.
+- Phase numbers are stable identifiers. **Execution order is separate from phase numbers** and is set at the bottom of this file under "Active todo list → Execution order." As of 2026-04-10 the order is: **P1 → P2 → P3 → P4 → P6 → P8 → P9 → P7 → P5**.
+- **Phases 1, 2, 3, 4, 6** are committed product engineering. P6 is the *last* product phase before the hardening/baseline tail. Don't start P6 until P1-P4 are shipped or unblocked.
+- **Phases 8-9** are security hardening of the live relay (P8) and the documentation that ships with it (P9). P9 is doc-only and lands BEFORE P8's technical work.
+- **Phase 7** is the open-source repo hygiene work (CONTRIBUTING/SECURITY/release/badges). Moved to second-to-last 2026-04-10. It is in flight on disk but is **not** blocking product work — finish it after the product+hardening phases are done.
+- **Phase 5** (supply-chain hardening) is last. Moved to the bottom 2026-04-10. The original `Phase 8 → Phase 5` dependency on `/api/health` commit-SHA was resolved by pulling Phase 5 deliverable #8 forward into Phase 8 step 5 (John's call, option 2). Phase 5's #8 is now a verification checkbox.
 - Every phase has a **"Done when"** contract. An item is not done until it meets it. No partial-credit shipping.
 - When you complete a phase, update the date stamp at the top, mark the phase **shipped**, and add a CHANGELOG entry.
 - When the priority order changes, edit this file and the date stamp in the same commit.
-- Use this file to onboard a new agent: read it end-to-end, find the next non-shipped phase, start at its first sub-step.
+- Use this file to onboard a new agent: read it end-to-end, jump to the Execution order table, find the first non-shipped row, start at its first sub-step.
 
 ---
 
@@ -254,39 +256,9 @@ Users today must have a Claude Max subscription on the host because that's how t
 
 ---
 
-# Phase 5 — Supply-chain hardening
-
-**Status:** README mentions "planned." Now we ship it. **Estimate:** 1 week. **Owner:** TBD.
-
-The README's `Build & release verification` section already promises reproducible builds, SHA-256 checksums, signed commits, and Sigstore-backed artifact attestation. None of those are implemented yet. This phase closes the gap between what the README promises and what CI does.
-
-## Concrete deliverables
-
-1. **Pinned, locked dependencies.** Both `relay/package-lock.json` and `backend/package-lock.json` exist and are checked in. Verify. Use `npm ci` everywhere instead of `npm install`. CI fails if `package-lock.json` is out of sync.
-2. **`npm audit` in CI.** Fail the build on high or critical advisories. Allow override per advisory with a comment justifying the suppression.
-3. **SBOM generation.** Use `npm sbom --sbom-format=cyclonedx` on the relay and the host backend. Publish the SBOM as a release artifact.
-4. **Sigstore-backed artifact attestation.** Use GitHub's `actions/attest-build-provenance` to attest the host binaries (post-Phase-3), the `dist.tar.gz`, and the relay frontend bundle. Verifiers run `gh attestation verify <file> --repo c0inz/spaiglass`.
-5. **SHA-256 checksums file.** Every release publishes `checksums.txt` with hashes for every artifact. Signed by the same Sigstore identity.
-6. **Reproducible builds.** Pin the build environment (Node version, npm version, OS image). CI runs the build twice on a clean runner and compares output hashes. Fail if non-reproducible.
-7. **Signed commits on `main`.** Set up branch protection (separately) requiring signed commits for `main`. Document the maintainer GPG key fingerprint in `MAINTAINERS.md`.
-8. **`/api/health` returns the deployed commit SHA.** Read `process.env.GIT_SHA` set at build time, return it in the health JSON. Lets anyone verify "the live relay is running commit X" against the public attestation. Required for Phase 8.
-
-## Done when
-
-- Every step in the README's "Build & release verification" section is real and demonstrable, with example commands that actually work.
-- A third party can independently verify that `https://spaiglass.xyz/dist.tar.gz` matches the bytes a CI build of commit `<sha>` would have produced, and was signed by our CI identity.
-- `npm audit` is green on every PR.
-
-## Non-goals
-
-- Code signing certificates (Authenticode/Apple notarization). Sigstore attestation is sufficient for our threat model and doesn't cost $400/year. Revisit if a major distribution channel demands signed binaries.
-- Reproducible builds for the frontend's `node_modules` graph as a whole. We pin and audit; we don't try to re-derive every transitive dep byte-for-byte.
-
----
-
 # Phase 6 — Rich terminal-style chat renderer
 
-**Status:** scoped, not started. **Estimate:** ~3 weeks. **Owner:** TBD. **Depends on:** nothing strict, but **do not start** until P1-P5 are shipped or unblocked. This is the last product phase by explicit decision.
+**Status:** scoped, not started. **Estimate:** ~3 weeks. **Owner:** TBD. **Depends on:** nothing strict, but **do not start** until P1-P4 are shipped or unblocked. (Phase 5 was moved to the bottom 2026-04-10; it is no longer a P6 prerequisite.) This is the last *product* phase before the hardening/baseline tail by explicit decision.
 
 **Decision: replace the existing renderer wholesale. No parallel render paths, no feature-flagged dual maintenance after the cutover.**
 
@@ -457,9 +429,147 @@ Implement the interactive components and the MCP tool plumbing per `agent-termin
 
 ---
 
+# Phase 8 — CSP and frontend integrity
+
+**Status:** not started, but the design decision is **now** because audit findings make this urgent. **Estimate:** 1-2 weeks (now includes ~1 hour of `GIT_SHA` plumbing pulled forward from Phase 5). **Owner:** TBD.
+
+> **Dependency resolved (2026-04-10):** Phase 5 was moved to the bottom of the execution order, which would have left Phase 8 step 5 stranded waiting on the `/api/health` commit-SHA work from Phase 5 deliverable #8. **John's call: option 2 — pull deliverable #8 forward into Phase 8.** The 1-hour `GIT_SHA` plumbing now lives inside Phase 8 (see step 5 below). Phase 5 deliverable #8 has been retitled as a cross-reference pointing back here. Phase 8 ships as a complete unit with all 5 steps.
+
+This is the most under-disclosed risk in the project today.
+
+## Live audit findings
+
+```bash
+$ curl -sI https://spaiglass.xyz/ | grep -iE "content-security|strict-transport|x-frame|x-content|referrer|permissions-policy"
+(no output)
+```
+
+| Check | Result |
+|---|---|
+| `Content-Security-Policy` | **Missing** |
+| `Strict-Transport-Security` | **Missing** |
+| `X-Frame-Options` | **Missing** |
+| `X-Content-Type-Options` | **Missing** |
+| `Referrer-Policy` | **Missing** |
+| `Permissions-Policy` | **Missing** |
+| SRI hashes on script tags | **None** |
+| Frontend bundle signing/verification | **None** |
+| Inline scripts injected by relay | Two (`makeInjectScript`, `makeVersionSkewScript` at `relay/src/server.ts:1664-1672`) — both would conflict with strict CSP unless given nonces |
+
+## The threat-model asymmetry
+
+The README rightly claims the relay forwards WebSocket frames without inspection. That's true at the routing layer. But the relay also *originates* the JavaScript that runs in the user's browser, and that JavaScript reads chat input *before* it ever becomes a WebSocket frame. **A compromised relay doesn't need to inspect frames — it can replace the frontend bundle and silently exfiltrate everything users type.** The README does not state this trust assumption today.
+
+## What CSP and SRI actually buy
+
+**Content-Security-Policy** is a browser-enforced allowlist for what the page can load and execute. A strict CSP defends against:
+- XSS where an attacker injects `<script>` via a parameter or stored content
+- Malicious third-party scripts loaded transitively
+- A subset of MITM attacks where injected scripts come from elsewhere
+
+CSP does NOT defend against:
+- A compromised origin serving its own malicious JavaScript with the right nonce
+- Anything the relay itself decides to ship — the relay generates the CSP header
+
+**Subresource Integrity (SRI)** is a per-script hash check (`<script src="..." integrity="sha384-...">`). The browser refuses to execute a script whose hash doesn't match.
+
+SRI defends against:
+- An asset CDN being compromised independently of the origin HTML
+- MITM injection of tampered assets when origin HTML is fine
+
+SRI does NOT defend against:
+- A compromised origin that updates both HTML and integrity hash to match its new malicious payload
+
+## The hard truth
+
+**Neither CSP nor SRI protects against a compromised relay.** Both protect against attackers *other than* the origin operator. If someone owns the droplet, they can serve any JavaScript with any CSP and any SRI hash, and the browser will execute it.
+
+The realistic defenses against a compromised relay are:
+
+1. **Make the deployed bundle independently verifiable.** A user (or their security tool) should be able to ask: "what bundle is the live relay serving right now?" and compare against a public list of legitimate bundles tied to specific commits. Requires:
+   - `/api/health` returns the commit SHA AND the hash of the served frontend bundle (now implemented inside this phase, step 5 — see option 2 resolution above)
+   - Public release notes record the bundle hash for each release
+   - Sigstore attestation ties each release's bundle hash to the CI workflow that built it
+   - Anyone can `gh attestation verify` against the live hash without trusting us
+2. **Self-hosting** for paranoid users. Their threat model becomes "do I trust myself."
+3. **Honest README.** State the trust assumption explicitly.
+4. **Defense in depth via CSP/HSTS/SRI.** Even though they don't stop a compromised origin, they raise the cost of every other attack class.
+
+## Decision matrix
+
+| Option | Stops compromised relay? | Stops XSS / MITM / 3rd-party? | Cost |
+|---|---|---|---|
+| **A. Strict CSP with nonces** | No | Yes | 1-2 days |
+| **B. SRI on Vite assets** | No | Partial | Half day |
+| **C. HSTS + standard hardening headers** | No | Partial | 1 hour |
+| **D. Independent bundle verification** (depends on Phase 5) | **Yes** (detection) | Indirectly | 2-3 days |
+| **E. Service worker hash pinning (TOFU)** | Partial (post-pin) | No | 1 week, complex |
+| **F. Honest README amendment** | n/a — sets correct expectations | n/a | 1 hour |
+
+## Recommended path
+
+Do **A + B + C + D + F**. Skip E (complex, low marginal value once D is in place).
+
+Order:
+
+1. **F. Honest README amendment first** (1 hour). This is **Phase 9** — see below. Land it before any of the technical work in this phase. The documentation gap is the bigger problem right now.
+2. **C. Standard security headers** (1 hour). Hono middleware applied to every relay response:
+   - `Strict-Transport-Security: max-age=31536000; includeSubDomains; preload`
+   - `X-Content-Type-Options: nosniff`
+   - `X-Frame-Options: DENY` (or `frame-ancestors 'none'` in CSP)
+   - `Referrer-Policy: strict-origin-when-cross-origin`
+   - `Permissions-Policy: geolocation=(), microphone=(), camera=()`
+3. **A. Strict CSP with nonces** (1-2 days). Refactor `tryServeFromRelayFrontend`:
+   - Generate per-request nonce (`crypto.randomUUID()`)
+   - Pass into `makeInjectScript` and `makeVersionSkewScript` so their `<script>` tags get `nonce="..."`
+   - Set `Content-Security-Policy: default-src 'self'; script-src 'self' 'nonce-...'; connect-src 'self' wss://spaiglass.xyz; img-src 'self' data: https://avatars.githubusercontent.com; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'`
+   - Test with the live frontend, fix any console violations
+4. **B. SRI on Vite assets** (half day). Add `vite-plugin-sri` to `frontend/`. Verify the relay's path-rewriting (`/assets/...` → `/vm/:slug/assets/...`) doesn't break SRI (it shouldn't — SRI is content-based).
+5. **D. Independent bundle verification** (2-3 days; absorbs the ~1h `GIT_SHA` plumbing previously scoped to Phase 5 deliverable #8 — see option 2 resolution above):
+   - **`GIT_SHA` plumbing (~1h, pulled forward from Phase 5):** set `GIT_SHA` at build time in CI (`echo "GIT_SHA=$(git rev-parse HEAD)" >> $GITHUB_ENV` or equivalent), read it via `process.env.GIT_SHA` in the relay, fall back to `"unknown"` if unset so dev builds don't crash.
+   - `/api/health` returns `{"commit":"<GIT_SHA>","frontend_sha256":"<bundle hash>"}`. Compute the frontend bundle hash once at relay startup over the served `index.html` + asset graph; cache it.
+   - Each GitHub release records the frontend bundle hash in its release notes (slot this into the Phase 7.6 release-notes skeleton when P7 ships).
+   - Documentation explains how to verify the live relay matches a published release: `curl https://spaiglass.xyz/api/health` → compare `commit` and `frontend_sha256` against the release notes → `gh attestation verify` against the recorded hash.
+
+## Done when
+
+- `curl -I https://spaiglass.xyz/` returns CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy.
+- The strict CSP is observed in browser dev tools without console violations on a normal session.
+- `vite-plugin-sri` adds `integrity=` attributes to every script and stylesheet in the built `index.html`.
+- SECURITY.md and README explicitly document the relay trust assumption and link to the verification procedure.
+- A third party can run `curl https://spaiglass.xyz/api/health` and `gh attestation verify` to confirm what bundle is live.
+
+## Non-goals
+
+- Service worker pinning. Too complex for marginal value once D is in place.
+- Chrome-only features like Trusted Types. Worth revisiting after CSP basics.
+- Per-user nonce rotation. One nonce per response is fine.
+
+---
+
+# Phase 9 — Honest README & threat model amendment
+
+**Status:** not started. **Estimate:** 1 hour. **Owner:** TBD. **Lands before:** Phase 8.
+
+A doc-only pass. Numbered as a separate phase because it can ship independently of the technical hardening in Phase 8 and should not be blocked on it. It updates README.md, ARCHITECTURE.md, and SECURITY.md with these explicit additions:
+
+1. **Trust model section in README.md**: state that using the hosted relay at `spaiglass.xyz` means trusting ReadyStack.dev to serve a legitimate frontend bundle. Link to the verification procedure (forthcoming in Phase 8 step 5).
+2. **"Stateless" disclaimer in README.md**: change "stateless routing proxy" to "stateless for payload data; stateful only for the connector registry and collaborator permissions" once Phase 2 ships.
+3. **Threat model expansion in ARCHITECTURE.md**: add a row for "compromised relay serves backdoored frontend" to the threat-model table, with the planned mitigation (Phase 8 step 5: independent bundle verification).
+4. **Self-hosting promotion in SECURITY.md**: explicitly recommend self-hosting the relay for users who can't trust us.
+
+## Done when
+
+- README, ARCHITECTURE, and SECURITY all state the relay trust assumption explicitly.
+- No security claim in the README is technically true only by sleight of hand.
+
+---
+
 # Phase 7 — Open-source baseline (in flight)
 
 **Status:** in flight as of 2026-04-10. **Estimate:** 1-2 days to complete. **Owner:** TBD.
+
+> **Execution-order note (2026-04-10):** moved to second-to-last by John. Phase numbering preserved; only the order in which work happens changes. Do not start Phase 7 sub-steps that require a green CI run until positional 1-7 (P1, P2, P3, P4, P6, P8, P9) are shipped. Sub-step 7.1 is already partially complete (baseline pushed in `3681296`); the failing CI it left behind is **paused** — see Active todo list at the bottom of this file.
 
 This phase closes out the response to the external repository review that flagged: no `CONTRIBUTING.md`, no `SECURITY.md`, no released versions, no succession plan, single-contributor bus factor, missing CI badge. It also fixes the failing CI workflow inherited from upstream `claude-code-webui`.
 
@@ -490,9 +600,9 @@ It is intentionally **not** Phase 1. Product work outranks repo hygiene. Phase 7
 4. Push using the **classic PAT** at `~/credentials/github.json` (the fine-grained PAT lacks Contents: Write):
    ```bash
    PAT=$(jq -r .pat_classic_write ~/credentials/github.json) && \
-     git -c "credential.helper=!f() { echo username=c0inz; echo password=$PAT; }; f" \
-         push origin main
+     git push "https://c0inz:${PAT}@github.com/c0inz/spaiglass.git" main
    ```
+   > **Gotcha (2026-04-10):** the `git -c "credential.helper=!f() { ... }; f"` form returns 403 even with a classic PAT that has full `repo` scope. Use the URL-embedded form above. Memory: `~/.claude/projects/-home-johntdavenport/memory/project_spyglass.md`.
 5. Wait for CI to go green. If still red, fetch the failing job logs with `gh run view <id> --log-failed` and address before continuing.
 
 **Done when:** the next CI run on `main` is fully green (all matrix entries passing).
@@ -507,16 +617,14 @@ It is intentionally **not** Phase 1. Product work outranks repo hygiene. Phase 7
 
 ## 7.3 Add `MAINTAINERS.md`
 
-Short file. Suggested structure:
+Short file. Structure:
 - Primary maintainer: John Davenport (`@c0inz`) — ReadyStack.dev
-- Backup contact: **TBD — ask the user to nominate someone before writing this**
+- Backup contact: `jddavenpor46@gmail.com` (nominated 2026-04-10)
 - Responsibilities: triage issues, review PRs, cut releases, operate the live relay at `spaiglass.xyz`
 - Succession: if primary is unreachable for 30 days, the backup contact takes over via the procedure in `~/credentials/github.json` (which the backup must have access to)
-- Maintainer GPG key fingerprint (for verifying signed commits)
+- Maintainer GPG key fingerprint (for verifying signed commits) — TBD when first signed commit lands
 
-**Open question:** who is the backup contact? Don't invent one. Ask first.
-
-**Done when:** file exists with a real backup contact named, linked from README and CONTRIBUTING.
+**Done when:** file exists with the backup contact named, linked from README and CONTRIBUTING.
 
 ## 7.4 Branding and upstream attribution cleanup
 
@@ -539,12 +647,15 @@ After making these edits: run `npm run typecheck` and `npm test` in `backend/` a
 
 ## 7.5 Fix or disable `tagpr` workflow
 
+**Status:** decision deferred (2026-04-10). Do not act on this sub-phase until John explicitly chooses keep-and-fix vs disable. Phase 7 can still close around it — 7.5 is the only sub-phase that needs a directional call.
+
 `tagpr` is upstream's release-PR automation and is currently failing on every run. Once 7.4 changes the package name, it will need a config update.
 
-- First try: update `.tagpr` (repo root) to point at the new package name and version path.
-- If still failing after 1 attempt: disable by renaming `.github/workflows/tagpr.yml` to `tagpr.yml.disabled` and add a note to `MAINTAINERS.md` that releases are cut manually.
+When the decision lands:
+- **Keep-and-fix path:** update `.tagpr` (repo root) to point at the new package name and version path.
+- **Disable path:** rename `.github/workflows/tagpr.yml` to `tagpr.yml.disabled` and add a note to `MAINTAINERS.md` that releases are cut manually.
 
-**Done when:** either tagpr CI is green or the workflow is disabled with a documented decision.
+**Done when:** decision recorded here AND either tagpr CI is green or the workflow is disabled.
 
 ## 7.6 Tag and publish v0.1.0
 
@@ -617,136 +728,35 @@ Once 7.6 is shipped:
 
 ---
 
-# Phase 8 — CSP and frontend integrity
+# Phase 5 — Supply-chain hardening
 
-**Status:** not started, but the design decision is **now** because audit findings make this urgent. **Estimate:** 1-2 weeks. **Owner:** TBD. **Depends on:** Phase 5 (for the health endpoint).
+**Status:** README mentions "planned." Now we ship it. **Estimate:** 1 week. **Owner:** TBD.
 
-This is the most under-disclosed risk in the project today.
+> **Execution-order note (2026-04-10):** moved to last by John. Phase numbering preserved; only the order in which work happens changes. **Conflict resolved:** the original `Phase 8 → Phase 5` dependency on the `/api/health` commit-SHA work was resolved with option 2 — deliverable #8 below was pulled forward into Phase 8 step 5. See Phase 8 step 5 for the actual implementation. Phase 5's deliverable #8 is now a verification checkbox, not new work.
 
-## Live audit findings
+The README's `Build & release verification` section already promises reproducible builds, SHA-256 checksums, signed commits, and Sigstore-backed artifact attestation. None of those are implemented yet. This phase closes the gap between what the README promises and what CI does.
 
-```bash
-$ curl -sI https://spaiglass.xyz/ | grep -iE "content-security|strict-transport|x-frame|x-content|referrer|permissions-policy"
-(no output)
-```
+## Concrete deliverables
 
-| Check | Result |
-|---|---|
-| `Content-Security-Policy` | **Missing** |
-| `Strict-Transport-Security` | **Missing** |
-| `X-Frame-Options` | **Missing** |
-| `X-Content-Type-Options` | **Missing** |
-| `Referrer-Policy` | **Missing** |
-| `Permissions-Policy` | **Missing** |
-| SRI hashes on script tags | **None** |
-| Frontend bundle signing/verification | **None** |
-| Inline scripts injected by relay | Two (`makeInjectScript`, `makeVersionSkewScript` at `relay/src/server.ts:1664-1672`) — both would conflict with strict CSP unless given nonces |
-
-## The threat-model asymmetry
-
-The README rightly claims the relay forwards WebSocket frames without inspection. That's true at the routing layer. But the relay also *originates* the JavaScript that runs in the user's browser, and that JavaScript reads chat input *before* it ever becomes a WebSocket frame. **A compromised relay doesn't need to inspect frames — it can replace the frontend bundle and silently exfiltrate everything users type.** The README does not state this trust assumption today.
-
-## What CSP and SRI actually buy
-
-**Content-Security-Policy** is a browser-enforced allowlist for what the page can load and execute. A strict CSP defends against:
-- XSS where an attacker injects `<script>` via a parameter or stored content
-- Malicious third-party scripts loaded transitively
-- A subset of MITM attacks where injected scripts come from elsewhere
-
-CSP does NOT defend against:
-- A compromised origin serving its own malicious JavaScript with the right nonce
-- Anything the relay itself decides to ship — the relay generates the CSP header
-
-**Subresource Integrity (SRI)** is a per-script hash check (`<script src="..." integrity="sha384-...">`). The browser refuses to execute a script whose hash doesn't match.
-
-SRI defends against:
-- An asset CDN being compromised independently of the origin HTML
-- MITM injection of tampered assets when origin HTML is fine
-
-SRI does NOT defend against:
-- A compromised origin that updates both HTML and integrity hash to match its new malicious payload
-
-## The hard truth
-
-**Neither CSP nor SRI protects against a compromised relay.** Both protect against attackers *other than* the origin operator. If someone owns the droplet, they can serve any JavaScript with any CSP and any SRI hash, and the browser will execute it.
-
-The realistic defenses against a compromised relay are:
-
-1. **Make the deployed bundle independently verifiable.** A user (or their security tool) should be able to ask: "what bundle is the live relay serving right now?" and compare against a public list of legitimate bundles tied to specific commits. Requires:
-   - `/api/health` returns the commit SHA AND the hash of the served frontend bundle (Phase 5 dependency)
-   - Public release notes record the bundle hash for each release
-   - Sigstore attestation ties each release's bundle hash to the CI workflow that built it
-   - Anyone can `gh attestation verify` against the live hash without trusting us
-2. **Self-hosting** for paranoid users. Their threat model becomes "do I trust myself."
-3. **Honest README.** State the trust assumption explicitly.
-4. **Defense in depth via CSP/HSTS/SRI.** Even though they don't stop a compromised origin, they raise the cost of every other attack class.
-
-## Decision matrix
-
-| Option | Stops compromised relay? | Stops XSS / MITM / 3rd-party? | Cost |
-|---|---|---|---|
-| **A. Strict CSP with nonces** | No | Yes | 1-2 days |
-| **B. SRI on Vite assets** | No | Partial | Half day |
-| **C. HSTS + standard hardening headers** | No | Partial | 1 hour |
-| **D. Independent bundle verification** (depends on Phase 5) | **Yes** (detection) | Indirectly | 2-3 days |
-| **E. Service worker hash pinning (TOFU)** | Partial (post-pin) | No | 1 week, complex |
-| **F. Honest README amendment** | n/a — sets correct expectations | n/a | 1 hour |
-
-## Recommended path
-
-Do **A + B + C + D + F**. Skip E (complex, low marginal value once D is in place).
-
-Order:
-
-1. **F. Honest README amendment first** (1 hour). This is **Phase 9** — see below. Land it before any of the technical work in this phase. The documentation gap is the bigger problem right now.
-2. **C. Standard security headers** (1 hour). Hono middleware applied to every relay response:
-   - `Strict-Transport-Security: max-age=31536000; includeSubDomains; preload`
-   - `X-Content-Type-Options: nosniff`
-   - `X-Frame-Options: DENY` (or `frame-ancestors 'none'` in CSP)
-   - `Referrer-Policy: strict-origin-when-cross-origin`
-   - `Permissions-Policy: geolocation=(), microphone=(), camera=()`
-3. **A. Strict CSP with nonces** (1-2 days). Refactor `tryServeFromRelayFrontend`:
-   - Generate per-request nonce (`crypto.randomUUID()`)
-   - Pass into `makeInjectScript` and `makeVersionSkewScript` so their `<script>` tags get `nonce="..."`
-   - Set `Content-Security-Policy: default-src 'self'; script-src 'self' 'nonce-...'; connect-src 'self' wss://spaiglass.xyz; img-src 'self' data: https://avatars.githubusercontent.com; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'`
-   - Test with the live frontend, fix any console violations
-4. **B. SRI on Vite assets** (half day). Add `vite-plugin-sri` to `frontend/`. Verify the relay's path-rewriting (`/assets/...` → `/vm/:slug/assets/...`) doesn't break SRI (it shouldn't — SRI is content-based).
-5. **D. Independent bundle verification** (2-3 days, depends on Phase 5):
-   - `/api/health` returns `{"commit":"...","frontend_sha256":"..."}`
-   - Each GitHub release records the frontend bundle hash
-   - Documentation explains how to verify the live relay matches a published release
+1. **Pinned, locked dependencies.** Both `relay/package-lock.json` and `backend/package-lock.json` exist and are checked in. Verify. Use `npm ci` everywhere instead of `npm install`. CI fails if `package-lock.json` is out of sync.
+2. **`npm audit` in CI.** Fail the build on high or critical advisories. Allow override per advisory with a comment justifying the suppression.
+3. **SBOM generation.** Use `npm sbom --sbom-format=cyclonedx` on the relay and the host backend. Publish the SBOM as a release artifact.
+4. **Sigstore-backed artifact attestation.** Use GitHub's `actions/attest-build-provenance` to attest the host binaries (post-Phase-3), the `dist.tar.gz`, and the relay frontend bundle. Verifiers run `gh attestation verify <file> --repo c0inz/spaiglass`.
+5. **SHA-256 checksums file.** Every release publishes `checksums.txt` with hashes for every artifact. Signed by the same Sigstore identity.
+6. **Reproducible builds.** Pin the build environment (Node version, npm version, OS image). CI runs the build twice on a clean runner and compares output hashes. Fail if non-reproducible.
+7. **Signed commits on `main`.** Set up branch protection (separately) requiring signed commits for `main`. Document the maintainer GPG key fingerprint in `MAINTAINERS.md`.
+8. **`/api/health` returns the deployed commit SHA.** ✅ **Pulled forward to Phase 8 step 5 (option 2 resolution, 2026-04-10).** This deliverable is now implemented as part of Phase 8 — it ships earlier in the execution order than Phase 5, so the work lives there. By the time Phase 5 starts, this is already done; verify it still works and check it off. No code changes required here unless something regressed.
 
 ## Done when
 
-- `curl -I https://spaiglass.xyz/` returns CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy.
-- The strict CSP is observed in browser dev tools without console violations on a normal session.
-- `vite-plugin-sri` adds `integrity=` attributes to every script and stylesheet in the built `index.html`.
-- SECURITY.md and README explicitly document the relay trust assumption and link to the verification procedure.
-- A third party can run `curl https://spaiglass.xyz/api/health` and `gh attestation verify` to confirm what bundle is live.
+- Every step in the README's "Build & release verification" section is real and demonstrable, with example commands that actually work.
+- A third party can independently verify that `https://spaiglass.xyz/dist.tar.gz` matches the bytes a CI build of commit `<sha>` would have produced, and was signed by our CI identity.
+- `npm audit` is green on every PR.
 
 ## Non-goals
 
-- Service worker pinning. Too complex for marginal value once D is in place.
-- Chrome-only features like Trusted Types. Worth revisiting after CSP basics.
-- Per-user nonce rotation. One nonce per response is fine.
-
----
-
-# Phase 9 — Honest README & threat model amendment
-
-**Status:** not started. **Estimate:** 1 hour. **Owner:** TBD. **Lands before:** Phase 8.
-
-A doc-only pass. Numbered as a separate phase because it can ship independently of the technical hardening in Phase 8 and should not be blocked on it. It updates README.md, ARCHITECTURE.md, and SECURITY.md with these explicit additions:
-
-1. **Trust model section in README.md**: state that using the hosted relay at `spaiglass.xyz` means trusting ReadyStack.dev to serve a legitimate frontend bundle. Link to the verification procedure (forthcoming in Phase 8 step 5).
-2. **"Stateless" disclaimer in README.md**: change "stateless routing proxy" to "stateless for payload data; stateful only for the connector registry and collaborator permissions" once Phase 2 ships.
-3. **Threat model expansion in ARCHITECTURE.md**: add a row for "compromised relay serves backdoored frontend" to the threat-model table, with the planned mitigation (Phase 8 step 5: independent bundle verification).
-4. **Self-hosting promotion in SECURITY.md**: explicitly recommend self-hosting the relay for users who can't trust us.
-
-## Done when
-
-- README, ARCHITECTURE, and SECURITY all state the relay trust assumption explicitly.
-- No security claim in the README is technically true only by sleight of hand.
+- Code signing certificates (Authenticode/Apple notarization). Sigstore attestation is sufficient for our threat model and doesn't cost $400/year. Revisit if a major distribution channel demands signed binaries.
+- Reproducible builds for the frontend's `node_modules` graph as a whole. We pin and audit; we don't try to re-derive every transitive dep byte-for-byte.
 
 ---
 
@@ -843,29 +853,41 @@ Items worth tracking but not on a clock:
 
 Persisted here so it survives across Claude sessions. Update statuses when work starts or finishes.
 
+## Execution order (set 2026-04-10)
+
+Phase numbers are preserved from the original plan; only the **order in which work happens** changed when John moved Phase 5 to last and Phase 7 to second-to-last.
+
+| Position | Phase | Title |
+|---|---|---|
+| 1 | P1 | Session resumption after disconnect |
+| 2 | P2 | Multi-user collaboration (shared access) |
+| 3 | P3 | Single-binary host with no Node prerequisite |
+| 4 | P4 | Bring Your Own Anthropic Key |
+| 5 | P6 | Rich terminal-style chat renderer |
+| 6 | P8 | CSP and frontend integrity |
+| 7 | P9 | Honest README & threat model amendment |
+| 8 | P7 | Open-source baseline (in flight) |
+| 9 | P5 | Supply-chain hardening |
+
+**CI workflow fix (#47) is paused** — no work on it until positional 1-7 ship.
+
 | # | Status | Phase | Task |
 |---|---|---|---|
 | 43 | ✅ completed | 7.0 | Add `CONTRIBUTING.md` |
 | 45 | ✅ completed | 7.0 | Add `SECURITY.md` with private disclosure path |
-| 47 | 🔄 in progress | 7.1 | Investigate and fix failing CI workflow (prettier auto-fix done, not committed) |
-| 48 | ⏳ pending | 7.4 | Audit upstream attribution in source files (audit done, fixes not applied) |
+| 47 | ⏸️ paused | 7.1 | Fix failing CI — baseline pushed in `3681296` but CI still red. Paused 2026-04-10 by John: do not work on this until positional 1-7 of the new execution order ship (P1, P2, P3, P4, P6, P8, P9). Two issues catalogued: (1) prettier version drift — local pins 3.6.2, CI installs 3.8.2 and reformats `backend/session/manager.ts` differently; (2) frontend lint has 34 inherited `no-explicit-any` errors in `mockResponseGenerator.ts`, `UnifiedMessageProcessor.ts`, and friends. |
 | 44 | ⏳ pending | 7.2 | Add `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1) |
-| 46 | ⏳ pending | 7.3 | Add `MAINTAINERS.md` / succession plan (blocked: backup contact identity) |
+| 46 | ⏳ pending | 7.3 | Add `MAINTAINERS.md` / succession plan — backup contact `jddavenpor46@gmail.com` confirmed; ready to write |
+| 48 | ⏳ pending | 7.4 | Audit upstream attribution in source files (audit done, fixes not applied) |
+| —  | ⏸️ deferred | 7.5 | `tagpr` workflow keep-or-disable — decision deferred by John 2026-04-10 |
 | 49 | ⏳ pending | 7.6 | Tag and publish v0.1.0 release |
 | 50 | ⏳ pending | 7.7 | Wire CI badge into README + enable Discussions |
 
 ## Uncommitted on disk right now
 
-These exist in the working tree but have not been committed. Phase 7.1 stages and pushes them.
-
-- `CONTRIBUTING.md`
-- `SECURITY.md`
-- `ROADMAP.md` (this file)
-- `agent-terminal-json.md`
-- Prettier auto-fixes across `backend/` and `frontend/` (~24 files, no semantic changes)
+Nothing as of commit `3681296` (2026-04-10). The Phase 7.1 baseline is on `origin/main`.
 
 ## Blockers / questions waiting on user input
 
-- **#46 — backup maintainer identity.** `MAINTAINERS.md` cannot be written until John names a backup contact who has access to `~/credentials/github.json`.
-- **Phase 7.5 — `tagpr` workflow.** Keep and reconfigure after package rename, or disable and cut releases manually?
+- **Phase 7.5 — `tagpr` workflow.** Keep and reconfigure after package rename, or disable and cut releases manually? Deferred by John 2026-04-10.
 - **Phase 6.0 — MCP tool registration.** Spike must validate before 6.4 is committed. Not blocking anything right now since P6 is at the back of the queue.

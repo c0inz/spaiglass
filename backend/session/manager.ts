@@ -30,6 +30,12 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { basename, extname } from "node:path";
 import { AsyncQueue } from "./queue.ts";
+import {
+  pushFrame,
+  isCursorLost,
+  framesAfter,
+  type BufferState,
+} from "./buffer.ts";
 import { logger } from "../utils/logger.ts";
 
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
@@ -74,6 +80,9 @@ interface Session {
   lastActivity: number;
   running: boolean;
   warmClose: (() => void) | null; // cleanup function from startup()
+  // --- Phase 1: replay buffer (managed via session/buffer.ts helpers) ---
+  buffer: BufferState;
+  nextCursor: number; // monotonic, never reused, never resets
 }
 
 export class SessionManager {
@@ -145,6 +154,8 @@ export class SessionManager {
       lastActivity: Date.now(),
       running: true,
       warmClose: null,
+      buffer: { frames: [], bufferedBytes: 0 },
+      nextCursor: 1, // 1-based; clients use lastCursor=0 to mean "send everything"
     };
 
     this.sessions.set(key, session);
@@ -213,25 +224,19 @@ export class SessionManager {
           }
 
           // Send session info to all consumers
-          this.broadcast(
-            session,
-            JSON.stringify({
-              type: "session_info",
-              sessionId: session.id,
-              claudeSessionId: session.sessionId,
-              slashCommands: session.slashCommands,
-            }),
-          );
+          this.broadcast(session, {
+            type: "session_info",
+            sessionId: session.id,
+            claudeSessionId: session.sessionId,
+            slashCommands: session.slashCommands,
+          });
         }
 
         // Broadcast SDK message
-        this.broadcast(
-          session,
-          JSON.stringify({
-            type: "sdk_message",
-            data: sdkMessage,
-          }),
-        );
+        this.broadcast(session, {
+          type: "sdk_message",
+          data: sdkMessage,
+        });
 
         // File delivery detection
         if (sdkMessage.type === "assistant" && sdkMessage.message?.content) {
@@ -245,17 +250,14 @@ export class SessionManager {
                 const input = item.input as Record<string, unknown>;
                 const filePath = (input.file_path as string) || "";
                 if (filePath) {
-                  this.broadcast(
-                    session,
-                    JSON.stringify({
-                      type: "file_delivery",
-                      data: {
-                        path: filePath,
-                        filename: basename(filePath),
-                        action: item.name === "Write" ? "write" : "edit",
-                      },
-                    }),
-                  );
+                  this.broadcast(session, {
+                    type: "file_delivery",
+                    data: {
+                      path: filePath,
+                      filename: basename(filePath),
+                      action: item.name === "Write" ? "write" : "edit",
+                    },
+                  });
                 }
               }
             }
@@ -269,22 +271,16 @@ export class SessionManager {
         msg,
       });
 
-      this.broadcast(
-        session,
-        JSON.stringify({
-          type: "error",
-          message: msg,
-        }),
-      );
+      this.broadcast(session, {
+        type: "error",
+        message: msg,
+      });
     } finally {
       session.running = false;
-      this.broadcast(
-        session,
-        JSON.stringify({
-          type: "session_ended",
-          reason: "cli_exited",
-        }),
-      );
+      this.broadcast(session, {
+        type: "session_ended",
+        reason: "cli_exited",
+      });
 
       logger.app.info("Session {sessionId} ended", { sessionId: session.id });
     }
@@ -395,6 +391,80 @@ export class SessionManager {
   }
 
   /**
+   * Resume a session from a client-supplied cursor.
+   *
+   * Phase 1 reconnect protocol. The client passes the highest cursor it has
+   * already rendered. Behavior:
+   * - No matching session → throw (caller should fall back to session_start).
+   * - Cursor older than the buffer's oldest frame → send `resume_lost`,
+   *   do NOT attach. The client should clear local state and start fresh.
+   * - Cursor equal to or newer than the buffer's range → replay all frames
+   *   with cursor > lastCursor, then attach the consumer for live streaming.
+   *
+   * `lastCursor === 0` means "I have nothing — replay everything you have".
+   */
+  resumeFromCursor(
+    userId: string,
+    roleFile: string,
+    consumer: SessionConsumer,
+    lastCursor: number,
+  ): { resumed: true; replayedFrames: number } | { resumed: false } {
+    const key = this.sessionKey(userId, roleFile);
+    const session = this.sessions.get(key);
+
+    if (!session) {
+      // No live session — caller should send session_start to create a new one
+      return { resumed: false };
+    }
+
+    if (isCursorLost(session.buffer, lastCursor)) {
+      const oldest = session.buffer.frames[0];
+      try {
+        consumer.send(
+          JSON.stringify({
+            type: "resume_lost",
+            reason: "buffer_aged_out",
+            oldestCursor: oldest?.cursor ?? session.nextCursor,
+            requestedCursor: lastCursor,
+          }),
+        );
+      } catch {
+        // Consumer dead before we could even tell them
+      }
+      return { resumed: false };
+    }
+
+    // Replay missed frames
+    const toReplay = framesAfter(session.buffer, lastCursor);
+    let replayed = 0;
+    for (const frame of toReplay) {
+      try {
+        consumer.send(frame.data);
+        replayed++;
+      } catch {
+        // Consumer dead mid-replay — bail
+        return { resumed: false };
+      }
+    }
+
+    // Attach for live streaming
+    session.consumers.set(consumer.id, consumer);
+    session.lastActivity = Date.now();
+
+    logger.app.info(
+      "Consumer {consumerId} resumed session {sessionId} from cursor {lastCursor} ({replayed} frames replayed)",
+      {
+        consumerId: consumer.id,
+        sessionId: session.id,
+        lastCursor,
+        replayed,
+      },
+    );
+
+    return { resumed: true, replayedFrames: replayed };
+  }
+
+  /**
    * Remove a consumer from a session.
    */
   removeConsumer(userId: string, roleFile: string, consumerId: string): void {
@@ -463,8 +533,13 @@ export class SessionManager {
 
   /**
    * Clean up inactive sessions.
+   *
+   * Default 30 min idle (Phase 1 v1 — see ROADMAP). A session is "idle" if
+   * no broadcast frame has been emitted for `maxInactiveMs`. Sessions with
+   * an actively producing Claude process keep their `lastActivity` updated
+   * on every frame, so they survive indefinitely until output stops.
    */
-  cleanup(maxInactiveMs = 24 * 60 * 60 * 1000): number {
+  cleanup(maxInactiveMs = 30 * 60 * 1000): number {
     const now = Date.now();
     let cleaned = 0;
     for (const [key, session] of this.sessions) {
@@ -476,7 +551,28 @@ export class SessionManager {
     return cleaned;
   }
 
-  private broadcast(session: Session, data: string): void {
+  /**
+   * Broadcast a frame to all live consumers AND record it in the session's
+   * ring buffer for replay on reconnect.
+   *
+   * The frame object is mutated to include a monotonically increasing `cursor`
+   * field before being serialized. Consumers track the highest cursor seen and
+   * pass it back as `lastCursor` on reconnect to receive missed frames.
+   *
+   * Cap enforcement: drops oldest frames when either RING_BUFFER_MAX_FRAMES
+   * or RING_BUFFER_MAX_BYTES is exceeded. Cursor numbers are never reused —
+   * a stale `lastCursor` that has fallen out of the buffer triggers
+   * `resume_lost` instead of replay.
+   */
+  private broadcast(session: Session, frame: Record<string, unknown>): void {
+    const cursor = session.nextCursor++;
+    frame.cursor = cursor;
+    const data = JSON.stringify(frame);
+    const bytes = Buffer.byteLength(data, "utf8");
+
+    pushFrame(session.buffer, { cursor, data, bytes });
+
+    // Send to live consumers
     for (const consumer of session.consumers.values()) {
       try {
         consumer.send(data);

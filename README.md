@@ -16,6 +16,7 @@ SpAIglass lets you run Claude Code on remote VMs and access them through your br
 ### Features
 
 - **Chat with Claude Code** from any browser — laptop, phone, tablet
+- **Survives disconnect** — close your laptop, switch wifi, lose signal: when you reconnect, the session replays missed output and continues live (30-min idle window)
 - **Cross-platform host support** — Linux, macOS (Intel + Apple Silicon), and Windows 10/11 in the same fleet
 - **One-line install per platform** — `curl install.sh | bash` on Linux/macOS, `iwr install.ps1 | iex` on Windows
 - **Project file browser** — see and edit your files while you chat

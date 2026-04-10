@@ -60,6 +60,10 @@ export function createWSHandler(sessionManager: SessionManager) {
             await handleSessionRestart(ws, state, msg, sessionManager);
             break;
 
+          case "resume":
+            await handleResume(ws, state, msg, sessionManager);
+            break;
+
           case "message":
             await handleMessage(state, msg, sessionManager);
             break;
@@ -228,6 +232,87 @@ async function handleSessionRestart(
       sessionId: info.id,
       slashCommands: info.slashCommands,
       consumerCount: info.consumerCount,
+    }),
+  );
+}
+
+/**
+ * Resume a previous session after a disconnect.
+ *
+ * Client sends: { type: "resume", roleFile, workingDirectory, lastCursor }
+ *
+ * Behavior:
+ * - If a session exists for (userId, roleFile) and lastCursor is in-buffer →
+ *   replay missed frames and attach as a live consumer.
+ * - If lastCursor has aged out → manager sends `resume_lost` directly to the
+ *   consumer; client should clear local state and call session_start.
+ * - If no session exists → ack with `{type:"resume_failed", reason:"no_session"}`
+ *   so the client knows to fall back to session_start.
+ */
+async function handleResume(
+  ws: WSContext,
+  state: WSState,
+  msg: Record<string, unknown>,
+  sessionManager: SessionManager,
+): Promise<void> {
+  const roleFile = msg.roleFile as string;
+  const workingDirectory = msg.workingDirectory as string;
+  const lastCursor = typeof msg.lastCursor === "number" ? msg.lastCursor : 0;
+
+  if (!roleFile || !workingDirectory) {
+    ws.send(
+      JSON.stringify({
+        type: "error",
+        message: "roleFile and workingDirectory required for resume",
+      }),
+    );
+    return;
+  }
+
+  state.roleFile = roleFile;
+  state.workingDirectory = workingDirectory;
+
+  const consumer: SessionConsumer = {
+    id: state.consumerId,
+    send: (data: string) => {
+      try {
+        ws.send(data);
+      } catch {
+        // Connection may have closed
+      }
+    },
+    close: () => {
+      try {
+        ws.close();
+      } catch {
+        // Already closed
+      }
+    },
+  };
+
+  const result = sessionManager.resumeFromCursor(
+    state.userId,
+    roleFile,
+    consumer,
+    lastCursor,
+  );
+
+  if (!result.resumed) {
+    // Either no session, or buffer aged out (manager already sent resume_lost).
+    // Tell the client so it knows to call session_start next.
+    ws.send(
+      JSON.stringify({
+        type: "resume_failed",
+        reason: "no_session_or_aged_out",
+      }),
+    );
+    return;
+  }
+
+  ws.send(
+    JSON.stringify({
+      type: "resume_ack",
+      replayedFrames: result.replayedFrames,
     }),
   );
 }

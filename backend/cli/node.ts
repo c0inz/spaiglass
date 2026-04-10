@@ -77,16 +77,15 @@ async function main(runtime: NodeRuntime) {
   // Inject WebSocket upgrade handling into the HTTP server
   injectWebSocket(server);
 
-  // Session cleanup every hour
-  setInterval(
-    () => {
-      const cleaned = sessionManager.cleanup();
-      if (cleaned > 0) {
-        logger.cli.info(`🧹 Cleaned up ${cleaned} inactive sessions`);
-      }
-    },
-    60 * 60 * 1000,
-  );
+  // Phase 1: session GC sweep every 60s, default idle threshold 30 min
+  // (set in SessionManager.cleanup). Sessions producing live output stay
+  // alive because broadcast() updates lastActivity on every frame.
+  setInterval(() => {
+    const cleaned = sessionManager.cleanup();
+    if (cleaned > 0) {
+      logger.cli.info(`🧹 Cleaned up ${cleaned} inactive sessions`);
+    }
+  }, 60 * 1000);
 
   logger.cli.info("🔌 WebSocket endpoint ready at /api/ws");
 }

@@ -19,15 +19,29 @@ interface WSSessionState {
   connected: boolean;
   sessionId: string | null;
   slashCommands: string[];
+  /** True after we've successfully attached/resumed at least once. */
+  attached: boolean;
 }
 
 export function useWebSocketSession(options: WSSessionOptions = {}) {
   const wsRef = useRef<WebSocket | null>(null);
   const processorRef = useRef(new UnifiedMessageProcessor());
+  // --- Phase 1: replay-on-reconnect state ---
+  // Highest cursor we've seen on any incoming frame. Sent back as `lastCursor`
+  // when we reconnect, so the backend knows what to replay.
+  const lastCursorRef = useRef<number>(0);
+  // Last (roleFile, workingDirectory) we attached to. Used to auto-rejoin
+  // after a disconnect without ChatPage having to re-call startSession.
+  const lastSessionParamsRef = useRef<{
+    roleFile: string;
+    workingDirectory: string;
+    contextContent?: string;
+  } | null>(null);
   const [state, setState] = useState<WSSessionState>({
     connected: false,
     sessionId: null,
     slashCommands: [],
+    attached: false,
   });
 
   // Message callbacks — set by the consumer (ChatPage)
@@ -59,6 +73,20 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
 
     ws.onopen = () => {
       setState((s) => ({ ...s, connected: true }));
+      // Phase 1 reconnect: if we had a session before the disconnect,
+      // try to resume from our last seen cursor. Backend will either
+      // replay buffered frames + attach us, or tell us the buffer aged out.
+      const params = lastSessionParamsRef.current;
+      if (params) {
+        ws.send(
+          JSON.stringify({
+            type: "resume",
+            roleFile: params.roleFile,
+            workingDirectory: params.workingDirectory,
+            lastCursor: lastCursorRef.current,
+          }),
+        );
+      }
     };
 
     ws.onclose = () => {
@@ -91,13 +119,68 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
     const cbs = callbacksRef.current;
     if (!cbs) return;
 
+    // Phase 1: track the highest cursor we've seen on any frame.
+    // The backend stamps `cursor` on every broadcast frame.
+    if (typeof msg.cursor === "number" && msg.cursor > lastCursorRef.current) {
+      lastCursorRef.current = msg.cursor;
+    }
+
     switch (msg.type) {
       case "session_ack":
         setState((s) => ({
           ...s,
           sessionId: msg.sessionId as string,
           slashCommands: (msg.slashCommands as string[]) || [],
+          attached: true,
         }));
+        // Phase 1: persist sessionId in URL so a hard refresh resumes it.
+        // Use replaceState to avoid creating history entries on every reload.
+        if (msg.sessionId) {
+          try {
+            const url = new URL(window.location.href);
+            url.searchParams.set("session", msg.sessionId as string);
+            window.history.replaceState({}, "", url.toString());
+          } catch {
+            // URL manipulation failed (sandbox?) — non-fatal
+          }
+        }
+        break;
+
+      case "resume_ack":
+        setState((s) => ({ ...s, attached: true }));
+        break;
+
+      case "resume_failed": {
+        // Backend has no session for us, or buffer aged out and resume_lost
+        // was already sent. Fall back to a fresh session_start using the
+        // last params we know.
+        lastCursorRef.current = 0;
+        const params = lastSessionParamsRef.current;
+        const ws = wsRef.current;
+        if (params && ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(
+            JSON.stringify({
+              type: "session_start",
+              roleFile: params.roleFile,
+              workingDirectory: params.workingDirectory,
+              contextContent: params.contextContent,
+            }),
+          );
+        }
+        break;
+      }
+
+      case "resume_lost":
+        // Buffer aged out — we've missed unrecoverable frames.
+        // Surface a banner so the user knows; reset cursor; fall through
+        // to resume_failed handling on next message (which will fire after).
+        lastCursorRef.current = 0;
+        cbs.addMessage({
+          type: "system",
+          subtype: "abort",
+          message: "Reconnected, but some output was lost (buffer aged out).",
+          timestamp: Date.now(),
+        });
         break;
 
       case "session_info": {
@@ -169,9 +252,17 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
 
   /**
    * Start or join a session for a role.
+   *
+   * Phase 1: also remembers the params so an auto-reconnect can resume
+   * without ChatPage having to call this again.
    */
   const startSession = useCallback(
     (roleFile: string, workingDirectory: string, contextContent?: string) => {
+      lastSessionParamsRef.current = {
+        roleFile,
+        workingDirectory,
+        contextContent,
+      };
       const ws = wsRef.current;
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
@@ -192,6 +283,9 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
    */
   const restartSession = useCallback(
     (roleFile: string, workingDirectory: string) => {
+      // Reset replay state — we're starting fresh, no missed frames to recover.
+      lastCursorRef.current = 0;
+      lastSessionParamsRef.current = { roleFile, workingDirectory };
       const ws = wsRef.current;
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
@@ -233,7 +327,8 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
   }, []);
 
   /**
-   * Disconnect.
+   * Disconnect intentionally — clears all replay/resume state and the URL
+   * session marker so we don't try to rejoin a dead session on next load.
    */
   const disconnect = useCallback(() => {
     const ws = wsRef.current;
@@ -241,8 +336,22 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
       ws.onclose = null; // Prevent auto-reconnect
       ws.close();
       wsRef.current = null;
-      setState({ connected: false, sessionId: null, slashCommands: [] });
     }
+    lastCursorRef.current = 0;
+    lastSessionParamsRef.current = null;
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("session");
+      window.history.replaceState({}, "", url.toString());
+    } catch {
+      // Non-fatal
+    }
+    setState({
+      connected: false,
+      sessionId: null,
+      slashCommands: [],
+      attached: false,
+    });
   }, []);
 
   // Cleanup on unmount
