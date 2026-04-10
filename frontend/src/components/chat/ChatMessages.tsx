@@ -1,4 +1,4 @@
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useMemo } from "react";
 import type { AllMessage } from "../../types";
 import {
   isChatMessage,
@@ -21,6 +21,7 @@ import {
   FileDeliveryMessageComponent,
   LoadingComponent,
 } from "../MessageComponents";
+import { TerminalChat } from "../../terminal/TerminalChat";
 // import { UI_CONSTANTS } from "../../utils/constants"; // Unused for now
 
 interface ChatMessagesProps {
@@ -29,7 +30,45 @@ interface ChatMessagesProps {
   onOpenFile?: (path: string, filename: string) => void;
 }
 
+/**
+ * Phase 6.2: Feature flag for the terminal renderer.
+ *
+ * Pass `?renderer=terminal` in the URL to A/B test the new Term* component
+ * tree against the legacy renderer. The flag is intentionally URL-based so
+ * a single user can flip it without changing host settings, and so the
+ * P6.3 cutover can simply remove this branch.
+ */
+function useTerminalRendererFlag(): boolean {
+  return useMemo(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return params.get("renderer") === "terminal";
+    } catch {
+      return false;
+    }
+  }, []);
+}
+
 export function ChatMessages({
+  messages,
+  isLoading,
+  onOpenFile,
+}: ChatMessagesProps) {
+  const useTerminalRenderer = useTerminalRendererFlag();
+  if (useTerminalRenderer) {
+    return <TerminalChat messages={messages} isLoading={isLoading} />;
+  }
+  return (
+    <LegacyChatMessages
+      messages={messages}
+      isLoading={isLoading}
+      onOpenFile={onOpenFile}
+    />
+  );
+}
+
+function LegacyChatMessages({
   messages,
   isLoading,
   onOpenFile,

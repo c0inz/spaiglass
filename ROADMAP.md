@@ -307,7 +307,17 @@ Users today must have a Claude Max subscription on the host because that's how t
 
 # Phase 6 — Rich terminal-style chat renderer
 
-**Status:** scoped, not started. **Estimate:** ~3 weeks. **Owner:** TBD. **Depends on:** nothing strict, but **do not start** until P1-P4 are shipped or unblocked. (Phase 5 was moved to the bottom 2026-04-10; it is no longer a P6 prerequisite.) This is the last *product* phase before the hardening/baseline tail by explicit decision.
+**Status:** in progress — 6.1 and 6.2 shipped behind `?renderer=terminal`; 6.0 spike, 6.3 cutover, 6.4 interactive widgets, and 6.5 polish remain. **Owner:** Claude. **Depends on:** nothing strict, but **do not start** until P1-P4 are shipped or unblocked. (Phase 5 was moved to the bottom 2026-04-10; it is no longer a P6 prerequisite.) This is the last *product* phase before the hardening/baseline tail by explicit decision.
+
+## 6.1/6.2 implementation notes
+
+- `frontend/src/terminal/components.tsx` — TermBox, TermText, TermSpinner, TermProgressBar, TermChecklist, TermCodeBlock, TermToolCard, TermTable, TermDiff. All non-interactive; interactive widgets deferred to 6.4.
+- `frontend/src/terminal/theme.ts` — ANSI 16-color → tailwind class map respecting the existing 6-theme system via `dark:` variants.
+- `frontend/src/terminal/interpreter.tsx` — adapter from the existing `AllMessage` stream (the same one `useMessageProcessor` produces) to a Term* component tree. Bash/Edit/generic tool results, plan, todo, thinking, file delivery, system/result/error all covered.
+- `frontend/src/terminal/TerminalChat.tsx` — drop-in replacement for the legacy `ChatMessages` body (same scroll + empty-state contract).
+- `frontend/src/components/chat/ChatMessages.tsx` reads `?renderer=terminal` and dispatches to `<TerminalChat>` when set; default behavior unchanged.
+- `frontend/src/terminal/interpreter.test.tsx` — 7 vitest cases covering chat (user/assistant), Bash tool result, Edit tool result with structured patch → diff, todo checklist, plan, file delivery.
+- Shiki syntax highlighting deferred to 6.5 polish — TermCodeBlock currently renders plain monospace with a language/filename header so the API can stay stable.
 
 **Decision: replace the existing renderer wholesale. No parallel render paths, no feature-flagged dual maintenance after the cutover.**
 
