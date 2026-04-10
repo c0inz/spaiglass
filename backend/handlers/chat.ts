@@ -13,6 +13,7 @@ import { basename, extname } from "node:path";
 import { promises as fs } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { logger } from "../utils/logger.ts";
+import { getClaudeSpawnEnv } from "../utils/anthropic-key.ts";
 
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 
@@ -163,6 +164,12 @@ async function* executeClaudeCommand(
       hasImages = result.hasImages;
     }
 
+    // Phase 4: BYO Anthropic key — inject ANTHROPIC_API_KEY into the spawn
+    // env when the user has supplied one via .env or the settings UI.
+    // Returns undefined when no key is set so default subscription auth
+    // remains the path of least surprise.
+    const spawnEnv = getClaudeSpawnEnv();
+
     // When using AsyncIterable (images), the session_id is embedded in the message,
     // so we skip the `resume` option to avoid conflicts with stream-json mode.
     for await (const sdkMessage of query({
@@ -176,6 +183,7 @@ async function* executeClaudeCommand(
         ...(allowedTools ? { allowedTools } : {}),
         ...(workingDirectory ? { cwd: workingDirectory } : {}),
         ...(maxThinkingTokens ? { maxThinkingTokens } : {}),
+        ...(spawnEnv ? { env: spawnEnv } : {}),
         permissionMode: "bypassPermissions" as const,
         allowDangerouslySkipPermissions: true,
       },

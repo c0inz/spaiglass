@@ -268,7 +268,16 @@ This is the fallback, not the plan. Try Bun first.
 
 # Phase 4 — Bring Your Own Anthropic Key
 
-**Status:** not started. **Estimate:** 2 days. **Owner:** TBD.
+**Status:** ✅ shipped (BYO Anthropic key, settings UI, host-local persistence). **Owner:** Claude.
+
+## Implementation notes
+
+- `backend/utils/anthropic-key.ts` — read/write helpers, atomic `.env` rewrite (mode 600), and a one-token `validateAnthropicKey()` POST against `api.anthropic.com/v1/messages` (using `claude-haiku-4-5-20251001`). 401/403 reject; 429 is treated as a valid key.
+- `backend/handlers/settings.ts` — `GET /api/settings/anthropic-key` returns `{ hasKey, masked }` (never the raw key); `POST /api/settings/anthropic-key` accepts `{ key: string | null }`, validates the prefix and the key itself, then persists.
+- `backend/session/manager.ts` and `backend/handlers/chat.ts` thread `getClaudeSpawnEnv()` into the SDK `env` option so the next Claude CLI spawn picks up `ANTHROPIC_API_KEY` without a service restart.
+- `frontend/src/components/settings/GeneralSettings.tsx` adds the **Anthropic API Key** card: masked status display, password-style input, validate-on-save, clear button, error/success feedback.
+- The key never leaves the host. The relay sees nothing — there is no relay-side API for it.
+- Per-session override (key per project) is *not* implemented. The host-wide key is the single source. We can add per-session overrides later if anyone asks; deferred to keep the surface area small.
 
 Users today must have a Claude Max subscription on the host because that's how the Claude Code CLI authenticates by default. This locks out anyone who wants to use direct Anthropic API billing or who is on a different Claude tier.
 

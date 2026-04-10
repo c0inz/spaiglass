@@ -33,6 +33,10 @@ import {
   handleSessionSaveRequest,
   handleSessionLastRequest,
 } from "./handlers/session.ts";
+import {
+  handleGetAnthropicKey,
+  handleSetAnthropicKey,
+} from "./handlers/settings.ts";
 import { createAuthMiddleware } from "./middleware/auth.ts";
 import { logger } from "./utils/logger.ts";
 import { readBinaryFile } from "./utils/fs.ts";
@@ -118,6 +122,10 @@ export function createApp(
   // Session persistence
   app.post("/api/session/save", (c) => handleSessionSaveRequest(c));
   app.get("/api/session/last", (c) => handleSessionLastRequest(c));
+
+  // Phase 4: BYO Anthropic API key — host-local, never proxied through relay
+  app.get("/api/settings/anthropic-key", (c) => handleGetAnthropicKey(c));
+  app.post("/api/settings/anthropic-key", (c) => handleSetAnthropicKey(c));
 
   // Static file serving (assets only — SPA fallback added separately via finalizeSpa)
   const serveStatic = runtime.createStaticFileMiddleware({

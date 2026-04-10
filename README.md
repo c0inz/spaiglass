@@ -19,6 +19,7 @@ SpAIglass lets you run Claude Code on remote VMs and access them through your br
 - **Survives disconnect** — close your laptop, switch wifi, lose signal: when you reconnect, the session replays missed output and continues live (30-min idle window)
 - **Share VMs with collaborators** — invite teammates by GitHub login as `editor` (full chat access) or `viewer` (read-only), with an audit log of every membership change
 - **Cross-platform host support** — Linux, macOS (Intel + Apple Silicon), and Windows 10/11 in the same fleet
+- **Bring your own Anthropic API key** — paste a `sk-ant-…` key into Settings to bypass the Claude Max subscription path. The key is validated, stored in the host's `.env` (mode 600), and never proxied through the relay.
 - **One-line install per platform** — `curl install.sh | bash` on Linux/macOS, `iwr install.ps1 | iex` on Windows. Single self-contained binary, no Node or npm required on the host.
 - **Project file browser** — see and edit your files while you chat
 - **Markdown editor** — Monaco-powered, syntax highlighted, Ctrl+S to save
@@ -233,9 +234,9 @@ curl -fsSL https://spaiglass.xyz/install.sh | bash -s -- \
 
 ### Prerequisites on the host
 
-- **Anthropic Claude Code CLI** installed and authenticated:
-  - Linux/macOS: `curl -fsSL https://claude.ai/install.sh | bash` then `claude` (one-time auth)
-  - Windows: `irm https://claude.ai/install.ps1 | iex` then `claude` (one-time auth)
+- **Anthropic Claude Code CLI** installed and authenticated **either** via Claude Max subscription **or** via an `ANTHROPIC_API_KEY` (paste it into Settings → Anthropic API Key after install — no restart required):
+  - Linux/macOS: `curl -fsSL https://claude.ai/install.sh | bash` then `claude` (one-time auth, only required for the subscription path)
+  - Windows: `irm https://claude.ai/install.ps1 | iex` then `claude` (one-time auth, only required for the subscription path)
 - Linux only: `bash`, `curl`, `tar`
 - Windows only: PowerShell 5.1+ and `tar.exe` (ships with Windows 10 1803+)
 

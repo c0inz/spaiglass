@@ -37,6 +37,7 @@ import {
   type BufferState,
 } from "./buffer.ts";
 import { logger } from "../utils/logger.ts";
+import { getClaudeSpawnEnv } from "../utils/anthropic-key.ts";
 
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 
@@ -185,12 +186,19 @@ export class SessionManager {
         sessionId: session.id,
       });
 
+      // Phase 4: if the user supplied an Anthropic API key via .env or the
+      // settings UI, inject it into the SDK's `env` option so the spawned
+      // Claude CLI uses it instead of the subscription auth path. Returns
+      // undefined when no key is set, so default behaviour is unchanged.
+      const spawnEnv = getClaudeSpawnEnv();
+
       // Use startup() for reliable initialization — let SDK use its own bundled CLI
       const warmSession = await startup({
         options: {
           cwd: workingDirectory,
           permissionMode: "bypassPermissions" as const,
           allowDangerouslySkipPermissions: true,
+          ...(spawnEnv ? { env: spawnEnv } : {}),
           stderr: (data: string) => {
             logger.app.error("CLI stderr: {data}", { data: data.trim() });
           },
