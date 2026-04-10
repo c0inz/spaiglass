@@ -31,7 +31,7 @@ describe("renderTerminalMessage", () => {
     };
     const { container } = rendered(renderTerminalMessage(msg));
     expect(container.textContent).toContain("hello world");
-    expect(container.textContent).toContain("User");
+    expect(container.textContent).toContain("user@spaiglass");
   });
 
   it("renders an assistant chat message", () => {
@@ -43,7 +43,7 @@ describe("renderTerminalMessage", () => {
     };
     const { container } = rendered(renderTerminalMessage(msg));
     expect(container.textContent).toContain("hi there");
-    expect(container.textContent).toContain("Claude");
+    expect(container.textContent).toContain("claude@spaiglass");
   });
 
   it("renders a Bash tool_result with stdout", () => {

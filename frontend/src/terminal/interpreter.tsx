@@ -43,8 +43,19 @@ import {
  * Returns null for messages that the terminal renderer chooses to skip
  * (e.g. transient init system messages that the legacy renderer collapses
  * into "System" cards). Tests in 6.2 cover the major branches.
+ *
+ * `onOpenFile` is threaded through so file_delivery messages can render an
+ * "Open" button that opens the file in the sidebar editor — same UX as the
+ * legacy FileDeliveryMessageComponent.
  */
-export function renderTerminalMessage(message: AllMessage): ReactNode {
+export interface RenderOptions {
+  onOpenFile?: (path: string, filename: string) => void;
+}
+
+export function renderTerminalMessage(
+  message: AllMessage,
+  opts: RenderOptions = {},
+): ReactNode {
   switch (message.type) {
     case "chat":
       return renderChat(message as ChatMessage);
@@ -59,7 +70,7 @@ export function renderTerminalMessage(message: AllMessage): ReactNode {
     case "todo":
       return renderTodo(message as TodoMessage);
     case "file_delivery":
-      return renderFileDelivery(message as FileDeliveryMessage);
+      return renderFileDelivery(message as FileDeliveryMessage, opts);
     case "system":
     case "result":
     case "error":
@@ -75,26 +86,30 @@ export function renderTerminalMessage(message: AllMessage): ReactNode {
 
 function renderChat(message: ChatMessage): ReactNode {
   const isUser = message.role === "user";
+  // Terminal-style: left-aligned monospace block with a shell-prompt prefix
+  // and a colored gutter line. No bubble, no rounded corners — looks like a
+  // tmux/xterm pane.
+  const prompt = isUser ? "$" : "λ";
+  const promptColor = isUser
+    ? "text-blue-500 dark:text-blue-400"
+    : "text-emerald-500 dark:text-emerald-400";
+  const gutterColor = isUser
+    ? "border-blue-500/60 dark:border-blue-400/60"
+    : "border-emerald-500/60 dark:border-emerald-400/60";
+  const label = isUser ? "user" : "claude";
   return (
     <div
-      className={`my-2 ${isUser ? "text-right" : "text-left"}`}
+      className={`my-2 font-mono text-sm border-l-2 pl-3 ${gutterColor}`}
       data-role={message.role}
     >
-      <div
-        className={`inline-block max-w-full text-left rounded-md px-3 py-2 ${
-          isUser
-            ? "bg-blue-600 text-white"
-            : "bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100"
-        }`}
-      >
-        <div
-          className={`text-[10px] uppercase tracking-wider mb-1 ${
-            isUser ? "text-blue-100" : "text-slate-500 dark:text-slate-400"
-          }`}
-        >
-          {isUser ? "User" : "Claude"}
-        </div>
-        <pre className="font-mono text-sm whitespace-pre-wrap break-words">
+      <div className="text-[10px] uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400 mb-1">
+        {label}@spaiglass
+      </div>
+      <div className="flex gap-2">
+        <span className={`flex-shrink-0 ${promptColor}`} aria-hidden="true">
+          {prompt}
+        </span>
+        <pre className="flex-1 whitespace-pre-wrap break-words text-slate-800 dark:text-slate-100">
           {message.content}
         </pre>
       </div>
@@ -214,7 +229,13 @@ function renderTodo(message: TodoMessage): ReactNode {
 // file_delivery
 // ---------------------------------------------------------------------------
 
-function renderFileDelivery(message: FileDeliveryMessage): ReactNode {
+function renderFileDelivery(
+  message: FileDeliveryMessage,
+  opts: RenderOptions,
+): ReactNode {
+  const handleOpen = opts.onOpenFile
+    ? () => opts.onOpenFile?.(message.path, message.filename)
+    : undefined;
   return (
     <div className="my-1">
       <TermToolCard
@@ -222,6 +243,17 @@ function renderFileDelivery(message: FileDeliveryMessage): ReactNode {
         args={message.path}
         status="ok"
       />
+      {handleOpen && (
+        <div className="mt-1 ml-3">
+          <button
+            type="button"
+            onClick={handleOpen}
+            className="font-mono text-xs text-emerald-400 hover:text-emerald-300 underline underline-offset-2"
+          >
+            [open {message.filename}]
+          </button>
+        </div>
+      )}
     </div>
   );
 }
