@@ -60,10 +60,7 @@ export async function handleDiscoverRequest(c: Context) {
       }
     }
   } catch (err) {
-    return c.json(
-      { error: `Failed to scan: ${(err as Error).message}` },
-      500,
-    );
+    return c.json({ error: `Failed to scan: ${(err as Error).message}` }, 500);
   }
 
   return c.json({ projects, unassigned });

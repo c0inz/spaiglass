@@ -11,12 +11,20 @@
  * ============================================================================ */
 html.glass body,
 html.glass {
-  background: #0A0A0F !important;
+  background: #0a0a0f !important;
   background-image:
-    radial-gradient(ellipse at top left, rgba(124, 77, 255, 0.18), transparent 55%),
-    radial-gradient(ellipse at bottom right, rgba(0, 188, 212, 0.14), transparent 55%) !important;
+    radial-gradient(
+      ellipse at top left,
+      rgba(124, 77, 255, 0.18),
+      transparent 55%
+    ),
+    radial-gradient(
+      ellipse at bottom right,
+      rgba(0, 188, 212, 0.14),
+      transparent 55%
+    ) !important;
   background-attachment: fixed !important;
-  color: #E0E0F0;
+  color: #e0e0f0;
 }
 
 /* Glass surface treatment for the most common dark slate panel utilities */
@@ -37,14 +45,14 @@ html.glass .dark\:bg-slate-800\/50 {
   background: rgba(255, 255, 255, 0.04) !important;
   backdrop-filter: blur(12px) !important;
   -webkit-backdrop-filter: blur(12px) !important;
-  border-color: rgba(255, 255, 255, 0.10) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
 }
 
 /* Header / inputs / cards extra polish */
 html.glass header,
 html.glass [class*="border-slate-700"],
 html.glass [class*="border-slate-800"] {
-  border-color: rgba(255, 255, 255, 0.10) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
 }
 
 html.glass input,
@@ -58,7 +66,7 @@ html.glass select {
 html.glass .bg-blue-500,
 html.glass .bg-blue-600,
 html.glass .bg-blue-700 {
-  background: linear-gradient(135deg, #00BCD4, #7C4DFF) !important;
+  background: linear-gradient(135deg, #00bcd4, #7c4dff) !important;
   box-shadow: 0 4px 16px rgba(0, 188, 212, 0.35) !important;
 }
 
@@ -99,11 +107,21 @@ html.plain [class*="shadow"] {
  * Single phosphor color (via --phosphor var) drives text, borders, accents.
  * Dark: CRT phosphor terminal. Light: parchment + dark ink.
  * ============================================================================ */
-html[data-phosphor="green"] { --phosphor: #33ff33; }
-html[data-phosphor="amber"] { --phosphor: #ffb000; }
-html[data-phosphor="white"] { --phosphor: #f0f0f0; }
-html[data-phosphor="cyan"]  { --phosphor: #00ffff; }
-html[data-phosphor="red"]   { --phosphor: #ff5050; }
+html[data-phosphor="green"] {
+  --phosphor: #33ff33;
+}
+html[data-phosphor="amber"] {
+  --phosphor: #ffb000;
+}
+html[data-phosphor="white"] {
+  --phosphor: #f0f0f0;
+}
+html[data-phosphor="cyan"] {
+  --phosphor: #00ffff;
+}
+html[data-phosphor="red"] {
+  --phosphor: #ff5050;
+}
 
 /* Shared typography for both 70s themes */
 html.seventies,
@@ -114,13 +132,15 @@ html.seventies select,
 html.seventies button,
 html.seventies pre,
 html.seventies code {
-  font-family: 'IBM Plex Mono', 'VT323', 'Courier New', ui-monospace, monospace !important;
+  font-family:
+    "IBM Plex Mono", "VT323", "Courier New", ui-monospace, monospace !important;
 }
 html.seventies h1,
 html.seventies h2,
 html.seventies h3,
 html.seventies h4 {
-  font-family: 'IBM Plex Mono', 'VT323', 'Courier New', ui-monospace, monospace !important;
+  font-family:
+    "IBM Plex Mono", "VT323", "Courier New", ui-monospace, monospace !important;
   font-weight: 600 !important;
   letter-spacing: 0.5px !important;
 }
@@ -210,8 +230,15 @@ html.seventies-dark [class*="text-slate-600"] {
   color: var(--phosphor, #33ff33) !important;
   opacity: 0.6;
 }
-html.seventies-dark a { color: var(--phosphor, #33ff33) !important; text-decoration: underline; }
-html.seventies-dark a:hover { background: var(--phosphor, #33ff33) !important; color: #0c0e0c !important; text-decoration: none; }
+html.seventies-dark a {
+  color: var(--phosphor, #33ff33) !important;
+  text-decoration: underline;
+}
+html.seventies-dark a:hover {
+  background: var(--phosphor, #33ff33) !important;
+  color: #0c0e0c !important;
+  text-decoration: none;
+}
 
 /* ---- 70s LIGHT ---- */
 html.seventies-light,
@@ -278,5 +305,12 @@ html.seventies-light [class*="text-slate-600"] {
   color: #2d1810 !important;
   opacity: 0.65;
 }
-html.seventies-light a { color: #6b1f0a !important; text-decoration: underline; }
-html.seventies-light a:hover { background: #2d1810 !important; color: #f4ecd8 !important; text-decoration: none; }
+html.seventies-light a {
+  color: #6b1f0a !important;
+  text-decoration: underline;
+}
+html.seventies-light a:hover {
+  background: #2d1810 !important;
+  color: #f4ecd8 !important;
+  text-decoration: none;
+}

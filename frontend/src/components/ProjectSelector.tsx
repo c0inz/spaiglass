@@ -82,7 +82,9 @@ export function ProjectSelector() {
                 </span>
               )}
             </h1>
-            <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">Select a project</p>
+            <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">
+              Select a project
+            </p>
           </div>
           <SettingsButton onClick={handleSettingsClick} />
         </div>

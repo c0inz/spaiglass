@@ -8,7 +8,16 @@ export interface StreamingContext {
   updateLastMessage: (content: string) => void;
   onSessionId?: (sessionId: string) => void;
   onSlashCommands?: (commands: string[]) => void;
-  onSessionStats?: (stats: { model?: string; cost?: number; inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheCreationTokens?: number; turns?: number; durationMs?: number }) => void;
+  onSessionStats?: (stats: {
+    model?: string;
+    cost?: number;
+    inputTokens?: number;
+    outputTokens?: number;
+    cacheReadTokens?: number;
+    cacheCreationTokens?: number;
+    turns?: number;
+    durationMs?: number;
+  }) => void;
   shouldShowInitMessage?: () => boolean;
   onInitMessageShown?: () => void;
   hasReceivedInit?: boolean;

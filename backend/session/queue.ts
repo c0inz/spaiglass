@@ -39,7 +39,10 @@ export class AsyncQueue<T> {
           return Promise.resolve({ value: this.queue.shift()!, done: false });
         }
         if (this.done) {
-          return Promise.resolve({ value: undefined as unknown as T, done: true });
+          return Promise.resolve({
+            value: undefined as unknown as T,
+            done: true,
+          });
         }
         return new Promise<IteratorResult<T>>((resolve) => {
           this.waiting = resolve;

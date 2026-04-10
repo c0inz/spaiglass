@@ -17,7 +17,8 @@ export function HelpPanel({ stats, slashCommands }: HelpPanelProps) {
     stats.inputTokens > 0
       ? Math.round((stats.cacheReadTokens / stats.inputTokens) * 100)
       : 0;
-  const hasSessionData = stats.turns > 0 || stats.inputTokens > 0 || stats.outputTokens > 0;
+  const hasSessionData =
+    stats.turns > 0 || stats.inputTokens > 0 || stats.outputTokens > 0;
 
   return (
     <div className="h-full overflow-y-auto bg-white dark:bg-slate-900 text-sm text-slate-700 dark:text-slate-300">
@@ -40,11 +41,15 @@ export function HelpPanel({ stats, slashCommands }: HelpPanelProps) {
           </div>
           <div className="flex justify-between">
             <span className="text-slate-500">📥 Tokens in</span>
-            <span>{stats.inputTokens > 0 ? formatTokens(stats.inputTokens) : "—"}</span>
+            <span>
+              {stats.inputTokens > 0 ? formatTokens(stats.inputTokens) : "—"}
+            </span>
           </div>
           <div className="flex justify-between">
             <span className="text-slate-500">📤 Tokens out</span>
-            <span>{stats.outputTokens > 0 ? formatTokens(stats.outputTokens) : "—"}</span>
+            <span>
+              {stats.outputTokens > 0 ? formatTokens(stats.outputTokens) : "—"}
+            </span>
           </div>
           <div className="flex justify-between">
             <span className="text-slate-500">💾 Cache</span>
@@ -102,27 +107,43 @@ export function HelpPanel({ stats, slashCommands }: HelpPanelProps) {
         </div>
         <div className="space-y-2 text-xs">
           <div>
-            <span className="font-mono text-blue-600 dark:text-blue-400">@</span>
-            <span className="text-slate-500 ml-1.5">File autocomplete — type @ then filename</span>
+            <span className="font-mono text-blue-600 dark:text-blue-400">
+              @
+            </span>
+            <span className="text-slate-500 ml-1.5">
+              File autocomplete — type @ then filename
+            </span>
           </div>
           <div>
-            <span className="font-mono text-blue-600 dark:text-blue-400">/</span>
-            <span className="text-slate-500 ml-1.5">Slash commands — type / for dropdown</span>
+            <span className="font-mono text-blue-600 dark:text-blue-400">
+              /
+            </span>
+            <span className="text-slate-500 ml-1.5">
+              Slash commands — type / for dropdown
+            </span>
           </div>
           <div>
             <span className="text-blue-600 dark:text-blue-400">&#x1F4CE;</span>
-            <span className="text-slate-500 ml-1.5">Upload files — paperclip button</span>
+            <span className="text-slate-500 ml-1.5">
+              Upload files — paperclip button
+            </span>
           </div>
           <div>
-            <span className="font-mono text-blue-600 dark:text-blue-400">Esc</span>
+            <span className="font-mono text-blue-600 dark:text-blue-400">
+              Esc
+            </span>
             <span className="text-slate-500 ml-1.5">Abort running request</span>
           </div>
           <div>
-            <span className="font-mono text-blue-600 dark:text-blue-400">Ctrl+Shift+M</span>
+            <span className="font-mono text-blue-600 dark:text-blue-400">
+              Ctrl+Shift+M
+            </span>
             <span className="text-slate-500 ml-1.5">Cycle permission mode</span>
           </div>
           <div>
-            <span className="text-slate-500">Thinking level — click toggle in status bar</span>
+            <span className="text-slate-500">
+              Thinking level — click toggle in status bar
+            </span>
           </div>
         </div>
       </div>

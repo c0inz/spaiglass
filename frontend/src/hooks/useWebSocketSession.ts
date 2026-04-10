@@ -41,12 +41,9 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
     onSlashCommands?: (commands: string[]) => void;
   } | null>(null);
 
-  const setCallbacks = useCallback(
-    (cbs: typeof callbacksRef.current) => {
-      callbacksRef.current = cbs;
-    },
-    [],
-  );
+  const setCallbacks = useCallback((cbs: typeof callbacksRef.current) => {
+    callbacksRef.current = cbs;
+  }, []);
 
   /**
    * Connect to the WebSocket endpoint.
@@ -107,7 +104,7 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
         const commands = (msg.slashCommands as string[]) || [];
         setState((s) => ({
           ...s,
-          sessionId: msg.sessionId as string || s.sessionId,
+          sessionId: (msg.sessionId as string) || s.sessionId,
           slashCommands: commands,
         }));
         cbs.onSlashCommands?.(commands);
@@ -134,7 +131,11 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
       }
 
       case "file_delivery": {
-        const data = msg.data as { path: string; filename: string; action: string };
+        const data = msg.data as {
+          path: string;
+          filename: string;
+          action: string;
+        };
         cbs.addMessage({
           type: "file_delivery",
           path: data.path,
@@ -208,21 +209,18 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
   /**
    * Send a user message (or slash command).
    */
-  const sendMessage = useCallback(
-    (content: string, attachments?: string[]) => {
-      const ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const sendMessage = useCallback((content: string, attachments?: string[]) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
-      ws.send(
-        JSON.stringify({
-          type: "message",
-          content,
-          ...(attachments?.length ? { attachments } : {}),
-        }),
-      );
-    },
-    [],
-  );
+    ws.send(
+      JSON.stringify({
+        type: "message",
+        content,
+        ...(attachments?.length ? { attachments } : {}),
+      }),
+    );
+  }, []);
 
   /**
    * Interrupt the current response.

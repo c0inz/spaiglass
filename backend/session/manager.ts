@@ -11,11 +11,16 @@
  * response messages which we broadcast to all consumers.
  */
 
-import { type SDKUserMessage, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import {
+  type SDKUserMessage,
+  type SDKMessage,
+} from "@anthropic-ai/claude-agent-sdk";
 import type { Query, Options } from "@anthropic-ai/claude-agent-sdk";
 
 // startup() is exported at runtime but missing from sdk.d.ts in 0.2.97
-const { startup } = await import("@anthropic-ai/claude-agent-sdk") as unknown as {
+const { startup } = (await import(
+  "@anthropic-ai/claude-agent-sdk"
+)) as unknown as {
   startup: (params: { options?: Options }) => Promise<{
     query: (prompt: string | AsyncIterable<SDKUserMessage>) => Query;
     close: () => void;
@@ -105,10 +110,13 @@ export class SessionManager {
       session.consumers.set(consumer.id, consumer);
       session.lastActivity = Date.now();
 
-      logger.app.info("Consumer {consumerId} attached to existing session {sessionId}", {
-        consumerId: consumer.id,
-        sessionId: session.id,
-      });
+      logger.app.info(
+        "Consumer {consumerId} attached to existing session {sessionId}",
+        {
+          consumerId: consumer.id,
+          sessionId: session.id,
+        },
+      );
 
       return this.toSessionInfo(session);
     }
@@ -162,7 +170,9 @@ export class SessionManager {
     _contextContent?: string,
   ): Promise<void> {
     try {
-      logger.app.info("Starting warm session for {sessionId}...", { sessionId: session.id });
+      logger.app.info("Starting warm session for {sessionId}...", {
+        sessionId: session.id,
+      });
 
       // Use startup() for reliable initialization — let SDK use its own bundled CLI
       const warmSession = await startup({
@@ -191,44 +201,61 @@ export class SessionManager {
         session.lastActivity = Date.now();
 
         // Capture session ID from init
-        if (sdkMessage.type === "system" && "subtype" in sdkMessage && sdkMessage.subtype === "init") {
+        if (
+          sdkMessage.type === "system" &&
+          "subtype" in sdkMessage &&
+          sdkMessage.subtype === "init"
+        ) {
           session.sessionId = sdkMessage.session_id;
           if ("slash_commands" in sdkMessage) {
-            session.slashCommands = (sdkMessage as { slash_commands: string[] }).slash_commands || [];
+            session.slashCommands =
+              (sdkMessage as { slash_commands: string[] }).slash_commands || [];
           }
 
           // Send session info to all consumers
-          this.broadcast(session, JSON.stringify({
-            type: "session_info",
-            sessionId: session.id,
-            claudeSessionId: session.sessionId,
-            slashCommands: session.slashCommands,
-          }));
+          this.broadcast(
+            session,
+            JSON.stringify({
+              type: "session_info",
+              sessionId: session.id,
+              claudeSessionId: session.sessionId,
+              slashCommands: session.slashCommands,
+            }),
+          );
         }
 
         // Broadcast SDK message
-        this.broadcast(session, JSON.stringify({
-          type: "sdk_message",
-          data: sdkMessage,
-        }));
+        this.broadcast(
+          session,
+          JSON.stringify({
+            type: "sdk_message",
+            data: sdkMessage,
+          }),
+        );
 
         // File delivery detection
         if (sdkMessage.type === "assistant" && sdkMessage.message?.content) {
           const content = sdkMessage.message.content;
           if (Array.isArray(content)) {
             for (const item of content) {
-              if (item.type === "tool_use" && (item.name === "Write" || item.name === "Edit")) {
+              if (
+                item.type === "tool_use" &&
+                (item.name === "Write" || item.name === "Edit")
+              ) {
                 const input = item.input as Record<string, unknown>;
                 const filePath = (input.file_path as string) || "";
                 if (filePath) {
-                  this.broadcast(session, JSON.stringify({
-                    type: "file_delivery",
-                    data: {
-                      path: filePath,
-                      filename: basename(filePath),
-                      action: item.name === "Write" ? "write" : "edit",
-                    },
-                  }));
+                  this.broadcast(
+                    session,
+                    JSON.stringify({
+                      type: "file_delivery",
+                      data: {
+                        path: filePath,
+                        filename: basename(filePath),
+                        action: item.name === "Write" ? "write" : "edit",
+                      },
+                    }),
+                  );
                 }
               }
             }
@@ -242,16 +269,22 @@ export class SessionManager {
         msg,
       });
 
-      this.broadcast(session, JSON.stringify({
-        type: "error",
-        message: msg,
-      }));
+      this.broadcast(
+        session,
+        JSON.stringify({
+          type: "error",
+          message: msg,
+        }),
+      );
     } finally {
       session.running = false;
-      this.broadcast(session, JSON.stringify({
-        type: "session_ended",
-        reason: "cli_exited",
-      }));
+      this.broadcast(
+        session,
+        JSON.stringify({
+          type: "session_ended",
+          reason: "cli_exited",
+        }),
+      );
 
       logger.app.info("Session {sessionId} ended", { sessionId: session.id });
     }
@@ -298,7 +331,9 @@ export class SessionManager {
         } else {
           try {
             const text = await fs.readFile(filePath, "utf8");
-            textParts.push(`[Attached file: ${basename(filePath)}]\n\`\`\`\n${text}\n\`\`\``);
+            textParts.push(
+              `[Attached file: ${basename(filePath)}]\n\`\`\`\n${text}\n\`\`\``,
+            );
           } catch {
             textParts.push(`[Could not read file: ${basename(filePath)}]`);
           }
@@ -314,7 +349,8 @@ export class SessionManager {
       for (const part of textParts) {
         contentBlocks.push({ type: "text", text: part });
       }
-      const userText = content.trim() || (textParts.length > 0 ? "" : "See attached.");
+      const userText =
+        content.trim() || (textParts.length > 0 ? "" : "See attached.");
       if (userText) {
         contentBlocks.push({ type: "text", text: userText });
       }
@@ -350,7 +386,9 @@ export class SessionManager {
 
     try {
       await session.query.interrupt();
-      logger.app.info("Session {sessionId} interrupted", { sessionId: session.id });
+      logger.app.info("Session {sessionId} interrupted", {
+        sessionId: session.id,
+      });
     } catch (err) {
       logger.app.error("Interrupt failed: {err}", { err });
     }
@@ -368,11 +406,14 @@ export class SessionManager {
 
     // Don't destroy session when last consumer leaves — Telegram model.
     // Session stays alive for reconnect. Cleanup via timeout.
-    logger.app.info("Consumer {consumerId} removed from session {sessionId} ({remaining} remaining)", {
-      consumerId,
-      sessionId: session.id,
-      remaining: session.consumers.size,
-    });
+    logger.app.info(
+      "Consumer {consumerId} removed from session {sessionId} ({remaining} remaining)",
+      {
+        consumerId,
+        sessionId: session.id,
+        remaining: session.consumers.size,
+      },
+    );
   }
 
   /**
@@ -387,7 +428,13 @@ export class SessionManager {
   ): Promise<SessionInfo> {
     const key = this.sessionKey(userId, roleFile);
     this.destroySession(key);
-    return this.getOrCreateSession(userId, roleFile, workingDirectory, consumer, contextContent);
+    return this.getOrCreateSession(
+      userId,
+      roleFile,
+      workingDirectory,
+      consumer,
+      contextContent,
+    );
   }
 
   /**

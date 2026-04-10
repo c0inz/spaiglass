@@ -146,7 +146,9 @@ export function FileSidebar({
 }: FileSidebarProps) {
   const [tree, setTree] = useState<TreeEntry[]>([]);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<"tree" | "context" | "help">("tree");
+  const [activeTab, setActiveTab] = useState<"tree" | "context" | "help">(
+    "tree",
+  );
 
   const loadTree = useCallback(async () => {
     setLoading(true);
@@ -224,7 +226,19 @@ export function FileSidebar({
       <div className="flex-1 overflow-auto py-1">
         {activeTab === "help" ? (
           <HelpPanel
-            stats={sessionStats || { model: "", inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0, totalCost: 0, turns: 0, durationMs: 0, sessionId: "" }}
+            stats={
+              sessionStats || {
+                model: "",
+                inputTokens: 0,
+                outputTokens: 0,
+                cacheReadTokens: 0,
+                cacheCreationTokens: 0,
+                totalCost: 0,
+                turns: 0,
+                durationMs: 0,
+                sessionId: "",
+              }
+            }
             slashCommands={slashCommands || []}
           />
         ) : activeTab === "tree" ? (

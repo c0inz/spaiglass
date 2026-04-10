@@ -38,7 +38,8 @@ if (!RELAY_URL || !CONNECTOR_TOKEN) {
 }
 
 // Convert RELAY_URL to WebSocket URL
-const relayWsUrl = RELAY_URL.replace(/^https:/, "wss:").replace(/^http:/, "ws:") + "/connector";
+const relayWsUrl =
+  RELAY_URL.replace(/^https:/, "wss:").replace(/^http:/, "ws:") + "/connector";
 
 // Track local WebSocket connections per browser session
 const localSockets = new Map<string, WebSocket>();
@@ -53,7 +54,9 @@ function log(msg: string) {
 
 function connectToRelay() {
   if (relayWs) {
-    try { relayWs.close(); } catch {}
+    try {
+      relayWs.close();
+    } catch {}
   }
 
   authenticated = false;
@@ -63,11 +66,13 @@ function connectToRelay() {
 
   relayWs.on("open", () => {
     log("Connected to relay, authenticating...");
-    relayWs!.send(JSON.stringify({
-      type: "auth",
-      token: CONNECTOR_TOKEN,
-      spaiglassVersion: SPAIGLASS_VERSION,
-    }));
+    relayWs!.send(
+      JSON.stringify({
+        type: "auth",
+        token: CONNECTOR_TOKEN,
+        spaiglassVersion: SPAIGLASS_VERSION,
+      }),
+    );
   });
 
   relayWs.on("message", (raw) => {
@@ -145,7 +150,15 @@ async function handleHttpRequest(msg: Record<string, unknown>) {
     const fwdHeaders: Record<string, string> = {};
     for (const [k, v] of Object.entries(headers)) {
       const lk = k.toLowerCase();
-      if (!["host", "connection", "upgrade", "transfer-encoding", "keep-alive"].includes(lk)) {
+      if (
+        ![
+          "host",
+          "connection",
+          "upgrade",
+          "transfer-encoding",
+          "keep-alive",
+        ].includes(lk)
+      ) {
         fwdHeaders[k] = v;
       }
     }
@@ -154,7 +167,8 @@ async function handleHttpRequest(msg: Record<string, unknown>) {
     // Decode body: base64 for binary (multipart/form-data), utf-8 for text
     let fetchBody: string | Buffer | undefined;
     if (method !== "GET" && method !== "HEAD" && rawBody) {
-      fetchBody = bodyEncoding === "base64" ? Buffer.from(rawBody, "base64") : rawBody;
+      fetchBody =
+        bodyEncoding === "base64" ? Buffer.from(rawBody, "base64") : rawBody;
     }
 
     const resp = await fetch(localUrl, {
@@ -165,12 +179,16 @@ async function handleHttpRequest(msg: Record<string, unknown>) {
     });
 
     const contentType = resp.headers.get("content-type") || "";
-    const isText = /text|json|javascript|css|xml|svg|html|font\/woff/.test(contentType);
+    const isText = /text|json|javascript|css|xml|svg|html|font\/woff/.test(
+      contentType,
+    );
 
     const respHeaders: Record<string, string> = {};
     resp.headers.forEach((v, k) => {
       const lk = k.toLowerCase();
-      if (!["transfer-encoding", "content-encoding", "connection"].includes(lk)) {
+      if (
+        !["transfer-encoding", "content-encoding", "connection"].includes(lk)
+      ) {
         respHeaders[k] = v;
       }
     });
@@ -183,25 +201,29 @@ async function handleHttpRequest(msg: Record<string, unknown>) {
       respBody = buf.toString("base64");
     }
 
-    relayWs!.send(JSON.stringify({
-      type: "http_response",
-      reqId,
-      status: resp.status,
-      headers: respHeaders,
-      body: respBody,
-      bodyEncoding: isText ? "utf-8" : "base64",
-    }));
+    relayWs!.send(
+      JSON.stringify({
+        type: "http_response",
+        reqId,
+        status: resp.status,
+        headers: respHeaders,
+        body: respBody,
+        bodyEncoding: isText ? "utf-8" : "base64",
+      }),
+    );
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
     log(`HTTP proxy error for ${method} ${path}: ${message}`);
-    relayWs!.send(JSON.stringify({
-      type: "http_response",
-      reqId,
-      status: 502,
-      headers: { "content-type": "text/plain" },
-      body: `Backend error: ${message}`,
-      bodyEncoding: "utf-8",
-    }));
+    relayWs!.send(
+      JSON.stringify({
+        type: "http_response",
+        reqId,
+        status: 502,
+        headers: { "content-type": "text/plain" },
+        body: `Backend error: ${message}`,
+        bodyEncoding: "utf-8",
+      }),
+    );
   }
 }
 
@@ -219,7 +241,9 @@ function handleBrowserMessage(browserId: string, data: string) {
   }
 
   // Create new local WebSocket for this browser session
-  log(`New browser session: ${browserId.slice(0, 8)}... → opening local WS to ${LOCAL_WS}`);
+  log(
+    `New browser session: ${browserId.slice(0, 8)}... → opening local WS to ${LOCAL_WS}`,
+  );
 
   local = new WebSocket(LOCAL_WS);
   localSockets.set(browserId, local);
@@ -232,11 +256,13 @@ function handleBrowserMessage(browserId: string, data: string) {
   // Local backend → relay → browser
   local.on("message", (localData) => {
     if (relayWs && relayWs.readyState === WebSocket.OPEN && authenticated) {
-      relayWs.send(JSON.stringify({
-        type: "relay_response",
-        browserId,
-        data: localData.toString(),
-      }));
+      relayWs.send(
+        JSON.stringify({
+          type: "relay_response",
+          browserId,
+          data: localData.toString(),
+        }),
+      );
     }
   });
 
@@ -246,7 +272,9 @@ function handleBrowserMessage(browserId: string, data: string) {
   });
 
   local.on("error", (err) => {
-    log(`Local WS error for browser ${browserId.slice(0, 8)}...: ${err.message}`);
+    log(
+      `Local WS error for browser ${browserId.slice(0, 8)}...: ${err.message}`,
+    );
     localSockets.delete(browserId);
   });
 }
@@ -254,7 +282,10 @@ function handleBrowserMessage(browserId: string, data: string) {
 // Clean up dead local sockets periodically
 setInterval(() => {
   for (const [browserId, ws] of localSockets) {
-    if (ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+    if (
+      ws.readyState === WebSocket.CLOSED ||
+      ws.readyState === WebSocket.CLOSING
+    ) {
       localSockets.delete(browserId);
     }
   }
@@ -265,7 +296,9 @@ process.on("SIGINT", () => {
   log("Shutting down...");
   if (relayWs) relayWs.close();
   for (const ws of localSockets.values()) {
-    try { ws.close(); } catch {}
+    try {
+      ws.close();
+    } catch {}
   }
   process.exit(0);
 });
@@ -274,7 +307,9 @@ process.on("SIGTERM", () => {
   log("Shutting down...");
   if (relayWs) relayWs.close();
   for (const ws of localSockets.values()) {
-    try { ws.close(); } catch {}
+    try {
+      ws.close();
+    } catch {}
   }
   process.exit(0);
 });

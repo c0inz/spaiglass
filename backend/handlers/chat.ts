@@ -1,6 +1,14 @@
 import { Context } from "hono";
-import { query, type PermissionMode, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
-import type { ChatRequest, StreamResponse, FileDelivery } from "../../shared/types.ts";
+import {
+  query,
+  type PermissionMode,
+  type SDKUserMessage,
+} from "@anthropic-ai/claude-agent-sdk";
+import type {
+  ChatRequest,
+  StreamResponse,
+  FileDelivery,
+} from "../../shared/types.ts";
 import { basename, extname } from "node:path";
 import { promises as fs } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -31,7 +39,10 @@ async function processAttachments(
   message: string,
   attachments: string[],
   sessionId?: string,
-): Promise<{ prompt: string | AsyncIterable<SDKUserMessage>; hasImages: boolean }> {
+): Promise<{
+  prompt: string | AsyncIterable<SDKUserMessage>;
+  hasImages: boolean;
+}> {
   const textParts: string[] = [];
   const imageBlocks: unknown[] = [];
 
@@ -143,7 +154,11 @@ async function* executeClaudeCommand(
     let hasImages = false;
 
     if (attachments && attachments.length > 0) {
-      const result = await processAttachments(processedMessage, attachments, sessionId);
+      const result = await processAttachments(
+        processedMessage,
+        attachments,
+        sessionId,
+      );
       prompt = result.prompt;
       hasImages = result.hasImages;
     }
@@ -178,7 +193,10 @@ async function* executeClaudeCommand(
         const content = sdkMessage.message.content;
         if (Array.isArray(content)) {
           for (const item of content) {
-            if (item.type === "tool_use" && (item.name === "Write" || item.name === "Edit")) {
+            if (
+              item.type === "tool_use" &&
+              (item.name === "Write" || item.name === "Edit")
+            ) {
               const input = item.input as Record<string, unknown>;
               const filePath = (input.file_path as string) || "";
               if (filePath) {

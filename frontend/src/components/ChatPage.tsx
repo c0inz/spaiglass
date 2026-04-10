@@ -1,9 +1,6 @@
 import { useEffect, useCallback, useState, useRef } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import {
-  ChevronLeftIcon,
-  FolderIcon,
-} from "@heroicons/react/24/outline";
+import { ChevronLeftIcon, FolderIcon } from "@heroicons/react/24/outline";
 import type {
   ChatRequest,
   ChatMessage,
@@ -69,7 +66,9 @@ export function ChatPage() {
   const [pendingImages, setPendingImages] = useState<
     { file: File; preview: string }[]
   >([]);
-  const [thinkingLevel, setThinkingLevel] = useState<"off" | "brief" | "extended">("off");
+  const [thinkingLevel, setThinkingLevel] = useState<
+    "off" | "brief" | "extended"
+  >("off");
   const [slashCommands, setSlashCommands] = useState<string[]>([]);
   const sessionStatsRef = useRef<SessionStats>({
     model: "",
@@ -82,12 +81,16 @@ export function ChatPage() {
     durationMs: 0,
     sessionId: "",
   });
-  const [sessionStats, setSessionStats] = useState<SessionStats>(sessionStatsRef.current);
+  const [sessionStats, setSessionStats] = useState<SessionStats>(
+    sessionStatsRef.current,
+  );
   const vmConfig = useVmConfig();
 
   // Extract working directory: prefer relay-resolved context, fall back to URL
   const workingDirectory = (() => {
-    const sgResolved = (window as any).__SG_RESOLVED as { path?: string } | undefined;
+    const sgResolved = (window as any).__SG_RESOLVED as
+      | { path?: string }
+      | undefined;
     if (sgResolved?.path) return sgResolved.path;
 
     const rawPath = location.pathname.replace("/projects", "");
@@ -130,8 +133,10 @@ export function ChatPage() {
   // Get current view, sessionId, and role from query parameters or relay context
   const currentView = searchParams.get("view");
   const sessionId = searchParams.get("sessionId");
-  const roleFile = searchParams.get("role") ||
-    ((window as any).__SG_RESOLVED as { role?: string } | undefined)?.role || null;
+  const roleFile =
+    searchParams.get("role") ||
+    ((window as any).__SG_RESOLVED as { role?: string } | undefined)?.role ||
+    null;
   const isHistoryView = currentView === "history";
   const isLoadedConversation = !!sessionId && !isHistoryView;
 
@@ -151,7 +156,9 @@ export function ChatPage() {
               content: data.content,
             });
             setContextFiles(new Set([rolePath]));
-            setContextFilesList([{ path: rolePath, name: roleFile, touchedAt: Date.now() }]);
+            setContextFilesList([
+              { path: rolePath, name: roleFile, touchedAt: Date.now() },
+            ]);
             setContextChecked(true);
           }
         })
@@ -161,7 +168,13 @@ export function ChatPage() {
 
   // Show context picker for new sessions — skip if role is already set via URL
   useEffect(() => {
-    if (!isHistoryView && !sessionId && workingDirectory && !contextChecked && !roleFile) {
+    if (
+      !isHistoryView &&
+      !sessionId &&
+      workingDirectory &&
+      !contextChecked &&
+      !roleFile
+    ) {
       setShowContextPicker(true);
     }
   }, [isHistoryView, sessionId, workingDirectory, contextChecked, roleFile]);
@@ -169,8 +182,10 @@ export function ChatPage() {
   // Auto-resume last session on page load (no sessionId in URL)
   useEffect(() => {
     if (sessionId || isHistoryView || !workingDirectory) return;
-    fetch(`/api/session/last?projectPath=${encodeURIComponent(workingDirectory)}`)
-      .then((res) => res.ok ? res.json() : null)
+    fetch(
+      `/api/session/last?projectPath=${encodeURIComponent(workingDirectory)}`,
+    )
+      .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (data?.session?.sessionId) {
           const params = new URLSearchParams(searchParams);
@@ -275,17 +290,33 @@ export function ChatPage() {
   });
 
   const handleSessionStats = useCallback(
-    (stats: { model?: string; cost?: number; inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheCreationTokens?: number; turns?: number; durationMs?: number }) => {
+    (stats: {
+      model?: string;
+      cost?: number;
+      inputTokens?: number;
+      outputTokens?: number;
+      cacheReadTokens?: number;
+      cacheCreationTokens?: number;
+      turns?: number;
+      durationMs?: number;
+    }) => {
       const current = sessionStatsRef.current;
       const updated: SessionStats = {
         model: stats.model || current.model,
         inputTokens: stats.inputTokens ?? current.inputTokens,
         outputTokens: stats.outputTokens ?? current.outputTokens,
         cacheReadTokens: stats.cacheReadTokens ?? current.cacheReadTokens,
-        cacheCreationTokens: stats.cacheCreationTokens ?? current.cacheCreationTokens,
-        totalCost: stats.cost != null ? (current.totalCost + stats.cost) : current.totalCost,
+        cacheCreationTokens:
+          stats.cacheCreationTokens ?? current.cacheCreationTokens,
+        totalCost:
+          stats.cost != null
+            ? current.totalCost + stats.cost
+            : current.totalCost,
         turns: stats.turns ?? current.turns,
-        durationMs: stats.durationMs != null ? (current.durationMs + stats.durationMs) : current.durationMs,
+        durationMs:
+          stats.durationMs != null
+            ? current.durationMs + stats.durationMs
+            : current.durationMs,
         sessionId: current.sessionId,
       };
       sessionStatsRef.current = updated;
@@ -354,9 +385,10 @@ export function ChatPage() {
 
       // Only add user message to chat if not hidden
       if (!hideUserMessage) {
-        const displayContent = attachmentNames.length > 0
-          ? `${attachmentNames.map(n => `[${n}]`).join(" ")}\n${content || ""}`
-          : content;
+        const displayContent =
+          attachmentNames.length > 0
+            ? `${attachmentNames.map((n) => `[${n}]`).join(" ")}\n${content || ""}`
+            : content;
         const userMessage: ChatMessage = {
           type: "chat",
           role: "user",
@@ -379,8 +411,12 @@ export function ChatPage() {
             ...(currentSessionId ? { sessionId: currentSessionId } : {}),
             allowedTools: tools || allowedTools,
             ...(workingDirectory ? { workingDirectory } : {}),
-            ...(attachmentPaths.length > 0 ? { attachments: attachmentPaths } : {}),
-            ...(thinkingLevel !== "off" ? { maxThinkingTokens: thinkingLevel === "brief" ? 5000 : 32000 } : {}),
+            ...(attachmentPaths.length > 0
+              ? { attachments: attachmentPaths }
+              : {}),
+            ...(thinkingLevel !== "off"
+              ? { maxThinkingTokens: thinkingLevel === "brief" ? 5000 : 32000 }
+              : {}),
             permissionMode: overridePermissionMode || permissionMode,
           } as ChatRequest),
         });
@@ -401,7 +437,10 @@ export function ChatPage() {
           updateLastMessage,
           onSessionId: (sid: string) => {
             setCurrentSessionId(sid);
-            sessionStatsRef.current = { ...sessionStatsRef.current, sessionId: sid };
+            sessionStatsRef.current = {
+              ...sessionStatsRef.current,
+              sessionId: sid,
+            };
             setSessionStats(sessionStatsRef.current);
           },
           onSlashCommands: setSlashCommands,
@@ -680,13 +719,14 @@ export function ChatPage() {
           )}
           <div>
             <div className="flex items-center">
-              <span
-                className="text-slate-800 dark:text-slate-100 text-lg sm:text-2xl font-bold tracking-tight px-1 -mx-1"
-              >
+              <span className="text-slate-800 dark:text-slate-100 text-lg sm:text-2xl font-bold tracking-tight px-1 -mx-1">
                 SpAIglass
               </span>
               {workingDirectory && (
-                <span className="ml-3 text-sm font-medium text-blue-500 dark:text-blue-400" title={workingDirectory}>
+                <span
+                  className="ml-3 text-sm font-medium text-blue-500 dark:text-blue-400"
+                  title={workingDirectory}
+                >
                   {workingDirectory}
                 </span>
               )}
@@ -783,7 +823,9 @@ export function ChatPage() {
         ) : null}
 
         {/* Chat panel */}
-        <div className={`${editingFile || showArchViewer ? "w-[450px] flex-shrink-0" : "flex-1"} min-w-0 flex flex-col overflow-hidden`}>
+        <div
+          className={`${editingFile || showArchViewer ? "w-[450px] flex-shrink-0" : "flex-1"} min-w-0 flex flex-col overflow-hidden`}
+        >
           <div className="flex-1 flex flex-col overflow-hidden p-3 sm:p-4">
             {isHistoryView ? (
               <HistoryView
@@ -795,14 +837,18 @@ export function ChatPage() {
               <div className="flex-1 flex items-center justify-center">
                 <div className="text-center">
                   <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin mx-auto mb-4"></div>
-                  <p className="text-slate-600 dark:text-slate-400">Loading conversation history...</p>
+                  <p className="text-slate-600 dark:text-slate-400">
+                    Loading conversation history...
+                  </p>
                 </div>
               </div>
             ) : historyError ? (
               <div className="flex-1 flex items-center justify-center">
                 <div className="text-center max-w-md">
                   <p className="text-red-500 text-xl mb-2">Error</p>
-                  <p className="text-slate-600 dark:text-slate-400 text-sm mb-4">{historyError}</p>
+                  <p className="text-slate-600 dark:text-slate-400 text-sm mb-4">
+                    {historyError}
+                  </p>
                   <button
                     onClick={() => navigate({ search: "" })}
                     className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
@@ -881,7 +927,8 @@ export function ChatPage() {
                         onSelect={(filePath) => {
                           const atIndex = input.lastIndexOf("@");
                           if (atIndex !== -1) {
-                            const newInput = input.slice(0, atIndex) + filePath + " ";
+                            const newInput =
+                              input.slice(0, atIndex) + filePath + " ";
                             setInput(newInput);
                           }
                           setMentionState(null);
@@ -895,7 +942,6 @@ export function ChatPage() {
             )}
           </div>
         </div>
-
       </div>
 
       {/* Settings Modal */}

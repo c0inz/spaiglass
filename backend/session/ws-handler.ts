@@ -23,7 +23,7 @@ export function createWSHandler(sessionManager: SessionManager) {
     onOpen(ws: WSContext) {
       const state: WSState = {
         consumerId: randomUUID(),
-        userId: "local",  // Default for direct access; relay sets real userId
+        userId: "local", // Default for direct access; relay sets real userId
         roleFile: null,
         workingDirectory: null,
       };
@@ -31,7 +31,9 @@ export function createWSHandler(sessionManager: SessionManager) {
       // Attach state to the ws object via a Map (Hono WS doesn't have state property)
       wsStateMap.set(ws, state);
 
-      logger.app.info("WebSocket connected: {consumerId}", { consumerId: state.consumerId });
+      logger.app.info("WebSocket connected: {consumerId}", {
+        consumerId: state.consumerId,
+      });
     },
 
     async onMessage(ws: WSContext, event: MessageEvent) {
@@ -40,7 +42,8 @@ export function createWSHandler(sessionManager: SessionManager) {
 
       let msg: Record<string, unknown>;
       try {
-        const raw = typeof event.data === "string" ? event.data : event.data.toString();
+        const raw =
+          typeof event.data === "string" ? event.data : event.data.toString();
         msg = JSON.parse(raw);
       } catch {
         ws.send(JSON.stringify({ type: "error", message: "Invalid JSON" }));
@@ -68,7 +71,12 @@ export function createWSHandler(sessionManager: SessionManager) {
             break;
 
           default:
-            ws.send(JSON.stringify({ type: "error", message: `Unknown message type: ${msg.type}` }));
+            ws.send(
+              JSON.stringify({
+                type: "error",
+                message: `Unknown message type: ${msg.type}`,
+              }),
+            );
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -79,7 +87,11 @@ export function createWSHandler(sessionManager: SessionManager) {
     onClose(ws: WSContext) {
       const state = wsStateMap.get(ws);
       if (state && state.roleFile) {
-        sessionManager.removeConsumer(state.userId, state.roleFile, state.consumerId);
+        sessionManager.removeConsumer(
+          state.userId,
+          state.roleFile,
+          state.consumerId,
+        );
       }
       wsStateMap.delete(ws);
       logger.app.info("WebSocket disconnected: {consumerId}", {
@@ -91,7 +103,11 @@ export function createWSHandler(sessionManager: SessionManager) {
       logger.app.error("WebSocket error: {error}", { error });
       const state = wsStateMap.get(ws);
       if (state && state.roleFile) {
-        sessionManager.removeConsumer(state.userId, state.roleFile, state.consumerId);
+        sessionManager.removeConsumer(
+          state.userId,
+          state.roleFile,
+          state.consumerId,
+        );
       }
       wsStateMap.delete(ws);
     },
@@ -112,7 +128,12 @@ async function handleSessionStart(
   const contextContent = msg.contextContent as string | undefined;
 
   if (!roleFile || !workingDirectory) {
-    ws.send(JSON.stringify({ type: "error", message: "roleFile and workingDirectory required" }));
+    ws.send(
+      JSON.stringify({
+        type: "error",
+        message: "roleFile and workingDirectory required",
+      }),
+    );
     return;
   }
 
@@ -147,12 +168,14 @@ async function handleSessionStart(
 
   // Session info is also sent by the manager when it receives the init message,
   // but send an ack immediately so the client knows we're connected
-  ws.send(JSON.stringify({
-    type: "session_ack",
-    sessionId: info.id,
-    slashCommands: info.slashCommands,
-    consumerCount: info.consumerCount,
-  }));
+  ws.send(
+    JSON.stringify({
+      type: "session_ack",
+      sessionId: info.id,
+      slashCommands: info.slashCommands,
+      consumerCount: info.consumerCount,
+    }),
+  );
 }
 
 async function handleSessionRestart(
@@ -162,10 +185,16 @@ async function handleSessionRestart(
   sessionManager: SessionManager,
 ): Promise<void> {
   const roleFile = (msg.roleFile as string) || state.roleFile;
-  const workingDirectory = (msg.workingDirectory as string) || state.workingDirectory;
+  const workingDirectory =
+    (msg.workingDirectory as string) || state.workingDirectory;
 
   if (!roleFile || !workingDirectory) {
-    ws.send(JSON.stringify({ type: "error", message: "roleFile and workingDirectory required" }));
+    ws.send(
+      JSON.stringify({
+        type: "error",
+        message: "roleFile and workingDirectory required",
+      }),
+    );
     return;
   }
 
@@ -193,12 +222,14 @@ async function handleSessionRestart(
     consumer,
   );
 
-  ws.send(JSON.stringify({
-    type: "session_ack",
-    sessionId: info.id,
-    slashCommands: info.slashCommands,
-    consumerCount: info.consumerCount,
-  }));
+  ws.send(
+    JSON.stringify({
+      type: "session_ack",
+      sessionId: info.id,
+      slashCommands: info.slashCommands,
+      consumerCount: info.consumerCount,
+    }),
+  );
 }
 
 async function handleMessage(
@@ -213,5 +244,10 @@ async function handleMessage(
   const content = (msg.content as string) || "";
   const attachments = (msg.attachments as string[]) || undefined;
 
-  await sessionManager.sendMessage(state.userId, state.roleFile, content, attachments);
+  await sessionManager.sendMessage(
+    state.userId,
+    state.roleFile,
+    content,
+    attachments,
+  );
 }

@@ -78,12 +78,15 @@ async function main(runtime: NodeRuntime) {
   injectWebSocket(server);
 
   // Session cleanup every hour
-  setInterval(() => {
-    const cleaned = sessionManager.cleanup();
-    if (cleaned > 0) {
-      logger.cli.info(`🧹 Cleaned up ${cleaned} inactive sessions`);
-    }
-  }, 60 * 60 * 1000);
+  setInterval(
+    () => {
+      const cleaned = sessionManager.cleanup();
+      if (cleaned > 0) {
+        logger.cli.info(`🧹 Cleaned up ${cleaned} inactive sessions`);
+      }
+    },
+    60 * 60 * 1000,
+  );
 
   logger.cli.info("🔌 WebSocket endpoint ready at /api/ws");
 }

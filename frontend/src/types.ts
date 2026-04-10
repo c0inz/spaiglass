@@ -199,7 +199,11 @@ export interface SessionStats {
 }
 
 // Permission mode types
-export type PermissionMode = "default" | "plan" | "acceptEdits" | "bypassPermissions";
+export type PermissionMode =
+  | "default"
+  | "plan"
+  | "acceptEdits"
+  | "bypassPermissions";
 
 // SDK type integration utilities
 export function toSDKPermissionMode(uiMode: PermissionMode): SDKPermissionMode {

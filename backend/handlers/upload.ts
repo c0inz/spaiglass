@@ -27,7 +27,12 @@ export async function handleUploadRequest(c: Context) {
 
   // Validate size
   if (file.size > MAX_FILE_SIZE) {
-    return c.json({ error: `File too large. Maximum size: ${MAX_FILE_SIZE / 1024 / 1024}MB` }, 400);
+    return c.json(
+      {
+        error: `File too large. Maximum size: ${MAX_FILE_SIZE / 1024 / 1024}MB`,
+      },
+      400,
+    );
   }
 
   // Create upload directory

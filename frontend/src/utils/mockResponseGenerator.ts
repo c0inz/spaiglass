@@ -36,9 +36,7 @@ export type MockScenarioStep =
     };
 
 // Generate realistic Claude system messages
-export function createSystemMessage(
-  sessionId: string,
-): any {
+export function createSystemMessage(sessionId: string): any {
   return {
     type: "system",
     subtype: "init",

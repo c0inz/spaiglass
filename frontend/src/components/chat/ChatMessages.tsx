@@ -29,7 +29,11 @@ interface ChatMessagesProps {
   onOpenFile?: (path: string, filename: string) => void;
 }
 
-export function ChatMessages({ messages, isLoading, onOpenFile }: ChatMessagesProps) {
+export function ChatMessages({
+  messages,
+  isLoading,
+  onOpenFile,
+}: ChatMessagesProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
 

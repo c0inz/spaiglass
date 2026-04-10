@@ -17,10 +17,7 @@ import { handleHistoriesRequest } from "./handlers/histories.ts";
 import { handleConversationRequest } from "./handlers/conversations.ts";
 import { handleChatRequest } from "./handlers/chat.ts";
 import { handleAbortRequest } from "./handlers/abort.ts";
-import {
-  handleConfigRequest,
-  handleHealthRequest,
-} from "./handlers/config.ts";
+import { handleConfigRequest, handleHealthRequest } from "./handlers/config.ts";
 import {
   handleFileTreeRequest,
   handleFileReadRequest,

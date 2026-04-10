@@ -94,7 +94,9 @@ function renderAscii(model: ArchModel): string {
   if (ungrouped.length > 0) {
     lines.push("  Standalone:");
     for (const comp of ungrouped) {
-      lines.push(`    ${renderBox(comp.name, comp.status).split("\n").join("\n    ")}`);
+      lines.push(
+        `    ${renderBox(comp.name, comp.status).split("\n").join("\n    ")}`,
+      );
     }
     lines.push("");
   }
@@ -146,7 +148,9 @@ export function ArchitectureViewer({ projectPath }: ArchitectureViewerProps) {
         const model: ArchModel = JSON.parse(data.content);
         setAscii(renderAscii(model));
       } catch (err) {
-        setError(`Failed to parse architecture.json: ${(err as Error).message}`);
+        setError(
+          `Failed to parse architecture.json: ${(err as Error).message}`,
+        );
       }
       setLoading(false);
     }
@@ -155,22 +159,24 @@ export function ArchitectureViewer({ projectPath }: ArchitectureViewerProps) {
 
   if (loading) {
     return (
-      <div className="p-4 text-slate-400 text-sm">
-        Loading architecture...
-      </div>
+      <div className="p-4 text-slate-400 text-sm">Loading architecture...</div>
     );
   }
 
   if (error) {
     // Determine setup URL — use relay setup if running under /vm/ prefix, otherwise local /setup
     const sgBase = (window as any).__SG_BASE as string | undefined;
-    const setupUrl = sgBase
-      ? `${window.location.origin}/setup`
-      : "/setup";
+    const setupUrl = sgBase ? `${window.location.origin}/setup` : "/setup";
 
     return (
       <div className="p-4 text-slate-500 text-sm">
-        <p className="mb-2">Missing <code className="bg-slate-800 px-1.5 py-0.5 rounded text-slate-400">architecture/architecture.json</code> in this project.</p>
+        <p className="mb-2">
+          Missing{" "}
+          <code className="bg-slate-800 px-1.5 py-0.5 rounded text-slate-400">
+            architecture/architecture.json
+          </code>{" "}
+          in this project.
+        </p>
         <p>
           Follow the instructions in the{" "}
           <a

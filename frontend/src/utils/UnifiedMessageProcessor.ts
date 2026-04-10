@@ -39,7 +39,16 @@ export interface ProcessingContext {
   // Session handling
   onSessionId?: (sessionId: string) => void;
   onSlashCommands?: (commands: string[]) => void;
-  onSessionStats?: (stats: { model?: string; cost?: number; inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheCreationTokens?: number; turns?: number; durationMs?: number }) => void;
+  onSessionStats?: (stats: {
+    model?: string;
+    cost?: number;
+    inputTokens?: number;
+    outputTokens?: number;
+    cacheReadTokens?: number;
+    cacheCreationTokens?: number;
+    turns?: number;
+    durationMs?: number;
+  }) => void;
   hasReceivedInit?: boolean;
   setHasReceivedInit?: (received: boolean) => void;
 
@@ -313,7 +322,10 @@ export class UnifiedMessageProcessor {
       context.setHasReceivedInit?.(true);
 
       // Extract slash commands from init message
-      if ("slash_commands" in message && Array.isArray((message as any).slash_commands)) {
+      if (
+        "slash_commands" in message &&
+        Array.isArray((message as any).slash_commands)
+      ) {
         context.onSlashCommands?.((message as any).slash_commands);
       }
 

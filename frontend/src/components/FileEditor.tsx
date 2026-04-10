@@ -102,7 +102,10 @@ export function FileEditor({ filePath, fileName, onClose }: FileEditorProps) {
             {fileName}
           </span>
           {isDirty && (
-            <span className="w-2 h-2 rounded-full bg-orange-400" title="Unsaved changes" />
+            <span
+              className="w-2 h-2 rounded-full bg-orange-400"
+              title="Unsaved changes"
+            />
           )}
         </div>
         <div className="flex items-center gap-2">

@@ -146,7 +146,9 @@ export function ChatInput({
       }
       if (e.key === "ArrowUp") {
         e.preventDefault();
-        setSlashSelectedIndex((i) => (i - 1 + filtered.length) % filtered.length);
+        setSlashSelectedIndex(
+          (i) => (i - 1 + filtered.length) % filtered.length,
+        );
         return;
       }
       if ((e.key === "Tab" || e.key === "Enter") && filtered.length > 0) {
@@ -231,7 +233,12 @@ export function ChatInput({
 
   // Get next permission mode for cycling
   const getNextPermissionMode = (current: PermissionMode): PermissionMode => {
-    const modes: PermissionMode[] = ["default", "plan", "acceptEdits", "bypassPermissions"];
+    const modes: PermissionMode[] = [
+      "default",
+      "plan",
+      "acceptEdits",
+      "bypassPermissions",
+    ];
     const currentIndex = modes.indexOf(current);
     return modes[(currentIndex + 1) % modes.length];
   };
@@ -301,35 +308,40 @@ export function ChatInput({
       )}
       <form onSubmit={handleSubmit} className="relative">
         {mentionDropdown}
-        {slashMenu && slashCommands.length > 0 && (() => {
-          const filtered = slashCommands.filter((cmd) =>
-            cmd.toLowerCase().includes(slashMenu.query.toLowerCase()),
-          );
-          if (filtered.length === 0) return null;
-          return (
-            <div className="absolute z-50 bottom-full mb-1 left-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg max-h-48 overflow-y-auto" style={{ minWidth: "200px" }}>
-              {filtered.map((cmd, index) => (
-                <button
-                  key={cmd}
-                  type="button"
-                  className={`w-full px-3 py-2 text-left text-sm font-mono ${
-                    index === slashSelectedIndex
-                      ? "bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200"
-                      : "text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
-                  }`}
-                  onClick={() => {
-                    onInputChange(`/${cmd} `);
-                    setSlashMenu(null);
-                    inputRef.current?.focus();
-                  }}
-                  onMouseEnter={() => setSlashSelectedIndex(index)}
-                >
-                  /{cmd}
-                </button>
-              ))}
-            </div>
-          );
-        })()}
+        {slashMenu &&
+          slashCommands.length > 0 &&
+          (() => {
+            const filtered = slashCommands.filter((cmd) =>
+              cmd.toLowerCase().includes(slashMenu.query.toLowerCase()),
+            );
+            if (filtered.length === 0) return null;
+            return (
+              <div
+                className="absolute z-50 bottom-full mb-1 left-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg max-h-48 overflow-y-auto"
+                style={{ minWidth: "200px" }}
+              >
+                {filtered.map((cmd, index) => (
+                  <button
+                    key={cmd}
+                    type="button"
+                    className={`w-full px-3 py-2 text-left text-sm font-mono ${
+                      index === slashSelectedIndex
+                        ? "bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200"
+                        : "text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
+                    }`}
+                    onClick={() => {
+                      onInputChange(`/${cmd} `);
+                      setSlashMenu(null);
+                      inputRef.current?.focus();
+                    }}
+                    onMouseEnter={() => setSlashSelectedIndex(index)}
+                  >
+                    /{cmd}
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
         {/* Hidden file input for image upload */}
         <input
           ref={fileInputRef}
@@ -421,7 +433,10 @@ export function ChatInput({
           )}
           <button
             type="submit"
-            disabled={isLoading || (!input.trim() && !(pendingImages && pendingImages.length > 0))}
+            disabled={
+              isLoading ||
+              (!input.trim() && !(pendingImages && pendingImages.length > 0))
+            }
             className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-400 text-white rounded-lg font-medium transition-all duration-200 shadow-sm hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 text-sm"
           >
             {isLoading ? "..." : permissionMode === "plan" ? "Plan" : "Send"}
@@ -449,14 +464,23 @@ export function ChatInput({
             <button
               type="button"
               onClick={() => {
-                const levels: Array<"off" | "brief" | "extended"> = ["off", "brief", "extended"];
-                const next = levels[(levels.indexOf(thinkingLevel) + 1) % levels.length];
+                const levels: Array<"off" | "brief" | "extended"> = [
+                  "off",
+                  "brief",
+                  "extended",
+                ];
+                const next =
+                  levels[(levels.indexOf(thinkingLevel) + 1) % levels.length];
                 onThinkingLevelChange(next);
               }}
               className="text-[10px] font-mono text-purple-500 dark:text-purple-400 hover:text-purple-700 dark:hover:text-purple-300 transition-colors cursor-pointer"
               title="Click to cycle thinking level"
             >
-              {thinkingLevel === "off" ? "thinking off" : thinkingLevel === "brief" ? "thinking brief (5k)" : "thinking extended (32k)"}
+              {thinkingLevel === "off"
+                ? "thinking off"
+                : thinkingLevel === "brief"
+                  ? "thinking brief (5k)"
+                  : "thinking extended (32k)"}
             </button>
           )}
         </div>

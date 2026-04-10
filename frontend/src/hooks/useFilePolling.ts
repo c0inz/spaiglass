@@ -7,7 +7,11 @@ interface FileSnapshot {
 interface UseFilePollingOptions {
   projectPath: string | undefined;
   intervalMs?: number;
-  onFilesChanged?: (changed: string[], added: string[], deleted: string[]) => void;
+  onFilesChanged?: (
+    changed: string[],
+    added: string[],
+    deleted: string[],
+  ) => void;
 }
 
 export function useFilePolling({
