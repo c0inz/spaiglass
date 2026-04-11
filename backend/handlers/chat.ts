@@ -64,7 +64,7 @@ async function processAttachments(
           path: filePath,
           size: data.length,
         });
-      } catch (err) {
+      } catch {
         logger.chat.error("Failed to read image: {path}", { path: filePath });
         textParts.push(`[Could not read image: ${basename(filePath)}]`);
       }

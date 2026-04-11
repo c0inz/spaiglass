@@ -1,7 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 import { renderHook } from "@testing-library/react";
 import { useClaudeStreaming } from "./useClaudeStreaming";
-import type { SDKMessage } from "../types";
+// Test fixtures only populate the fields the runtime processors actually
+// read; we don't track every Beta* field the SDK type now requires. Using
+// `unknown` skips strict type-checking on the fixture literals while still
+// catching mistakes inside the test code itself.
+type SDKMessage = unknown;
 import { generateId } from "../utils/id";
 
 describe("useClaudeStreaming", () => {

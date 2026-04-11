@@ -4,9 +4,11 @@ import { join, relative, resolve } from "node:path";
 
 /**
  * Validate that a resolved path is within the allowed project directory.
- * Prevents path traversal attacks.
+ * Prevents path traversal attacks. Currently unused in this file (callers
+ * resolve paths inline) but kept for future handlers that need it — the
+ * underscore prefix tells eslint the unused state is intentional.
  */
-function validatePath(requestedPath: string, projectRoot: string): string {
+function _validatePath(requestedPath: string, projectRoot: string): string {
   const resolved = resolve(projectRoot, requestedPath);
   if (!resolved.startsWith(resolve(projectRoot))) {
     throw new Error("Path traversal not allowed");

@@ -59,10 +59,7 @@ export async function handleSetAnthropicKey(c: Context) {
 
   const trimmed = body.key.trim();
   if (!trimmed.startsWith("sk-ant-")) {
-    return c.json(
-      { error: "Anthropic API keys start with 'sk-ant-'" },
-      400,
-    );
+    return c.json({ error: "Anthropic API keys start with 'sk-ant-'" }, 400);
   }
 
   // Validate against Anthropic before persisting so we never store a

@@ -140,7 +140,8 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
       case "connected": {
         // Phase 2: relay handshake. Tells us our role on this VM so the UI
         // can hide the input bar for viewers.
-        const role = (msg.role as "owner" | "editor" | "viewer" | undefined) ?? null;
+        const role =
+          (msg.role as "owner" | "editor" | "viewer" | undefined) ?? null;
         roleRef.current = role;
         setState((s) => ({ ...s, role }));
         break;
@@ -190,7 +191,8 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
           cbs.addMessage({
             type: "system",
             subtype: "abort",
-            message: "Read-only mode — waiting for the owner to start a session.",
+            message:
+              "Read-only mode — waiting for the owner to start a session.",
             timestamp: Date.now(),
           });
           break;

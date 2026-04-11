@@ -141,7 +141,7 @@ export class UnifiedMessageProcessor {
    * Handle permission errors during streaming
    */
   private handlePermissionError(
-    contentItem: { tool_use_id?: string; content: string },
+    contentItem: { tool_use_id?: string; content?: unknown },
     context: ProcessingContext,
   ): void {
     // Immediately abort the current request
@@ -174,7 +174,8 @@ export class UnifiedMessageProcessor {
   private processToolResult(
     contentItem: {
       tool_use_id?: string;
-      content: string;
+      // SDK ToolResultBlockParam.content is `string | Block[] | undefined`.
+      content?: unknown;
       is_error?: boolean;
     },
     context: ProcessingContext,
@@ -184,7 +185,9 @@ export class UnifiedMessageProcessor {
     const content =
       typeof contentItem.content === "string"
         ? contentItem.content
-        : JSON.stringify(contentItem.content);
+        : contentItem.content == null
+          ? ""
+          : JSON.stringify(contentItem.content);
 
     // Check for permission errors - only treat as permission error if the content
     // actually indicates a permission denial, not just any tool error
@@ -263,45 +266,49 @@ export class UnifiedMessageProcessor {
     contentItem: {
       id?: string;
       name?: string;
-      input?: Record<string, unknown>;
+      // SDK declares input as `unknown`; coerce to a Record locally.
+      input?: unknown;
     },
     context: ProcessingContext,
     options: ProcessingOptions,
   ): void {
+    const input: Record<string, unknown> =
+      contentItem.input && typeof contentItem.input === "object"
+        ? (contentItem.input as Record<string, unknown>)
+        : {};
+    const normalized = {
+      id: contentItem.id,
+      name: contentItem.name,
+      input,
+    };
+
     // Cache tool_use information for later permission error handling and tool_result correlation
-    if (contentItem.id && contentItem.name) {
-      this.cacheToolUse(
-        contentItem.id,
-        contentItem.name,
-        contentItem.input || {},
-      );
+    if (normalized.id && normalized.name) {
+      this.cacheToolUse(normalized.id, normalized.name, input);
     }
 
     // Special handling for ExitPlanMode - create plan message instead of tool message
-    if (contentItem.name === "ExitPlanMode") {
-      const planContent = (contentItem.input?.plan as string) || "";
+    if (normalized.name === "ExitPlanMode") {
+      const planContent = (input.plan as string) || "";
       const planMessage = {
         type: "plan" as const,
         plan: planContent,
-        toolUseId: contentItem.id || "",
+        toolUseId: normalized.id || "",
         timestamp: options.timestamp || Date.now(),
       };
       context.addMessage(planMessage);
-    } else if (contentItem.name === "TodoWrite") {
+    } else if (normalized.name === "TodoWrite") {
       // Special handling for TodoWrite - create todo message from input
-      const todoMessage = createTodoMessageFromInput(
-        contentItem.input || {},
-        options.timestamp,
-      );
+      const todoMessage = createTodoMessageFromInput(input, options.timestamp);
       if (todoMessage) {
         context.addMessage(todoMessage);
       } else {
         // Fallback to regular tool message if todo parsing fails
-        const toolMessage = createToolMessage(contentItem, options.timestamp);
+        const toolMessage = createToolMessage(normalized, options.timestamp);
         context.addMessage(toolMessage);
       }
     } else {
-      const toolMessage = createToolMessage(contentItem, options.timestamp);
+      const toolMessage = createToolMessage(normalized, options.timestamp);
       context.addMessage(toolMessage);
     }
   }
@@ -322,16 +329,17 @@ export class UnifiedMessageProcessor {
       context.setHasReceivedInit?.(true);
 
       // Extract slash commands from init message
-      if (
-        "slash_commands" in message &&
-        Array.isArray((message as any).slash_commands)
-      ) {
-        context.onSlashCommands?.((message as any).slash_commands);
+      const initMsg = message as {
+        slash_commands?: string[];
+        model?: string;
+      };
+      if (Array.isArray(initMsg.slash_commands)) {
+        context.onSlashCommands?.(initMsg.slash_commands);
       }
 
       // Extract model from init message
-      if ("model" in message && (message as any).model) {
-        context.onSessionStats?.({ model: (message as any).model });
+      if (initMsg.model) {
+        context.onSessionStats?.({ model: initMsg.model });
       }
 
       const shouldShow = context.shouldShowInitMessage?.() ?? true;
@@ -446,7 +454,17 @@ export class UnifiedMessageProcessor {
 
     // Extract session stats from result message
     if (context.onSessionStats) {
-      const msg = message as any;
+      const msg = message as {
+        total_cost_usd?: number;
+        usage?: {
+          input_tokens?: number;
+          output_tokens?: number;
+          cache_read_input_tokens?: number;
+          cache_creation_input_tokens?: number;
+        };
+        num_turns?: number;
+        duration_ms?: number;
+      };
       context.onSessionStats({
         cost: msg.total_cost_usd,
         inputTokens: msg.usage?.input_tokens,
@@ -536,11 +554,11 @@ export class UnifiedMessageProcessor {
     context: ProcessingContext,
     options: ProcessingOptions = {},
   ): AllMessage[] {
+    const messageTimestamp =
+      "timestamp" in message ? message.timestamp : undefined;
     const timestamp =
       options.timestamp ||
-      ("timestamp" in message
-        ? new Date(message.timestamp).getTime()
-        : Date.now());
+      (messageTimestamp ? new Date(messageTimestamp).getTime() : Date.now());
 
     const finalOptions = { ...options, timestamp };
 

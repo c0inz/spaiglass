@@ -165,7 +165,7 @@ export function ArchitectureViewer({ projectPath }: ArchitectureViewerProps) {
 
   if (error) {
     // Determine setup URL — use relay setup if running under /vm/ prefix, otherwise local /setup
-    const sgBase = (window as any).__SG_BASE as string | undefined;
+    const sgBase = (window as Window & { __SG_BASE?: string }).__SG_BASE;
     const setupUrl = sgBase ? `${window.location.origin}/setup` : "/setup";
 
     return (

@@ -1,3 +1,10 @@
+// This file fabricates SDK message shapes for the demo / record-screen
+// scripts. The Claude SDK message types are deeply nested unions where the
+// fields we synthesize (`usage`, `content[]`, `tool_use_id`, etc.) carry
+// runtime invariants tsc can't verify from a literal. Per-line type
+// assertions would obscure the test data more than they help; we disable
+// no-explicit-any for the file instead.
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { generateToolPattern } from "./toolUtils";
 import { generateId } from "./id";

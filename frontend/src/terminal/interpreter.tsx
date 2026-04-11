@@ -45,10 +45,7 @@ import {
  * Phase 6.4 — reply payload sent back to the backend in a `tool_result` frame.
  * The shape mirrors the `ToolReply` produced by `backend/mcp/interactive-tools.ts`.
  */
-export type InteractiveToolResultStatus =
-  | "accepted"
-  | "approved"
-  | "rejected";
+export type InteractiveToolResultStatus = "accepted" | "approved" | "rejected";
 
 /**
  * Render a single AllMessage as a Term* component subtree.

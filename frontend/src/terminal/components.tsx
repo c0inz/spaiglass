@@ -95,7 +95,10 @@ interface TermSpinnerProps {
 export function TermSpinner({ label, color = "cyan" }: TermSpinnerProps) {
   const [frame, setFrame] = useState(0);
   useEffect(() => {
-    const id = setInterval(() => setFrame((f) => (f + 1) % SPINNER_FRAMES.length), 80);
+    const id = setInterval(
+      () => setFrame((f) => (f + 1) % SPINNER_FRAMES.length),
+      80,
+    );
     return () => clearInterval(id);
   }, []);
   return (
@@ -278,7 +281,11 @@ interface TermCodeBlockProps {
   filename?: string;
 }
 
-export function TermCodeBlock({ code, language, filename }: TermCodeBlockProps) {
+export function TermCodeBlock({
+  code,
+  language,
+  filename,
+}: TermCodeBlockProps) {
   return (
     <div className={`font-mono text-xs rounded-md ${PANEL_BG} overflow-hidden`}>
       <div className="px-3 py-1 text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400 border-b border-slate-200/70 dark:border-slate-700/70 flex items-center gap-2">
@@ -325,11 +332,7 @@ export function TermToolCard({
     status === "running" ? "cyan" : status === "error" ? "red" : "green";
 
   const argSummary =
-    typeof args === "string"
-      ? args
-      : args
-        ? formatArgsInline(args)
-        : "";
+    typeof args === "string" ? args : args ? formatArgsInline(args) : "";
 
   return (
     <div className={`font-mono text-xs rounded-md ${PANEL_BG} overflow-hidden`}>
@@ -358,14 +361,20 @@ export function TermToolCard({
       {!collapsed && (output || errorOutput) && (
         <div className="relative border-t border-slate-200/70 dark:border-slate-700/70 text-slate-700 dark:text-slate-300">
           <div className="absolute right-2 top-2 z-10">
-            <TermCopyButton value={[output, errorOutput].filter(Boolean).join("\n")} />
+            <TermCopyButton
+              value={[output, errorOutput].filter(Boolean).join("\n")}
+            />
           </div>
           <div className="px-3 py-2 max-h-96 overflow-y-auto">
             {output && (
-              <pre className="whitespace-pre-wrap break-words pr-14">{output}</pre>
+              <pre className="whitespace-pre-wrap break-words pr-14">
+                {output}
+              </pre>
             )}
             {errorOutput && (
-              <pre className={`whitespace-pre-wrap break-words pr-14 ${colorClass("red")}`}>
+              <pre
+                className={`whitespace-pre-wrap break-words pr-14 ${colorClass("red")}`}
+              >
                 {errorOutput}
               </pre>
             )}
@@ -474,7 +483,10 @@ export function TermDiff({ diff, filename }: TermDiffProps) {
                 ? "bg-slate-500/10 text-slate-500 dark:text-slate-400"
                 : "text-slate-700 dark:text-slate-300";
           return (
-            <div key={idx} className={`px-3 leading-snug whitespace-pre ${cls}`}>
+            <div
+              key={idx}
+              className={`px-3 leading-snug whitespace-pre ${cls}`}
+            >
               {line || "\u00A0"}
             </div>
           );
@@ -549,7 +561,9 @@ export function TermInput({
   }
 
   return (
-    <div className={`my-2 ${PANEL_BG} border border-cyan-500/40 dark:border-cyan-400/40 rounded p-3 font-mono text-sm`}>
+    <div
+      className={`my-2 ${PANEL_BG} border border-cyan-500/40 dark:border-cyan-400/40 rounded p-3 font-mono text-sm`}
+    >
       <div className="text-[10px] uppercase tracking-[0.15em] text-cyan-600 dark:text-cyan-300 mb-2">
         {secret ? "input \u2022 secret" : "input"}
       </div>
@@ -557,7 +571,9 @@ export function TermInput({
         {prompt}
       </div>
       <form onSubmit={handleSubmit} className="flex gap-2">
-        <span className="text-cyan-500 dark:text-cyan-300 select-none">{">"}</span>
+        <span className="text-cyan-500 dark:text-cyan-300 select-none">
+          {">"}
+        </span>
         <input
           type={secret ? "password" : "text"}
           className="flex-1 bg-transparent outline-none border-b border-cyan-500/40 dark:border-cyan-400/40 focus:border-cyan-400 dark:focus:border-cyan-300 text-slate-800 dark:text-slate-100"
@@ -596,7 +612,9 @@ export function TermButton({
   onApprove,
   onReject,
 }: TermButtonProps) {
-  const [decision, setDecision] = useState<null | "approved" | "rejected">(null);
+  const [decision, setDecision] = useState<null | "approved" | "rejected">(
+    null,
+  );
 
   function approve() {
     if (disabled || decision) return;
@@ -610,7 +628,9 @@ export function TermButton({
   }
 
   return (
-    <div className={`my-2 ${PANEL_BG} border border-amber-500/50 dark:border-amber-400/50 rounded p-3 font-mono text-sm`}>
+    <div
+      className={`my-2 ${PANEL_BG} border border-amber-500/50 dark:border-amber-400/50 rounded p-3 font-mono text-sm`}
+    >
       <div className="text-[10px] uppercase tracking-[0.15em] text-amber-600 dark:text-amber-300 mb-2">
         permission required
       </div>
@@ -666,7 +686,9 @@ export function TermChoice({
   }
 
   return (
-    <div className={`my-2 ${PANEL_BG} border border-violet-500/40 dark:border-violet-400/40 rounded p-3 font-mono text-sm`}>
+    <div
+      className={`my-2 ${PANEL_BG} border border-violet-500/40 dark:border-violet-400/40 rounded p-3 font-mono text-sm`}
+    >
       <div className="text-[10px] uppercase tracking-[0.15em] text-violet-600 dark:text-violet-300 mb-2">
         choose one
       </div>

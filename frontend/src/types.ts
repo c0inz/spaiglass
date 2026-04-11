@@ -1,10 +1,16 @@
 import type {
+  SDKMessage as SDKMessageBase,
   SDKUserMessage,
   SDKAssistantMessage,
-  SDKSystemMessage,
   SDKResultMessage,
   PermissionMode as SDKPermissionMode,
 } from "@anthropic-ai/claude-agent-sdk";
+
+// All SDK message variants whose discriminator type is "system".
+// The SDK splits these into many separate exported types (init, compact_boundary,
+// task_notification, ...) and only the init variant is exported as
+// SDKSystemMessage. Use Extract to recover the full union for our SystemMessage.
+export type SDKSystemLike = Extract<SDKMessageBase, { type: "system" }>;
 
 // Chat message for user/assistant interactions (not part of SDKMessage)
 export interface ChatMessage {
@@ -38,9 +44,11 @@ export type HooksMessage = {
   toolUseID?: string;
 };
 
-// System message extending SDK types with timestamp
+// System message extending SDK types with timestamp.
+// SDKSystemLike covers every SDK message with type: "system" (init,
+// compact_boundary, task_notification, etc.).
 export type SystemMessage = (
-  | SDKSystemMessage
+  | SDKSystemLike
   | SDKResultMessage
   | ErrorMessage
   | AbortMessage
@@ -149,7 +157,7 @@ type WithTimestamp<T> = T & { timestamp: string };
 
 export type TimestampedSDKUserMessage = WithTimestamp<SDKUserMessage>;
 export type TimestampedSDKAssistantMessage = WithTimestamp<SDKAssistantMessage>;
-export type TimestampedSDKSystemMessage = WithTimestamp<SDKSystemMessage>;
+export type TimestampedSDKSystemMessage = WithTimestamp<SDKSystemLike>;
 export type TimestampedSDKResultMessage = WithTimestamp<SDKResultMessage>;
 
 export type TimestampedSDKMessage =

@@ -18,12 +18,14 @@ export function RoleResolver() {
 
   useEffect(() => {
     resolveProject();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   async function resolveProject() {
-    const sg = (window as any).__SG as
-      | { project?: string; role?: string }
-      | undefined;
+    const sg = (
+      window as Window & {
+        __SG?: { project?: string; role?: string };
+      }
+    ).__SG;
 
     if (!sg?.project) {
       // No project context — just render ChatPage as-is
@@ -52,7 +54,11 @@ export function RoleResolver() {
       }
 
       // Store resolved context for ChatPage to read
-      (window as any).__SG_RESOLVED = {
+      (
+        window as Window & {
+          __SG_RESOLVED?: { path: string; role: string | null };
+        }
+      ).__SG_RESOLVED = {
         path: match.path,
         role: sg.role ? `${sg.role}.md` : null,
       };

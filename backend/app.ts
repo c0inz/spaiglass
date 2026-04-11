@@ -38,7 +38,6 @@ import {
   handleSetAnthropicKey,
 } from "./handlers/settings.ts";
 import { createAuthMiddleware } from "./middleware/auth.ts";
-import { logger } from "./utils/logger.ts";
 import { readBinaryFile } from "./utils/fs.ts";
 
 export interface AppConfig {

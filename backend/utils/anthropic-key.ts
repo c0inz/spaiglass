@@ -11,12 +11,7 @@
  * The relay never sees this key — it lives entirely on the host.
  */
 
-import {
-  existsSync,
-  readFileSync,
-  writeFileSync,
-  chmodSync,
-} from "node:fs";
+import { existsSync, readFileSync, writeFileSync, chmodSync } from "node:fs";
 import { resolve } from "node:path";
 
 const ENV_KEY = "ANTHROPIC_API_KEY";
@@ -129,7 +124,9 @@ export function writeStoredAnthropicKey(key: string | null): void {
  * api.anthropic.com. Used by the settings PUT endpoint before persisting.
  * Returns null on success, or a human-readable error string.
  */
-export async function validateAnthropicKey(key: string): Promise<string | null> {
+export async function validateAnthropicKey(
+  key: string,
+): Promise<string | null> {
   try {
     const resp = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",

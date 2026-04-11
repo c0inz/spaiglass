@@ -84,13 +84,15 @@ export function ChatPage() {
   const [sessionStats, setSessionStats] = useState<SessionStats>(
     sessionStatsRef.current,
   );
-  const vmConfig = useVmConfig();
+  // useVmConfig() side-effects (logging, telemetry) are still useful even
+  // though no consumer reads its return value here. Call it for the effect.
+  void useVmConfig();
 
   // Extract working directory: prefer relay-resolved context, fall back to URL
   const workingDirectory = (() => {
-    const sgResolved = (window as any).__SG_RESOLVED as
-      | { path?: string }
-      | undefined;
+    const sgResolved = (
+      window as Window & { __SG_RESOLVED?: { path?: string; role?: string } }
+    ).__SG_RESOLVED;
     if (sgResolved?.path) return sgResolved.path;
 
     const rawPath = location.pathname.replace("/projects", "");
@@ -103,39 +105,41 @@ export function ChatPage() {
     return normalizeWindowsPath(decodedPath);
   })();
 
-  // File change polling
-  const { externallyModified, dismissExternalChange, setExternallyModified } =
-    useFilePolling({
-      projectPath: workingDirectory,
-      intervalMs: 3000,
-      onFilesChanged: (changed, added, deleted) => {
-        setSidebarRefreshKey((k) => k + 1);
-        if (editingFile) {
-          const editingRel = editingFile.path;
-          if (
-            changed.some((f) => editingRel.endsWith(f)) ||
-            deleted.some((f) => editingRel.endsWith(f))
-          ) {
-            setExternallyModified(editingFile.path);
-          }
+  // File change polling — only `setExternallyModified` is read here; the
+  // other return values are intentionally unused (the polling fires the
+  // setter via the callback below).
+  const { setExternallyModified } = useFilePolling({
+    projectPath: workingDirectory,
+    intervalMs: 3000,
+    onFilesChanged: (changed, _added, deleted) => {
+      setSidebarRefreshKey((k) => k + 1);
+      if (editingFile) {
+        const editingRel = editingFile.path;
+        if (
+          changed.some((f) => editingRel.endsWith(f)) ||
+          deleted.some((f) => editingRel.endsWith(f))
+        ) {
+          setExternallyModified(editingFile.path);
         }
-        if (contextFiles.size > 0) {
-          const stale = changed.filter((f) =>
-            [...contextFiles].some((cf) => cf.endsWith(f)),
-          );
-          if (stale.length > 0) {
-            setStaleFiles((prev) => [...new Set([...prev, ...stale])]);
-          }
+      }
+      if (contextFiles.size > 0) {
+        const stale = changed.filter((f) =>
+          [...contextFiles].some((cf) => cf.endsWith(f)),
+        );
+        if (stale.length > 0) {
+          setStaleFiles((prev) => [...new Set([...prev, ...stale])]);
         }
-      },
-    });
+      }
+    },
+  });
 
   // Get current view, sessionId, and role from query parameters or relay context
   const currentView = searchParams.get("view");
   const sessionId = searchParams.get("sessionId");
   const roleFile =
     searchParams.get("role") ||
-    ((window as any).__SG_RESOLVED as { role?: string } | undefined)?.role ||
+    (window as Window & { __SG_RESOLVED?: { role?: string } }).__SG_RESOLVED
+      ?.role ||
     null;
   const isHistoryView = currentView === "history";
   const isLoadedConversation = !!sessionId && !isHistoryView;
@@ -349,7 +353,7 @@ export function ChatPage() {
       if (!content && pendingImages.length === 0) return;
 
       // Upload pending files and collect server paths
-      let attachmentPaths: string[] = [];
+      const attachmentPaths: string[] = [];
       const attachmentNames: string[] = [];
       if (pendingImages.length > 0 && workingDirectory) {
         for (const img of pendingImages) {
@@ -664,10 +668,6 @@ export function ChatPage() {
     const searchParams = new URLSearchParams();
     searchParams.set("view", "history");
     navigate({ search: searchParams.toString() });
-  }, [navigate]);
-
-  const handleBackToProjects = useCallback(() => {
-    navigate("/");
   }, [navigate]);
 
   const handleBackToProjectChat = useCallback(() => {

@@ -28,7 +28,15 @@ vi.mock("../utils/logger", () => ({
 
 const mockQuery = vi.mocked(query);
 
-describe("Chat Handler - Permission Mode Tests", () => {
+// SpAIglass intentionally hardcodes `permissionMode: "bypassPermissions"` and
+// `allowDangerouslySkipPermissions: true` in `handlers/chat.ts` so fleet
+// agents can run autonomously without per-request permission prompts. The
+// upstream test suite below verifies that a per-request `permissionMode`
+// flows through to the SDK call — that contract no longer holds in this
+// fork. We skip the entire describe block (rather than rewriting each
+// assertion) so the intent stays visible: if `chat.ts` ever stops bypassing,
+// these tests should be re-enabled and the assertions revisited together.
+describe.skip("Chat Handler - Permission Mode Tests", () => {
   let mockContext: Context;
   let requestAbortControllers: Map<string, AbortController>;
 

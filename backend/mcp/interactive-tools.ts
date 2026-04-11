@@ -32,10 +32,7 @@
  */
 
 import { z } from "zod";
-import {
-  createSdkMcpServer,
-  tool,
-} from "@anthropic-ai/claude-agent-sdk";
+import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 
 /**
  * Default per-call timeout. The user may take a while to read a prompt, but a
@@ -128,7 +125,9 @@ export function createInteractiveToolsServer(broker: PendingToolBroker) {
           placeholder: z
             .string()
             .optional()
-            .describe("Optional placeholder text shown inside the empty input."),
+            .describe(
+              "Optional placeholder text shown inside the empty input.",
+            ),
           timeout_seconds: z
             .number()
             .int()

@@ -30,7 +30,7 @@ export function NewSessionDialog({
         );
         if (res.ok) {
           const data = await res.json();
-          const ctxs = data.contexts as ContextFile[];
+          const ctxs = (data.contexts as ContextFile[] | undefined) ?? [];
           setContexts(ctxs);
           // Auto-select if only one
           if (ctxs.length === 1) {

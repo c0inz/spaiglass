@@ -11,10 +11,7 @@
  * response messages which we broadcast to all consumers.
  */
 
-import {
-  type SDKUserMessage,
-  type SDKMessage,
-} from "@anthropic-ai/claude-agent-sdk";
+import { type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { Query, Options } from "@anthropic-ai/claude-agent-sdk";
 
 // startup() is exported at runtime but missing from sdk.d.ts in 0.2.97
