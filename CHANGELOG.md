@@ -12,6 +12,14 @@ fork. See `MAINTAINERS.md` for the new ownership.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-04-10
+
+First tagged release of the spaiglass fork. Versions from `0.1.56` and
+earlier in this file are upstream `claude-code-webui` history. Distribution
+is via the single self-contained host binary built by `host-binaries.yml`
+(Linux x64/arm64, macOS x64/arm64, Windows x64); no Node prerequisite on
+the host.
+
 ### Added — Phase 6 (rich terminal-style chat renderer)
 - **6.1** — Core terminal component library under `frontend/src/terminal/`:
   `TermBox`, `TermText`, `TermSpinner`, `TermProgressBar`, `TermChecklist`,
