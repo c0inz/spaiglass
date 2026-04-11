@@ -1006,7 +1006,7 @@ ${THEME_HEAD}
 </head><body>
 ${THEME_TOGGLE_HTML}
 <h1>spAiglass</h1>
-<p class="tagline">Claude chat w/.md access from ANYWHERE</p>
+<p class="tagline">Claude chat--markdown access--one interface--ANYWHERE</p>
 <p class="pitch">Browser-based interface for Claude Code across your machines. See your project files, edit markdown, run tools, and chat with Claude — from any device, anywhere. Open source. Fully auditable. Your code never leaves your machine.</p>
 <p class="pitch" style="font-size: 0.95em; color: #475569;">Runs anywhere the Claude Code CLI runs: <strong>Linux</strong>, <strong>macOS</strong> (Intel + Apple Silicon), and <strong>Windows&nbsp;10/11</strong>. One dashboard, mixed fleet, one-line installer per platform.</p>
 <div class="copy-box" onclick="copyPrompt(this)">
