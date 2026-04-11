@@ -8,7 +8,7 @@ import { getHomeDir } from "../utils/os.ts";
 
 /**
  * Get the encoded directory name for a project path by checking what actually exists
- * Example: "/Users/sugyan/tmp/" → "-Users-sugyan-tmp"
+ * Example: "/home/alice/projects/demo/" → "-home-alice-projects-demo"
  */
 export async function getEncodedProjectName(
   projectPath: string,

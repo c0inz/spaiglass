@@ -1,6 +1,11 @@
 import type { AppSettings, Theme, EnterBehavior } from "../types/settings";
 import { CURRENT_SETTINGS_VERSION } from "../types/settings";
 
+// TODO(spaiglass): rename these localStorage keys to "spaiglass-*" in a future
+// release that includes a one-shot migration step. Renaming today would silently
+// reset every existing user's preferences, so the upstream `claude-code-webui-*`
+// keys are deliberately preserved for now. Tracked alongside Phase 7 attribution
+// audit follow-ups.
 export const STORAGE_KEYS = {
   // Unified settings key
   SETTINGS: "claude-code-webui-settings",

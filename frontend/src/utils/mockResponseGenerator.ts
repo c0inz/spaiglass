@@ -41,7 +41,7 @@ export function createSystemMessage(sessionId: string): any {
     type: "system",
     subtype: "init",
     apiKeySource: "user",
-    cwd: "/Users/demo/claude-code-webui",
+    cwd: "/home/demo/spaiglass",
     session_id: sessionId,
     uuid: generateId(),
     tools: ["Read", "Write", "Edit", "Bash"],
@@ -340,7 +340,7 @@ export const DEMO_SCENARIOS = {
         delay: 1800,
         data: createToolUseMessage(
           "Read",
-          { file_path: "/Users/demo/claude-code-webui/frontend/src/App.tsx" },
+          { file_path: "/home/demo/spaiglass/frontend/src/App.tsx" },
           "demo-session-files",
           "read-app-tsx",
         ),
@@ -433,7 +433,7 @@ export const DEMO_SCENARIOS = {
         delay: 1000,
         data: createToolUseMessage(
           "Read",
-          { file_path: "/Users/demo/claude-code-webui/frontend/src" },
+          { file_path: "/home/demo/spaiglass/frontend/src" },
           "demo-session-analysis",
           "read-src-dir",
         ),
@@ -476,7 +476,7 @@ export const DEMO_SCENARIOS = {
         data: createToolUseMessage(
           "Write",
           {
-            file_path: "/Users/demo/claude-code-webui/fibonacci.py",
+            file_path: "/home/demo/spaiglass/fibonacci.py",
             content: `def fibonacci(n):
     """Generate Fibonacci sequence up to n terms"""
     if n <= 0:
@@ -668,7 +668,7 @@ I'll create a comprehensive README.md file for the Claude Code Web UI project wi
           delay: 1800,
           data: createToolUseMessage(
             "Read",
-            { file_path: "/Users/demo/claude-code-webui/package.json" },
+            { file_path: "/home/demo/spaiglass/package.json" },
             "demo-session-plan",
             "read-package-json",
           ),
@@ -687,7 +687,7 @@ I'll create a comprehensive README.md file for the Claude Code Web UI project wi
           data: createToolUseMessage(
             "Write",
             {
-              file_path: "/Users/demo/claude-code-webui/README.md",
+              file_path: "/home/demo/spaiglass/README.md",
               content: `# Claude Code Web UI
 
 A modern, web-based interface for the Claude Code CLI tool that provides streaming responses in an intuitive chat interface.

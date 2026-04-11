@@ -321,7 +321,7 @@ export function DemoPage() {
   });
 
   // Demo state
-  const demoWorkingDirectory = "/Users/demo/claude-code-webui";
+  const demoWorkingDirectory = "/home/demo/spaiglass";
   const [activeButton, setActiveButton] = useState<string | null>(null);
   const [clickedButton, setClickedButton] = useState<string | null>(null);
   const permissionRequestCountRef = useRef(0);

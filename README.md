@@ -4,7 +4,9 @@
 
 > Browser-based multi-VM interface for Claude Code. Open source. Fully auditable. Your code never leaves your machine.
 
-SpAIglass lets you run Claude Code on remote VMs and access them through your browser — from any device, anywhere. Chat with Claude, browse your project files, edit markdown, and manage your AI agent fleet. The relay is a stateless routing proxy: it routes traffic but never stores, inspects, or logs your code, conversations, or files. All relay traffic is TLS-encrypted end to end.
+SpAIglass lets you run Claude Code on remote VMs and access them through your browser — from any device, anywhere. Chat with Claude, browse your project files, edit markdown, and manage your AI agent fleet. The relay forwards WebSocket frames between browsers and VMs without inspecting their contents; it stores only the small amount of state listed under [Trust & Security](#trust--security) below (connector registry, collaborator records, audit log). All relay traffic is TLS-encrypted end to end.
+
+> **Trust assumption (please read).** Using the hosted relay at `spaiglass.xyz` means trusting ReadyStack.dev to serve a legitimate frontend bundle. The relay originates the JavaScript that runs in your browser, so a compromised relay could in principle replace that JavaScript with a tampered version. We mitigate this with independent bundle verification — see [Verifying the live relay](#verifying-the-live-relay) below — and we recommend self-hosting the relay if your threat model can't accept this assumption. SECURITY.md has the full disclosure.
 
 | | |
 |---|---|
@@ -124,7 +126,19 @@ All browser-to-VM communication uses WebSocket tunneling. The relay:
 3. Forwards each frame bidirectionally without modification
 4. Never buffers, stores, or inspects frame contents
 
-The relay is **stateless for session data** -- if it restarts, VMs reconnect automatically. The only persistent state is the SQLite connector registry.
+The relay is **stateless for payload data** — WebSocket frames carrying chat messages, file contents, or tool output are forwarded without being persisted or inspected. It is **stateful only for the connector registry, the GitHub session table, the per-VM collaborator list, and the collaboration audit log** — all of which are listed under "What the relay stores" above. If the relay restarts, VMs reconnect automatically; in-flight chat messages are not buffered through a restart.
+
+### The relay trust boundary (compromised-relay scenario)
+
+The README's "stateless / does not inspect frames" guarantees describe the relay's *routing* behavior. There is a separate trust assumption that needs to be stated explicitly:
+
+**The relay also originates the JavaScript that runs in your browser.** A compromised relay does not need to inspect WebSocket frames to read your input — it can serve a tampered frontend bundle that captures keystrokes before they ever become a frame. Browser-side defenses like CSP and SRI raise the cost of *other* attack classes (XSS, MITM, third-party CDN compromise) but **do not stop a compromised origin** from serving its own malicious JavaScript with a matching CSP nonce and matching SRI hash.
+
+The realistic defenses against a compromised relay are:
+
+1. **Independent bundle verification.** Anyone can ask the live relay what bundle it is currently serving and check that hash against a public list of legitimate bundles tied to specific commits and CI runs. See [Verifying the live relay](#verifying-the-live-relay).
+2. **Self-hosting.** If you can't trust ReadyStack.dev to operate the relay honestly, run your own — the relay is ~800 lines of TypeScript and the source is in this repo. See SECURITY.md.
+3. **Honest documentation.** This section. We do not let marketing language get ahead of the threat model.
 
 ### Build & release verification
 
@@ -155,16 +169,25 @@ We plan to use GitHub's artifact attestation (Sigstore-backed) so that each rele
 gh attestation verify <artifact> --repo c0inz/spaiglass
 ```
 
-**Deployed relay verification**
-A mechanism to verify that the code running on spaiglass.xyz matches a specific commit:
-```bash
-# Planned: /api/health will include commit SHA
-curl https://spaiglass.xyz/api/health
-# {"status":"ok","version":"0.1.0","commit":"abc123..."}
+### Verifying the live relay
 
-# Compare against repo
-git rev-parse HEAD
+You can ask the live relay what bundle it is currently serving and check that against the published release. This is the mitigation for the [compromised-relay scenario](#the-relay-trust-boundary-compromised-relay-scenario) above.
+
+```bash
+# 1. Ask the live relay what it's running
+curl https://spaiglass.xyz/api/health
+# {"status":"ok","commit":"<git_sha>","frontend_sha256":"<bundle hash>"}
+
+# 2. Compare against the GitHub release notes for that commit
+gh release view v0.1.0 --json body --jq .body | grep frontend_sha256
+
+# 3. Verify the release artifact attestation against the recorded hash
+gh attestation verify <artifact> --repo c0inz/spaiglass
 ```
+
+If the live `/api/health` reports a `commit` that does not appear on `c0inz/spaiglass`, or a `frontend_sha256` that does not match the published release notes, the relay is serving something other than a published release. Stop using it and report.
+
+> The implementation of `/api/health` reporting the bundle hash and `GIT_SHA` is part of [Phase 8 step 5](ROADMAP.md#phase-8--csp-and-frontend-integrity). If you are reading this section before Phase 8 ships, the verification commands above are aspirational; the threat model and mitigation plan are not.
 
 ### Network security
 

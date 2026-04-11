@@ -107,7 +107,7 @@ export async function* readDir(path: string): AsyncIterable<DirectoryEntry> {
 export async function withTempDir<T>(
   callback: (tempDir: string) => Promise<T>,
 ): Promise<T> {
-  const tempDir = await fs.mkdtemp(join(tmpdir(), "claude-code-webui-temp-"));
+  const tempDir = await fs.mkdtemp(join(tmpdir(), "spaiglass-temp-"));
   try {
     return await callback(tempDir);
   } finally {

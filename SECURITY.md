@@ -72,6 +72,30 @@ Out of scope:
 
 We do not currently offer a paid bug bounty. We will gladly credit reporters in release notes and the project's `SECURITY-HALL-OF-FAME.md` (created on first qualifying report).
 
+## Trust assumption: the relay originates the frontend bundle
+
+There is one trust assumption in the SpAIglass model that needs to be stated explicitly, and which the README also documents:
+
+**Using the hosted relay at `spaiglass.xyz` means trusting ReadyStack.dev to serve a legitimate frontend bundle.** The relay's WebSocket forwarding is opaque (we never inspect the frames), but the relay also *originates* the JavaScript that runs in your browser. A compromised relay does not need to inspect WebSocket frames to read your input — it could serve a tampered bundle that captures keystrokes before they ever become a frame.
+
+Browser-side defenses such as Content-Security-Policy (CSP) and Subresource Integrity (SRI) raise the cost of *other* attack classes (XSS, MITM, third-party CDN compromise) but **do not stop a compromised origin** from serving its own malicious JavaScript with a matching CSP nonce and matching SRI hash. Both CSP and SRI are still worth shipping — they reduce the attack surface meaningfully — but neither replaces the trust assumption.
+
+### Recommended mitigations, in order of strength
+
+1. **Self-host the relay.** This is the strongest defense and the one we explicitly recommend for users whose threat model can't accept third-party origin trust. The relay is ~800 lines of TypeScript in `relay/src/`, MIT licensed, and the README has the deployment instructions. Your trust boundary becomes "do I trust myself to operate this droplet."
+
+2. **Independent bundle verification of the live relay.** Once Phase 8 of [ROADMAP.md](ROADMAP.md) ships, the live relay's `/api/health` will report `{"commit": "<git_sha>", "frontend_sha256": "<bundle hash>"}`. Each GitHub release records the frontend bundle hash in its release notes. Anyone can:
+   ```bash
+   curl https://spaiglass.xyz/api/health
+   gh release view <tag> --json body --jq .body | grep frontend_sha256
+   gh attestation verify <artifact> --repo c0inz/spaiglass
+   ```
+   to confirm the live relay is serving a published, attested release. This converts the trust assumption from *"trust ReadyStack"* to *"trust GitHub's attestation infrastructure plus the CI workflow that built the release."*
+
+3. **Defense in depth at the relay origin** (Phase 8): strict CSP with per-request nonces, HSTS preload, X-Frame-Options DENY, vite-plugin-sri integrity hashes on every script and stylesheet, and standard hardening headers (X-Content-Type-Options, Referrer-Policy, Permissions-Policy). These do not stop a compromised origin but they raise the cost of every other attack class meaningfully.
+
+If your threat model rules out trusting the live relay, **self-host.** That is the only defense that does not depend on the relay operator's good behavior.
+
 ## Hardening notes for self-hosters
 
 If you run your own SpAIglass relay or expose a host backend on the open internet:

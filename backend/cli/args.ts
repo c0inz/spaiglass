@@ -24,9 +24,9 @@ export function parseCliArgs(): ParsedArgs {
 
   // Configure program
   program
-    .name("claude-code-webui")
+    .name("spaiglass-backend")
     .version(version, "-v, --version", "display version number")
-    .description("Claude Code Web UI Backend Server")
+    .description("SpAIglass host backend — runs Claude Code SDK and tunnels session frames to the relay")
     .option(
       "-p, --port <port>",
       "Port to listen on",

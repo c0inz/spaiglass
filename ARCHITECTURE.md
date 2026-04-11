@@ -398,13 +398,14 @@ The relay is the only internet-facing component. Its attack surface is intention
 
 | Threat | Mitigation |
 |--------|-----------|
-| Relay compromise exposes user data | Relay stores no user data — only GitHub identity (public info) and connector tokens. No code, files, or conversations are ever stored or logged by the relay. |
+| Relay compromise exposes user data at rest | Relay stores no payload data — only GitHub identity (public info), connector tokens (hashed), collaborator records, and the audit log. No code, files, or conversations are ever stored or logged by the relay. |
 | Traffic interception | All relay traffic is TLS-encrypted (HTTPS/WSS via Caddy). Browser-to-relay and VM-to-relay connections both use WSS. No plaintext data traverses the network at any point. |
-| Unauthorized VM access | Each connector authenticates with a unique token. Browser sessions require GitHub OAuth. The relay validates both before routing any traffic. A valid session can only reach connectors owned by the authenticated user. |
+| Unauthorized VM access | Each connector authenticates with a unique token. Browser sessions require GitHub OAuth. The relay validates both before routing any traffic. A valid session can only reach connectors owned by the authenticated user or shared with them as `editor`/`viewer`. |
 | Lateral movement between VMs | VMs are isolated from each other. The relay routes traffic per-connector — there is no mechanism for one connector to reach another. Each VM's backend only serves its own project directories. |
 | Path traversal / filesystem access | The backend's file API validates all paths against the current project directory. Symlink resolution and `..` traversal are rejected. Upload directories are temporary and not statically served. |
 | Session hijacking | Auth cookies are httpOnly, secure-flagged, SameSite=Lax, and expire after 72 hours. Agent API keys are stored as SHA-256 hashes — the plaintext key is shown once at creation and never stored. |
 | Relay MITM / impersonation | VMs connect outbound to the relay — no inbound ports are opened. The connector uses the relay's TLS certificate for authentication. DNS is served via Cloudflare. |
+| **Compromised relay serves backdoored frontend bundle** | **The relay originates the JavaScript that runs in the user's browser. A compromised relay does not need to inspect WebSocket frames to read user input — it can serve a tampered bundle that captures keystrokes before they ever become a frame. CSP and SRI raise the cost of every other attack class but do NOT defend against this. Mitigation: independent bundle verification via `/api/health` reporting `{commit, frontend_sha256}`, plus Sigstore-backed release attestation tying each published bundle hash to its CI workflow (Phase 8 step 5 in [ROADMAP.md](ROADMAP.md)). Users with a threat model that cannot accept this assumption should self-host the relay — see SECURITY.md.** |
 
 ### Data Flow
 

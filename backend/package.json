@@ -1,32 +1,32 @@
 {
-  "name": "claude-code-webui",
-  "version": "0.1.56",
+  "name": "spaiglass-backend",
+  "version": "0.1.0",
   "type": "module",
-  "description": "Web-based interface for the Claude Code CLI with streaming chat interface",
+  "description": "Host backend for SpAIglass — runs the Claude Code SDK on the user's machine and tunnels session frames to the relay over WebSocket",
   "keywords": [
+    "spaiglass",
     "claude",
-    "claude-cli",
-    "ai",
-    "web-ui",
-    "chat",
+    "claude-code",
+    "claude-agent-sdk",
     "anthropic",
     "backend",
-    "nodejs"
+    "nodejs",
+    "websocket"
   ],
-  "author": "sugyan",
+  "author": "ReadyStack.dev",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/sugyan/claude-code-webui.git",
+    "url": "https://github.com/c0inz/spaiglass.git",
     "directory": "backend"
   },
   "bugs": {
-    "url": "https://github.com/sugyan/claude-code-webui/issues"
+    "url": "https://github.com/c0inz/spaiglass/issues"
   },
-  "homepage": "https://github.com/sugyan/claude-code-webui#readme",
+  "homepage": "https://github.com/c0inz/spaiglass#readme",
   "main": "dist/cli/node.js",
   "bin": {
-    "claude-code-webui": "dist/cli/node.js"
+    "spaiglass-backend": "dist/cli/node.js"
   },
   "files": [
     "dist/",
