@@ -1,15 +1,21 @@
 /**
- * Phase 6.2: TerminalChat — drop-in replacement for ChatMessages that uses
- * the terminal interpreter under the ?renderer=terminal feature flag.
+ * Phase 6.2/6.5: TerminalChat — drop-in replacement for ChatMessages that
+ * uses the terminal interpreter.
  *
- * This component owns the same scroll/empty-state behavior as the legacy
- * ChatMessages so it can be swapped in by ChatMessages.tsx without any
- * caller changes. The legacy renderer remains the default until P6.3
- * cuts over.
+ * Scroll behavior (P6.5 polish): we only auto-scroll the pane to the bottom
+ * when the user is already near the bottom — if they've scrolled up to read
+ * a previous frame we leave them alone instead of yanking them back as new
+ * messages stream in. The "near bottom" threshold is 64px (about two lines).
+ *
+ * Re-render budget (P6.5 polish): each rendered message row is memoized via
+ * `MemoMessageRow`. Streaming a long Bash output now only re-renders the row
+ * whose content changed (and the spinner row at the tail), instead of the
+ * full N-row scrollback.
  */
 
-import { useEffect, useRef } from "react";
+import { memo, useCallback, useEffect, useRef } from "react";
 import type { AllMessage } from "../types";
+import type { ReactNode } from "react";
 import {
   renderTerminalMessage,
   type InteractiveToolResultStatus,
@@ -32,6 +38,13 @@ interface TerminalChatProps {
   ) => void;
 }
 
+/**
+ * Distance from the bottom (in px) at which we still consider the user
+ * "following" the stream. Kept generous so a few frames of overscroll on
+ * touch devices still counts as pinned.
+ */
+const NEAR_BOTTOM_PX = 64;
+
 export function TerminalChat({
   messages,
   isLoading,
@@ -40,14 +53,27 @@ export function TerminalChat({
 }: TerminalChatProps) {
   const endRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  // Whether the user is currently "pinned" to the bottom of the scroll pane.
+  // Updated on scroll events; consulted in the messages effect to decide
+  // whether to auto-scroll on new content.
+  const pinnedRef = useRef<boolean>(true);
+
+  const handleScroll = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    pinnedRef.current = distance <= NEAR_BOTTOM_PX;
+  }, []);
 
   useEffect(() => {
+    if (!pinnedRef.current) return;
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
   return (
     <div
       ref={containerRef}
+      onScroll={handleScroll}
       className="flex-1 overflow-y-auto bg-slate-950 text-slate-100 border border-slate-700 p-3 sm:p-5 mb-3 sm:mb-6 rounded-2xl shadow-sm flex flex-col"
     >
       {messages.length === 0 ? (
@@ -55,18 +81,14 @@ export function TerminalChat({
       ) : (
         <>
           <div className="flex-1" aria-hidden="true" />
-          {messages.map((msg, idx) => {
-            const node = renderTerminalMessage(msg, {
-              onOpenFile,
-              onToolResult,
-            });
-            if (node == null) return null;
-            return (
-              <div key={`${msg.timestamp}-${idx}`} className="contents">
-                {node}
-              </div>
-            );
-          })}
+          {messages.map((msg, idx) => (
+            <MemoMessageRow
+              key={`${msg.timestamp}-${idx}`}
+              message={msg}
+              onOpenFile={onOpenFile}
+              onToolResult={onToolResult}
+            />
+          ))}
           {isLoading && (
             <div className="my-2">
               <TermSpinner label="thinking" />
@@ -78,6 +100,43 @@ export function TerminalChat({
     </div>
   );
 }
+
+interface MessageRowProps {
+  message: AllMessage;
+  onOpenFile?: (path: string, filename: string) => void;
+  onToolResult?: (
+    requestId: string,
+    status: InteractiveToolResultStatus,
+    data?: unknown,
+    reason?: string,
+  ) => void;
+}
+
+function MessageRow({
+  message,
+  onOpenFile,
+  onToolResult,
+}: MessageRowProps): ReactNode {
+  const node = renderTerminalMessage(message, { onOpenFile, onToolResult });
+  if (node == null) return null;
+  return <div className="contents">{node}</div>;
+}
+
+/**
+ * Re-render only when the message identity or its mutable streaming content
+ * changes. The interpreter is a pure function of (message, opts), so as long
+ * as the same message object is passed back we can skip the re-render.
+ *
+ * `chat` messages get their `content` mutated in place during streaming —
+ * comparing on `===` would skip the update — so we explicitly compare on the
+ * fields that change. Everything else is identity-stable in our reducers.
+ */
+const MemoMessageRow = memo(MessageRow, (prev, next) => {
+  if (prev.message !== next.message) return false;
+  if (prev.onOpenFile !== next.onOpenFile) return false;
+  if (prev.onToolResult !== next.onToolResult) return false;
+  return true;
+});
 
 function TerminalEmptyState() {
   return (

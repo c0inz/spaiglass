@@ -5,6 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+This project was forked from `sugyan/claude-code-webui` and renamed to
+**spaiglass**. Versions from `0.1.56` and earlier are upstream history; the
+spaiglass numbering restarts at `0.1.0` for the first tagged release of the
+fork. See `MAINTAINERS.md` for the new ownership.
+
+## [Unreleased]
+
+### Added — Phase 6 (rich terminal-style chat renderer)
+- **6.1** — Core terminal component library under `frontend/src/terminal/`:
+  `TermBox`, `TermText`, `TermSpinner`, `TermProgressBar`, `TermChecklist`,
+  `TermCodeBlock`, `TermToolCard`, `TermTable`, `TermDiff`.
+- **6.2** — `interpreter.tsx` translates `AllMessage` records into a tree of
+  `Term*` components; `TerminalChat` is a drop-in replacement for the legacy
+  chat body. Initially shipped behind `?renderer=terminal`.
+- **6.3** — Cutover. The terminal renderer is now the only renderer; the
+  legacy `ChatMessages` body is gone.
+- **6.4** — Interactive widgets driven by an in-process MCP server.
+  `backend/mcp/interactive-tools.ts` registers three tools (`request_user_input`,
+  `request_approval`, `request_choice`) under the `mcp__spaiglass__*` namespace.
+  When Claude calls one, the host backend broadcasts a frame to all session
+  consumers, awaits a `tool_result` reply over the WebSocket, and returns the
+  value to Claude as the MCP tool result. The frontend renders `TermInput`,
+  `TermButton`, `TermChoice`. Secret input values are held in a ref, masked in
+  state, and wiped on submit so the cleartext never persists in React state.
+- **6.5** — Polish:
+  - Copy-to-clipboard buttons on `TermCodeBlock` (header) and `TermToolCard`
+    (output region) via the new `TermCopyButton` component.
+  - Smarter auto-scroll: `TerminalChat` only pins to the bottom while the
+    user is already within 64px of it; scrolling up to read no longer fights
+    the streaming tail.
+  - Memoized message rows: `MemoMessageRow` skips re-renders when the message
+    object identity is unchanged, reducing per-frame work during long Bash
+    streams to one row instead of N.
+
+### Added — Phase 7 (governance baseline)
+- `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md` (Contributor Covenant
+  2.1, contact `conduct@readystack.dev`), `MAINTAINERS.md` (succession plan).
+- Upstream attribution audit: `package.json`, `cli/args.ts`, temp-dir prefix,
+  doc paths, and demo strings rebranded to `spaiglass`.
+
+### Added — Phase 8 (CSP and frontend integrity)
+- Standard security headers middleware in `relay/src/middleware.ts`
+  (HSTS preload, X-Frame-Options DENY, X-Content-Type-Options nosniff,
+  strict Referrer-Policy, Permissions-Policy disabling 22 features,
+  Cross-Origin-Opener-Policy, Cross-Origin-Resource-Policy).
+- Strict CSP with per-request nonces on both the SPA path and the legacy
+  tunneled HTML path: `default-src 'none'; script-src 'self' 'nonce-…'`.
+- Inline `vite-plugin-sri` (no new dependency) emits `integrity="sha384-…"`
+  on every script and stylesheet in `index.html` at build time, dedup-safe
+  against Vite's existing `crossorigin` attribute.
+- `/api/health` now returns the running commit SHA and the sha256 of the
+  served frontend bundle, computed once at startup.
+
 ## [0.1.56](https://github.com/sugyan/claude-code-webui/compare/0.1.55...0.1.56) - 2025-09-18
 - chore(deps): Bump @hono/node-server from 1.17.0 to 1.19.1 in /backend by @dependabot[bot] in https://github.com/sugyan/claude-code-webui/pull/314
 - chore(deps): Bump actions/download-artifact from 4.3.0 to 5.0.0 by @dependabot[bot] in https://github.com/sugyan/claude-code-webui/pull/307

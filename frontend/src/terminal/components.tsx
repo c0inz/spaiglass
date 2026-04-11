@@ -12,7 +12,7 @@
  * `backend/mcp/interactive-tools.ts` and `useWebSocketSession.ts`.
  */
 
-import type { ReactNode, FormEvent } from "react";
+import type { ReactNode, FormEvent, MouseEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 import { type AnsiColor, colorClass, PANEL_BG } from "./theme";
 
@@ -204,7 +204,72 @@ export function TermChecklist({ items, title }: TermChecklistProps) {
 }
 
 // ---------------------------------------------------------------------------
-// TermCodeBlock — syntax-highlighted code (Shiki deferred to 6.5 polish)
+// TermCopyButton — small "copy" affordance used by code blocks and tool cards
+//
+// The button copies its `value` to the clipboard and flips to a "copied" label
+// for ~1.5s. We use the modern `navigator.clipboard.writeText` API and silently
+// no-op on failure (for example in non-secure contexts like an http:// origin)
+// — the existing UI keeps working and the user can fall back to manual select.
+// ---------------------------------------------------------------------------
+
+interface TermCopyButtonProps {
+  value: string;
+  label?: string;
+  className?: string;
+}
+
+export function TermCopyButton({
+  value,
+  label = "copy",
+  className,
+}: TermCopyButtonProps) {
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clear the pending "copied" timer if the component unmounts mid-flash so
+  // we don't call setState on an unmounted node.
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
+
+  async function handleCopy(event: MouseEvent) {
+    event.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard API can throw on non-secure contexts or when permissions
+      // are denied. Silent — the user can still select-and-copy manually.
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      className={
+        "px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider rounded " +
+        "border border-slate-300/60 dark:border-slate-600/60 " +
+        "text-slate-500 dark:text-slate-400 " +
+        "hover:bg-slate-200/60 hover:text-slate-700 dark:hover:bg-slate-700/60 dark:hover:text-slate-200 " +
+        "transition-colors " +
+        (className ?? "")
+      }
+      aria-label={copied ? "Copied" : "Copy to clipboard"}
+    >
+      {copied ? "copied" : label}
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// TermCodeBlock — syntax-highlighted code (Shiki integration deferred — see
+// ROADMAP P6.5 open question 2; the API stays stable so adopting Shiki later
+// is a drop-in replacement for the <pre> below).
 // ---------------------------------------------------------------------------
 
 interface TermCodeBlockProps {
@@ -214,19 +279,16 @@ interface TermCodeBlockProps {
 }
 
 export function TermCodeBlock({ code, language, filename }: TermCodeBlockProps) {
-  // 6.1 ships a plain monospace renderer with language/filename header.
-  // 6.5 polish swaps in Shiki for proper syntax highlighting — the API of
-  // this component will not change so callers don't need to be updated.
-  const header = filename || language;
   return (
     <div className={`font-mono text-xs rounded-md ${PANEL_BG} overflow-hidden`}>
-      {header && (
-        <div className="px-3 py-1 text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400 border-b border-slate-200/70 dark:border-slate-700/70 flex items-center gap-2">
-          {filename && <span className="font-medium">{filename}</span>}
-          {language && filename && <span>·</span>}
-          {language && <span>{language}</span>}
+      <div className="px-3 py-1 text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400 border-b border-slate-200/70 dark:border-slate-700/70 flex items-center gap-2">
+        {filename && <span className="font-medium">{filename}</span>}
+        {language && filename && <span>·</span>}
+        {language && <span>{language}</span>}
+        <div className="ml-auto">
+          <TermCopyButton value={code} />
         </div>
-      )}
+      </div>
       <pre className="px-3 py-2 overflow-x-auto whitespace-pre text-slate-800 dark:text-slate-200">
         {code}
       </pre>
@@ -294,15 +356,20 @@ export function TermToolCard({
         )}
       </button>
       {!collapsed && (output || errorOutput) && (
-        <div className="px-3 py-2 border-t border-slate-200/70 dark:border-slate-700/70 text-slate-700 dark:text-slate-300 max-h-96 overflow-y-auto">
-          {output && (
-            <pre className="whitespace-pre-wrap break-words">{output}</pre>
-          )}
-          {errorOutput && (
-            <pre className={`whitespace-pre-wrap break-words ${colorClass("red")}`}>
-              {errorOutput}
-            </pre>
-          )}
+        <div className="relative border-t border-slate-200/70 dark:border-slate-700/70 text-slate-700 dark:text-slate-300">
+          <div className="absolute right-2 top-2 z-10">
+            <TermCopyButton value={[output, errorOutput].filter(Boolean).join("\n")} />
+          </div>
+          <div className="px-3 py-2 max-h-96 overflow-y-auto">
+            {output && (
+              <pre className="whitespace-pre-wrap break-words pr-14">{output}</pre>
+            )}
+            {errorOutput && (
+              <pre className={`whitespace-pre-wrap break-words pr-14 ${colorClass("red")}`}>
+                {errorOutput}
+              </pre>
+            )}
+          </div>
         </div>
       )}
     </div>
