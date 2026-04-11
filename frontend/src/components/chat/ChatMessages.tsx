@@ -5,23 +5,32 @@
  */
 import type { AllMessage } from "../../types";
 import { TerminalChat } from "../../terminal/TerminalChat";
+import type { InteractiveToolResultStatus } from "../../terminal/interpreter";
 
 interface ChatMessagesProps {
   messages: AllMessage[];
   isLoading: boolean;
   onOpenFile?: (path: string, filename: string) => void;
+  onToolResult?: (
+    requestId: string,
+    status: InteractiveToolResultStatus,
+    data?: unknown,
+    reason?: string,
+  ) => void;
 }
 
 export function ChatMessages({
   messages,
   isLoading,
   onOpenFile,
+  onToolResult,
 }: ChatMessagesProps) {
   return (
     <TerminalChat
       messages={messages}
       isLoading={isLoading}
       onOpenFile={onOpenFile}
+      onToolResult={onToolResult}
     />
   );
 }

@@ -23,6 +23,7 @@ import type {
   ThinkingMessage,
   TodoMessage,
   FileDeliveryMessage,
+  InteractiveMessage,
 } from "../types";
 import {
   isBashToolUseResult,
@@ -30,12 +31,24 @@ import {
 } from "../utils/contentUtils";
 import {
   TermBox,
+  TermButton,
   TermChecklist,
+  TermChoice,
   TermCodeBlock,
   TermDiff,
+  TermInput,
   TermText,
   TermToolCard,
 } from "./components";
+
+/**
+ * Phase 6.4 — reply payload sent back to the backend in a `tool_result` frame.
+ * The shape mirrors the `ToolReply` produced by `backend/mcp/interactive-tools.ts`.
+ */
+export type InteractiveToolResultStatus =
+  | "accepted"
+  | "approved"
+  | "rejected";
 
 /**
  * Render a single AllMessage as a Term* component subtree.
@@ -50,6 +63,17 @@ import {
  */
 export interface RenderOptions {
   onOpenFile?: (path: string, filename: string) => void;
+  /**
+   * Phase 6.4 — invoked when the user submits a reply to an interactive
+   * widget. The interpreter forwards the call to the WS hook, which sends
+   * a `tool_result` frame back to the backend keyed by `requestId`.
+   */
+  onToolResult?: (
+    requestId: string,
+    status: InteractiveToolResultStatus,
+    data?: unknown,
+    reason?: string,
+  ) => void;
 }
 
 export function renderTerminalMessage(
@@ -71,6 +95,8 @@ export function renderTerminalMessage(
       return renderTodo(message as TodoMessage);
     case "file_delivery":
       return renderFileDelivery(message as FileDeliveryMessage, opts);
+    case "interactive":
+      return renderInteractive(message as InteractiveMessage, opts);
     case "system":
     case "result":
     case "error":
@@ -256,6 +282,54 @@ function renderFileDelivery(
       )}
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// interactive (P6.4 — MCP-driven prompts: input / approval / choice)
+// ---------------------------------------------------------------------------
+
+function renderInteractive(
+  message: InteractiveMessage,
+  opts: RenderOptions,
+): ReactNode {
+  const submit = opts.onToolResult;
+  // If no callback was wired we still render the widget but it will be a
+  // no-op on submit. This keeps the buffer-replay path safe in tests.
+  const disabled = message.answered === true;
+
+  switch (message.kind) {
+    case "prompt_secret":
+      return (
+        <TermInput
+          prompt={message.prompt ?? ""}
+          secret={message.secret}
+          placeholder={message.placeholder ?? null}
+          disabled={disabled}
+          onSubmit={(value) => submit?.(message.requestId, "accepted", value)}
+        />
+      );
+    case "tool_permission":
+      return (
+        <TermButton
+          action={message.action ?? ""}
+          details={message.details ?? null}
+          disabled={disabled}
+          onApprove={() => submit?.(message.requestId, "approved")}
+          onReject={() => submit?.(message.requestId, "rejected")}
+        />
+      );
+    case "request_choice":
+      return (
+        <TermChoice
+          prompt={message.prompt ?? ""}
+          choices={message.choices ?? []}
+          disabled={disabled}
+          onPick={(choice) => submit?.(message.requestId, "accepted", choice)}
+        />
+      );
+    default:
+      return null;
+  }
 }
 
 // ---------------------------------------------------------------------------

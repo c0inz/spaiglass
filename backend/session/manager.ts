@@ -38,6 +38,25 @@ import {
 } from "./buffer.ts";
 import { logger } from "../utils/logger.ts";
 import { getClaudeSpawnEnv } from "../utils/anthropic-key.ts";
+import {
+  createInteractiveToolsServer,
+  INTERACTIVE_TOOLS_SYSTEM_PROMPT,
+  type PendingToolBroker,
+  type ToolReply,
+} from "../mcp/interactive-tools.ts";
+
+/**
+ * Phase 6.4: in-flight interactive tool calls. Each entry is keyed by the
+ * request_id that the MCP tool handler generated. The handler awaits the
+ * Promise; the WS layer resolves it when a matching `tool_result` frame
+ * arrives from the browser.
+ */
+interface PendingToolEntry {
+  resolve: (reply: ToolReply) => void;
+  // Stored as `unknown` because the timer types differ between Node and Bun
+  // and we never read the value — only clearTimeout it.
+  timer: ReturnType<typeof setTimeout>;
+}
 
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 
@@ -84,6 +103,8 @@ interface Session {
   // --- Phase 1: replay buffer (managed via session/buffer.ts helpers) ---
   buffer: BufferState;
   nextCursor: number; // monotonic, never reused, never resets
+  // --- Phase 6.4: pending interactive tool calls ---
+  pendingToolRequests: Map<string, PendingToolEntry>;
 }
 
 export class SessionManager {
@@ -157,6 +178,7 @@ export class SessionManager {
       warmClose: null,
       buffer: { frames: [], bufferedBytes: 0 },
       nextCursor: 1, // 1-based; clients use lastCursor=0 to mean "send everything"
+      pendingToolRequests: new Map(),
     };
 
     this.sessions.set(key, session);
@@ -192,12 +214,26 @@ export class SessionManager {
       // undefined when no key is set, so default behaviour is unchanged.
       const spawnEnv = getClaudeSpawnEnv();
 
+      // Phase 6.4: build the per-session interactive-tools broker. Each
+      // tool handler closes over `session` so a tool call from session A
+      // only ever prompts session A's consumers. The broker is in-process —
+      // no subprocess, no IPC, just a function call from the SDK into our
+      // Map<requestId, Promise>.
+      const broker = this.makeBroker(session);
+      const interactiveServer = createInteractiveToolsServer(broker);
+
       // Use startup() for reliable initialization — let SDK use its own bundled CLI
       const warmSession = await startup({
         options: {
           cwd: workingDirectory,
           permissionMode: "bypassPermissions" as const,
           allowDangerouslySkipPermissions: true,
+          mcpServers: { spaiglass: interactiveServer },
+          systemPrompt: {
+            type: "preset" as const,
+            preset: "claude_code" as const,
+            append: INTERACTIVE_TOOLS_SYSTEM_PROMPT,
+          },
           ...(spawnEnv ? { env: spawnEnv } : {}),
           stderr: (data: string) => {
             logger.app.error("CLI stderr: {data}", { data: data.trim() });
@@ -527,9 +563,119 @@ export class SessionManager {
     if (session.warmClose) {
       session.warmClose();
     }
+
+    // Phase 6.4: fail any in-flight interactive tool calls so the MCP tool
+    // handlers do not hang after the SDK is gone. The tool handler will
+    // return a "session closed" error result to Claude (which is moot at
+    // this point but keeps the Promise from leaking).
+    for (const [, entry] of session.pendingToolRequests) {
+      clearTimeout(entry.timer);
+      try {
+        entry.resolve({ status: "closed" });
+      } catch {
+        // Already settled — ignore
+      }
+    }
+    session.pendingToolRequests.clear();
+
     this.sessions.delete(key);
 
     logger.app.info("Session {sessionId} destroyed", { sessionId: session.id });
+  }
+
+  /**
+   * Phase 6.4: build a per-session broker that the in-process MCP server
+   * uses to ask the browser questions and wait for an answer. The broker:
+   *
+   *   - Stores `{resolve, timer}` in `session.pendingToolRequests` keyed by
+   *     the request_id the tool handler generated.
+   *   - Broadcasts the prompt frame to every consumer of the session (so
+   *     every browser tab attached to this session sees the widget).
+   *   - Resolves the Promise with `{status: "timeout"}` after `timeoutMs`
+   *     so a stalled or closed browser tab cannot pin Claude forever.
+   *   - The matching `tool_result` frame from the browser is routed by
+   *     `handleToolResult` below, which looks the entry up by request_id
+   *     and resolves the Promise with the user's reply.
+   */
+  private makeBroker(session: Session): PendingToolBroker {
+    return {
+      request: (frame, requestId, timeoutMs) => {
+        return new Promise<ToolReply>((resolve) => {
+          // If the session has already gone away by the time the SDK
+          // dispatches the call, fail fast instead of installing an entry
+          // that will never be cleaned up.
+          if (!session.running) {
+            resolve({ status: "closed" });
+            return;
+          }
+
+          const timer = setTimeout(() => {
+            const entry = session.pendingToolRequests.get(requestId);
+            if (!entry) return;
+            session.pendingToolRequests.delete(requestId);
+            resolve({ status: "timeout" });
+          }, timeoutMs);
+
+          session.pendingToolRequests.set(requestId, { resolve, timer });
+
+          // Broadcast the prompt frame to all consumers via the same
+          // pipeline as SDK frames, so it lands in the replay buffer too.
+          // If a browser reconnects mid-prompt, replay will redeliver the
+          // widget and the user can still answer.
+          this.broadcast(session, frame);
+        });
+      },
+    };
+  }
+
+  /**
+   * Phase 6.4: route a `tool_result` frame from a browser back to the
+   * matching pending MCP tool handler.
+   *
+   * Frame shape (validated by the WS handler before this is called):
+   *   { type: "tool_result", original_request_id: string,
+   *     status: "accepted" | "approved" | "rejected",
+   *     data?: unknown, reason?: string }
+   *
+   * Multi-tab handling: the FIRST reply to land wins. Any subsequent reply
+   * for the same request_id is silently dropped (the entry is already gone
+   * from the map). Order: whichever browser tab clicks first.
+   */
+  handleToolResult(
+    userId: string,
+    roleFile: string,
+    frame: Record<string, unknown>,
+  ): void {
+    const key = this.sessionKey(userId, roleFile);
+    const session = this.sessions.get(key);
+    if (!session) return;
+
+    const requestId = frame.original_request_id;
+    if (typeof requestId !== "string") return;
+
+    const entry = session.pendingToolRequests.get(requestId);
+    if (!entry) return;
+
+    session.pendingToolRequests.delete(requestId);
+    clearTimeout(entry.timer);
+
+    const status = frame.status;
+    if (
+      status !== "accepted" &&
+      status !== "approved" &&
+      status !== "rejected"
+    ) {
+      // Malformed status — treat as a rejection so the model gets a
+      // sensible result rather than the call hanging.
+      entry.resolve({ status: "rejected", reason: "malformed_tool_result" });
+      return;
+    }
+
+    entry.resolve({
+      status,
+      data: frame.data,
+      reason: typeof frame.reason === "string" ? frame.reason : undefined,
+    });
   }
 
   /**

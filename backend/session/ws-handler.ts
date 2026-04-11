@@ -74,6 +74,20 @@ export function createWSHandler(sessionManager: SessionManager) {
             }
             break;
 
+          case "tool_result":
+            // Phase 6.4: reply to an in-flight interactive MCP tool call.
+            // Routed by SessionManager to the matching pending request via
+            // its original_request_id; the SDK tool handler resolves and
+            // returns the value to Claude as the tool result.
+            if (state.roleFile) {
+              sessionManager.handleToolResult(
+                state.userId,
+                state.roleFile,
+                msg,
+              );
+            }
+            break;
+
           default:
             ws.send(
               JSON.stringify({

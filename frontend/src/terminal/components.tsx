@@ -6,12 +6,14 @@
  * Ink reconciler), uses monospace text by default, and respects the existing
  * theme system via tailwind classes from theme.ts.
  *
- * Interactive components (TermInput, TermButton, TermChoice) are deferred
- * to Phase 6.4 because they depend on the MCP-tool feasibility spike (6.0).
+ * Interactive components (TermInput, TermButton, TermChoice) live at the end
+ * of this file (Phase 6.4) and are wired to the MCP interactive tools via
+ * the WebSocket `tool_result` round-trip protocol — see
+ * `backend/mcp/interactive-tools.ts` and `useWebSocketSession.ts`.
  */
 
-import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import type { ReactNode, FormEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import { type AnsiColor, colorClass, PANEL_BG } from "./theme";
 
 // ---------------------------------------------------------------------------
@@ -408,6 +410,223 @@ export function TermDiff({ diff, filename }: TermDiffProps) {
             <div key={idx} className={`px-3 leading-snug whitespace-pre ${cls}`}>
               {line || "\u00A0"}
             </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 6.4 — Interactive widgets
+//
+// These render the three MCP-tool-driven prompts: a (possibly masked) input,
+// an Approve/Reject button pair, and a single-select choice list. They each
+// take a `disabled` prop so the consumer (interpreter) can lock them out
+// after submission, and an `onSubmit` callback that forwards the user's
+// reply up to the WS hook for the `tool_result` round-trip.
+//
+// Security note for TermInput: when `secret` is true the value is held
+// only in a ref while the user types, the React state stores the masked
+// representation, and on submit the ref is wiped. The component re-renders
+// with bullets only — the cleartext never sits in React state and never
+// shows up in a devtools dump after submission.
+// ---------------------------------------------------------------------------
+
+interface TermInputProps {
+  prompt: string;
+  secret?: boolean;
+  placeholder?: string | null;
+  disabled?: boolean;
+  onSubmit: (value: string) => void;
+}
+
+export function TermInput({
+  prompt,
+  secret,
+  placeholder,
+  disabled,
+  onSubmit,
+}: TermInputProps) {
+  // For secret inputs we keep the cleartext only in a ref. The visible value
+  // is a string of bullets the same length as the cleartext, stored in React
+  // state for re-render. Non-secret inputs use plain state.
+  const cleartextRef = useRef("");
+  const [visible, setVisible] = useState("");
+  const [submitted, setSubmitted] = useState(false);
+
+  function handleChange(next: string) {
+    if (secret) {
+      cleartextRef.current = next;
+      setVisible("\u2022".repeat(next.length));
+    } else {
+      cleartextRef.current = next;
+      setVisible(next);
+    }
+  }
+
+  function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (disabled || submitted) return;
+    const value = cleartextRef.current;
+    // Wipe the cleartext ref before any further work so it cannot be read
+    // out of memory by anything that runs synchronously after submit.
+    cleartextRef.current = "";
+    setSubmitted(true);
+    if (secret) {
+      // Replace the visible bullets so the input never re-renders with the
+      // typed length after submit (could leak length to a screen reader).
+      setVisible("\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022");
+    }
+    onSubmit(value);
+  }
+
+  return (
+    <div className={`my-2 ${PANEL_BG} border border-cyan-500/40 dark:border-cyan-400/40 rounded p-3 font-mono text-sm`}>
+      <div className="text-[10px] uppercase tracking-[0.15em] text-cyan-600 dark:text-cyan-300 mb-2">
+        {secret ? "input \u2022 secret" : "input"}
+      </div>
+      <div className="text-slate-800 dark:text-slate-100 mb-2 whitespace-pre-wrap">
+        {prompt}
+      </div>
+      <form onSubmit={handleSubmit} className="flex gap-2">
+        <span className="text-cyan-500 dark:text-cyan-300 select-none">{">"}</span>
+        <input
+          type={secret ? "password" : "text"}
+          className="flex-1 bg-transparent outline-none border-b border-cyan-500/40 dark:border-cyan-400/40 focus:border-cyan-400 dark:focus:border-cyan-300 text-slate-800 dark:text-slate-100"
+          value={visible}
+          placeholder={placeholder ?? undefined}
+          disabled={disabled || submitted}
+          autoFocus
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(e) => handleChange(e.target.value)}
+        />
+        <button
+          type="submit"
+          disabled={disabled || submitted}
+          className="px-3 py-1 text-xs rounded bg-cyan-500/20 hover:bg-cyan-500/30 disabled:bg-slate-500/10 disabled:text-slate-500 text-cyan-700 dark:text-cyan-200 border border-cyan-500/40"
+        >
+          {submitted ? "submitted" : "submit"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+interface TermButtonProps {
+  action: string;
+  details?: string | null;
+  disabled?: boolean;
+  onApprove: () => void;
+  onReject: () => void;
+}
+
+export function TermButton({
+  action,
+  details,
+  disabled,
+  onApprove,
+  onReject,
+}: TermButtonProps) {
+  const [decision, setDecision] = useState<null | "approved" | "rejected">(null);
+
+  function approve() {
+    if (disabled || decision) return;
+    setDecision("approved");
+    onApprove();
+  }
+  function reject() {
+    if (disabled || decision) return;
+    setDecision("rejected");
+    onReject();
+  }
+
+  return (
+    <div className={`my-2 ${PANEL_BG} border border-amber-500/50 dark:border-amber-400/50 rounded p-3 font-mono text-sm`}>
+      <div className="text-[10px] uppercase tracking-[0.15em] text-amber-600 dark:text-amber-300 mb-2">
+        permission required
+      </div>
+      <div className="text-slate-800 dark:text-slate-100 font-semibold whitespace-pre-wrap">
+        {action}
+      </div>
+      {details && (
+        <div className="mt-1 text-xs text-slate-600 dark:text-slate-300 whitespace-pre-wrap">
+          {details}
+        </div>
+      )}
+      <div className="mt-3 flex gap-2">
+        <button
+          type="button"
+          onClick={approve}
+          disabled={disabled || decision !== null}
+          className="px-3 py-1 text-xs rounded bg-emerald-500/20 hover:bg-emerald-500/30 disabled:opacity-50 text-emerald-700 dark:text-emerald-200 border border-emerald-500/40"
+        >
+          {decision === "approved" ? "approved" : "approve"}
+        </button>
+        <button
+          type="button"
+          onClick={reject}
+          disabled={disabled || decision !== null}
+          className="px-3 py-1 text-xs rounded bg-red-500/20 hover:bg-red-500/30 disabled:opacity-50 text-red-700 dark:text-red-200 border border-red-500/40"
+        >
+          {decision === "rejected" ? "rejected" : "reject"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+interface TermChoiceProps {
+  prompt: string;
+  choices: string[];
+  disabled?: boolean;
+  onPick: (choice: string) => void;
+}
+
+export function TermChoice({
+  prompt,
+  choices,
+  disabled,
+  onPick,
+}: TermChoiceProps) {
+  const [picked, setPicked] = useState<string | null>(null);
+
+  function pick(choice: string) {
+    if (disabled || picked) return;
+    setPicked(choice);
+    onPick(choice);
+  }
+
+  return (
+    <div className={`my-2 ${PANEL_BG} border border-violet-500/40 dark:border-violet-400/40 rounded p-3 font-mono text-sm`}>
+      <div className="text-[10px] uppercase tracking-[0.15em] text-violet-600 dark:text-violet-300 mb-2">
+        choose one
+      </div>
+      <div className="text-slate-800 dark:text-slate-100 mb-2 whitespace-pre-wrap">
+        {prompt}
+      </div>
+      <div className="flex flex-col gap-1">
+        {choices.map((choice, idx) => {
+          const isPicked = picked === choice;
+          return (
+            <button
+              key={idx}
+              type="button"
+              onClick={() => pick(choice)}
+              disabled={disabled || picked !== null}
+              className={
+                "text-left px-3 py-1 rounded border text-xs " +
+                (isPicked
+                  ? "bg-violet-500/30 border-violet-400 text-violet-900 dark:text-violet-100"
+                  : "bg-violet-500/10 hover:bg-violet-500/20 border-violet-500/30 text-slate-800 dark:text-slate-100 disabled:opacity-50")
+              }
+            >
+              <span className="text-violet-500 dark:text-violet-300 mr-2">
+                {idx + 1}.
+              </span>
+              {choice}
+            </button>
           );
         })}
       </div>

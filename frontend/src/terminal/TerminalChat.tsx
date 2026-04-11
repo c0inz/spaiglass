@@ -10,19 +10,33 @@
 
 import { useEffect, useRef } from "react";
 import type { AllMessage } from "../types";
-import { renderTerminalMessage } from "./interpreter";
+import {
+  renderTerminalMessage,
+  type InteractiveToolResultStatus,
+} from "./interpreter";
 import { TermSpinner } from "./components";
 
 interface TerminalChatProps {
   messages: AllMessage[];
   isLoading: boolean;
   onOpenFile?: (path: string, filename: string) => void;
+  /**
+   * Phase 6.4 — invoked when the user replies to an interactive widget.
+   * Forwarded to the WS hook which sends a `tool_result` frame to the backend.
+   */
+  onToolResult?: (
+    requestId: string,
+    status: InteractiveToolResultStatus,
+    data?: unknown,
+    reason?: string,
+  ) => void;
 }
 
 export function TerminalChat({
   messages,
   isLoading,
   onOpenFile,
+  onToolResult,
 }: TerminalChatProps) {
   const endRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -42,7 +56,10 @@ export function TerminalChat({
         <>
           <div className="flex-1" aria-hidden="true" />
           {messages.map((msg, idx) => {
-            const node = renderTerminalMessage(msg, { onOpenFile });
+            const node = renderTerminalMessage(msg, {
+              onOpenFile,
+              onToolResult,
+            });
             if (node == null) return null;
             return (
               <div key={`${msg.timestamp}-${idx}`} className="contents">

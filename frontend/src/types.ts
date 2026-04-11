@@ -111,6 +111,32 @@ export interface FileDeliveryMessage {
   timestamp: number;
 }
 
+/**
+ * Phase 6.4 — Interactive widget message.
+ *
+ * Emitted by the WS hook when a `prompt_secret`, `tool_permission`, or
+ * `request_choice` frame arrives over the wire from the host backend's
+ * MCP interactive-tools server. The terminal interpreter renders the
+ * matching Term* component, and the user's reply is sent back to the
+ * backend as a `tool_result` frame keyed by `requestId`.
+ *
+ * `answered` flips to true after the user submits so the component
+ * disables itself and a stale buffer-replay does not let them answer twice.
+ */
+export interface InteractiveMessage {
+  type: "interactive";
+  kind: "prompt_secret" | "tool_permission" | "request_choice";
+  requestId: string;
+  prompt?: string;
+  secret?: boolean;
+  placeholder?: string | null;
+  action?: string;
+  details?: string | null;
+  choices?: string[];
+  answered?: boolean;
+  timestamp: number;
+}
+
 // Thinking content item from Claude SDK
 export interface ThinkingContentItem {
   type: "thinking";
@@ -140,7 +166,8 @@ export type AllMessage =
   | PlanMessage
   | ThinkingMessage
   | TodoMessage
-  | FileDeliveryMessage;
+  | FileDeliveryMessage
+  | InteractiveMessage;
 
 // Type guard functions
 export function isChatMessage(message: AllMessage): message is ChatMessage {
@@ -183,6 +210,12 @@ export function isFileDeliveryMessage(
   message: AllMessage,
 ): message is FileDeliveryMessage {
   return message.type === "file_delivery";
+}
+
+export function isInteractiveMessage(
+  message: AllMessage,
+): message is InteractiveMessage {
+  return message.type === "interactive";
 }
 
 // Live session stats for Help panel

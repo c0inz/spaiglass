@@ -270,6 +270,38 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
         break;
       }
 
+      // Phase 6.4 — interactive widget frames from the backend MCP tools.
+      // The backend's `interactive-tools.ts` broadcasts one of these three
+      // shapes when Claude calls the matching MCP tool. The frontend renders
+      // the widget via the terminal interpreter; the user's reply is sent
+      // back via `sendToolResult` as a `tool_result` frame keyed by
+      // `original_request_id`.
+      case "prompt_secret":
+      case "tool_permission":
+      case "request_choice": {
+        const requestId =
+          (msg.request_id as string | undefined) ??
+          (msg.requestId as string | undefined);
+        if (!requestId) break;
+        cbs.addMessage({
+          type: "interactive",
+          kind: msg.type as
+            | "prompt_secret"
+            | "tool_permission"
+            | "request_choice",
+          requestId,
+          prompt: msg.prompt as string | undefined,
+          secret: msg.secret as boolean | undefined,
+          placeholder: (msg.placeholder as string | null | undefined) ?? null,
+          action: msg.action as string | undefined,
+          details: (msg.details as string | null | undefined) ?? null,
+          choices: (msg.choices as string[] | undefined) ?? undefined,
+          answered: false,
+          timestamp: Date.now(),
+        });
+        break;
+      }
+
       case "error":
         cbs.addMessage({
           type: "error",
@@ -357,6 +389,37 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
   }, []);
 
   /**
+   * Phase 6.4 — reply to an in-flight interactive MCP tool call.
+   *
+   * Sends a `tool_result` frame keyed by `original_request_id`. The backend
+   * routes the reply to the matching pending request in SessionManager,
+   * which resolves the broker promise and returns the value to Claude as
+   * the MCP tool result.
+   */
+  const sendToolResult = useCallback(
+    (
+      requestId: string,
+      status: "accepted" | "approved" | "rejected",
+      data?: unknown,
+      reason?: string,
+    ) => {
+      const ws = wsRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+      ws.send(
+        JSON.stringify({
+          type: "tool_result",
+          original_request_id: requestId,
+          status,
+          ...(data !== undefined ? { data } : {}),
+          ...(reason !== undefined ? { reason } : {}),
+        }),
+      );
+    },
+    [],
+  );
+
+  /**
    * Interrupt the current response.
    */
   const interrupt = useCallback(() => {
@@ -414,6 +477,7 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
     startSession,
     restartSession,
     sendMessage,
+    sendToolResult,
     interrupt,
   };
 }
