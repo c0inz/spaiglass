@@ -74,7 +74,7 @@ export function TerminalChat({
     <div
       ref={containerRef}
       onScroll={handleScroll}
-      className="flex-1 overflow-y-auto bg-slate-950 text-slate-100 border border-slate-700 p-3 sm:p-5 mb-3 sm:mb-6 rounded-2xl shadow-sm flex flex-col"
+      className="flex-1 overflow-y-auto overflow-x-hidden min-w-0 bg-slate-950 text-slate-100 border border-slate-700 p-3 sm:p-5 mb-3 sm:mb-6 rounded-2xl shadow-sm flex flex-col"
     >
       {messages.length === 0 ? (
         <TerminalEmptyState />
@@ -119,7 +119,7 @@ function MessageRow({
 }: MessageRowProps): ReactNode {
   const node = renderTerminalMessage(message, { onOpenFile, onToolResult });
   if (node == null) return null;
-  return <div className="contents">{node}</div>;
+  return <div className="min-w-0 max-w-full">{node}</div>;
 }
 
 /**

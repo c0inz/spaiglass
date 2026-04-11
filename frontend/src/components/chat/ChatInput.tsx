@@ -63,6 +63,10 @@ interface ChatInputProps {
   onThinkingLevelChange?: (level: "off" | "brief" | "extended") => void;
   // Slash commands from SDK
   slashCommands?: string[];
+  // Re-asserts focus on the textarea whenever this value changes. ChatPage
+  // bumps it when layout-affecting state (arch viewer, file editor) toggles,
+  // so closing those panels returns the cursor to the input.
+  focusTrigger?: number;
 }
 
 export function ChatInput({
@@ -86,6 +90,7 @@ export function ChatInput({
   thinkingLevel = "off",
   onThinkingLevelChange,
   slashCommands = [],
+  focusTrigger = 0,
 }: ChatInputProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -94,12 +99,14 @@ export function ChatInput({
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
   const { enterBehavior } = useEnterBehavior();
 
-  // Focus input when not loading and not in permission mode
+  // Focus input when not loading and not in permission mode. focusTrigger is
+  // bumped by ChatPage on layout-state changes (arch/editor toggles) so the
+  // cursor returns to the textarea after the chat panel reshapes.
   useEffect(() => {
     if (!isLoading && !showPermissions && inputRef.current) {
       inputRef.current.focus();
     }
-  }, [isLoading, showPermissions]);
+  }, [isLoading, showPermissions, focusTrigger]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -409,8 +416,8 @@ export function ChatInput({
           className={`w-full px-4 py-3 pr-20 bg-white/80 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 backdrop-blur-sm shadow-sm text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 resize-none overflow-hidden min-h-[48px] max-h-[${UI_CONSTANTS.TEXTAREA_MAX_HEIGHT}px]`}
           disabled={false}
         />
-        {/* Button row centered on the 48px single-line textarea (py-3 + text-sm + py-2 button → (48-36)/2 = 6px). */}
-        <div className="absolute right-2 bottom-[6px] flex gap-2">
+        {/* Button row vertically centered within the textarea. */}
+        <div className="absolute right-2 top-1/2 -translate-y-1/2 flex gap-2">
           {onImageAdd && !isLoading && (
             <button
               type="button"

@@ -51,7 +51,7 @@ export interface SettingsContextType {
 
 // Default settings
 export const DEFAULT_SETTINGS: AppSettings = {
-  theme: "light",
+  theme: "glass",
   phosphor: "green",
   enterBehavior: "send",
   version: 2,

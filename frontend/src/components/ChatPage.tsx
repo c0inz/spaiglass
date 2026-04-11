@@ -26,6 +26,8 @@ import { FileMention } from "./FileMention";
 import { NewSessionDialog } from "./NewSessionDialog";
 import { StaleContextBanner } from "./StaleContextBanner";
 import { ArchitectureViewer } from "./ArchitectureViewer";
+import { MobileTabBar, type MobileTab } from "./MobileTabBar";
+import { useIsMobile } from "../hooks/useIsMobile";
 import { useFilePolling } from "../hooks/useFilePolling";
 import { getChatUrl, getProjectsUrl } from "../config/api";
 import { KEYBOARD_SHORTCUTS } from "../utils/constants";
@@ -430,13 +432,21 @@ export function ChatPage() {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
 
-        // Local state for this streaming session
+        // Local state for this streaming session — updated synchronously
+        // so the streaming context always reads the latest value, not a
+        // stale React-state closure.
         let localHasReceivedInit = false;
+        let localCurrentAssistantMessage = currentAssistantMessage;
         let shouldAbort = false;
 
         const streamingContext: StreamingContext = {
-          currentAssistantMessage,
-          setCurrentAssistantMessage,
+          get currentAssistantMessage() {
+            return localCurrentAssistantMessage;
+          },
+          setCurrentAssistantMessage: (msg) => {
+            localCurrentAssistantMessage = msg;
+            setCurrentAssistantMessage(msg);
+          },
           addMessage,
           updateLastMessage,
           onSessionId: (sid: string) => {
@@ -468,19 +478,37 @@ export function ChatPage() {
           },
         };
 
+        // NDJSON line buffer — TCP chunks don't align with JSON line
+        // boundaries, so a single NDJSON line may be split across two
+        // reader.read() calls.  Accumulate partial lines and only
+        // process complete ones (terminated by "\n").
+        let lineBuffer = "";
+
         while (true) {
           const { done, value } = await reader.read();
           if (done || shouldAbort) break;
 
-          const chunk = decoder.decode(value);
-          const lines = chunk.split("\n").filter((line) => line.trim());
+          lineBuffer += decoder.decode(value, { stream: true });
+          const parts = lineBuffer.split("\n");
+          // Last element is either "" (line ended with \n) or a partial
+          // line that needs to carry over to the next chunk.
+          lineBuffer = parts.pop() || "";
 
-          for (const line of lines) {
+          for (const line of parts) {
             if (shouldAbort) break;
-            processStreamLine(line, streamingContext);
+            const trimmed = line.trim();
+            if (trimmed) {
+              processStreamLine(trimmed, streamingContext);
+            }
           }
 
           if (shouldAbort) break;
+        }
+
+        // Flush any remaining partial line (shouldn't happen if the
+        // backend always terminates with \n, but defensive).
+        if (lineBuffer.trim()) {
+          processStreamLine(lineBuffer.trim(), streamingContext);
         }
       } catch (error) {
         console.error("Failed to send message:", error);
@@ -689,10 +717,49 @@ export function ChatPage() {
     return () => document.removeEventListener("keydown", handleGlobalKeyDown);
   }, [isLoading, currentRequestId, handleAbort]);
 
+  const isMobile = useIsMobile();
+
   const handleFileSelect = (path: string, name: string) => {
     setEditingFile({ path, name });
     setShowArchViewer(false);
+    // On mobile the panels are mutually exclusive — opening a file should
+    // hide the file tree so the editor takes the screen.
+    if (isMobile) setShowSidebar(false);
   };
+
+  // Derive the active mobile tab from existing layout state. Single source
+  // of truth — desktop keeps using these flags directly, mobile just maps
+  // them onto a tab enum.
+  const mobileTab: MobileTab = isHistoryView
+    ? "history"
+    : showArchViewer
+      ? "arch"
+      : editingFile
+        ? "editor"
+        : showSidebar
+          ? "files"
+          : "chat";
+
+  const handleMobileTabSelect = useCallback(
+    (tab: MobileTab) => {
+      if (tab === "history") {
+        // History lives in URL state. Going to history clears the panels so
+        // returning to chat lands cleanly.
+        setShowSidebar(false);
+        setShowArchViewer(false);
+        handleHistoryClick();
+        return;
+      }
+      // Any non-history tab leaves the history view if we're in it.
+      if (isHistoryView) navigate({ search: "" });
+      setShowSidebar(tab === "files");
+      setShowArchViewer(tab === "arch");
+      if (tab !== "editor") setEditingFile(null);
+      // Selecting "chat" while a file is open keeps the file in memory but
+      // collapses to chat — same as desktop behavior with both flags off.
+    },
+    [handleHistoryClick, isHistoryView, navigate],
+  );
 
   return (
     <div className="h-screen flex flex-col bg-slate-50 dark:bg-slate-900 transition-colors duration-300 overflow-hidden">
@@ -760,59 +827,71 @@ export function ChatPage() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => setShowSidebar(!showSidebar)}
-            className={`p-2 rounded-lg border transition-all duration-200 ${
-              showSidebar
-                ? "bg-blue-100 dark:bg-blue-900/30 border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400"
-                : "bg-white/80 dark:bg-slate-800/80 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800"
-            }`}
-            title="Toggle file browser"
-          >
-            <FolderIcon className="w-5 h-5" />
-          </button>
-          <button
-            onClick={() => {
-              setShowArchViewer(!showArchViewer);
-              if (!showArchViewer) setEditingFile(null);
-            }}
-            className={`p-2 rounded-lg border transition-all duration-200 ${
-              showArchViewer
-                ? "bg-blue-100 dark:bg-blue-900/30 border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400"
-                : "bg-white/80 dark:bg-slate-800/80 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800"
-            }`}
-            title="Architecture viewer"
-          >
-            <span className="text-sm">Arch</span>
-          </button>
-          {!isHistoryView && <HistoryButton onClick={handleHistoryClick} />}
+          {/* Folder/Arch/History buttons live in the bottom MobileTabBar on
+              mobile, so the header right cluster collapses to just Settings. */}
+          {!isMobile && (
+            <>
+              <button
+                onClick={() => setShowSidebar(!showSidebar)}
+                className={`p-2 rounded-lg border transition-all duration-200 ${
+                  showSidebar
+                    ? "bg-blue-100 dark:bg-blue-900/30 border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400"
+                    : "bg-white/80 dark:bg-slate-800/80 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800"
+                }`}
+                title="Toggle file browser"
+              >
+                <FolderIcon className="w-5 h-5" />
+              </button>
+              <button
+                onClick={() => {
+                  setShowArchViewer(!showArchViewer);
+                  if (!showArchViewer) setEditingFile(null);
+                }}
+                className={`p-2 rounded-lg border transition-all duration-200 ${
+                  showArchViewer
+                    ? "bg-blue-100 dark:bg-blue-900/30 border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400"
+                    : "bg-white/80 dark:bg-slate-800/80 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800"
+                }`}
+                title="Architecture viewer"
+              >
+                <span className="text-sm">Arch</span>
+              </button>
+              {!isHistoryView && <HistoryButton onClick={handleHistoryClick} />}
+            </>
+          )}
           <SettingsButton onClick={handleSettingsClick} />
         </div>
       </div>
 
-      {/* Body — horizontal split below header */}
+      {/* Body — horizontal split on desktop; on mobile only the panel for
+          the active MobileTab is rendered, full-width, with the tab bar
+          mounted at the bottom of the outer column. */}
       <div className="flex-1 flex overflow-hidden">
         {/* File Sidebar */}
-        {showSidebar && workingDirectory && (
-          <div className="w-56 flex-shrink-0">
-            <FileSidebar
-              key={sidebarRefreshKey}
-              projectPath={workingDirectory}
-              onFileSelect={handleFileSelect}
-              contextFiles={contextFiles}
-              contextFilesList={contextFilesList}
-              sessionStats={sessionStats}
-              slashCommands={slashCommands}
-            />
-          </div>
-        )}
+        {showSidebar &&
+          workingDirectory &&
+          (!isMobile || mobileTab === "files") && (
+            <div className={isMobile ? "flex-1 min-w-0" : "w-56 flex-shrink-0"}>
+              <FileSidebar
+                key={sidebarRefreshKey}
+                projectPath={workingDirectory}
+                onFileSelect={handleFileSelect}
+                contextFiles={contextFiles}
+                contextFilesList={contextFilesList}
+                sessionStats={sessionStats}
+                slashCommands={slashCommands}
+              />
+            </div>
+          )}
 
         {/* Middle panel — editor or architecture viewer (gets the most space) */}
-        {showArchViewer && workingDirectory ? (
+        {showArchViewer &&
+        workingDirectory &&
+        (!isMobile || mobileTab === "arch") ? (
           <div className="flex-1 min-w-0 overflow-hidden border-r border-slate-200 dark:border-slate-700">
             <ArchitectureViewer projectPath={workingDirectory} />
           </div>
-        ) : editingFile ? (
+        ) : editingFile && (!isMobile || mobileTab === "editor") ? (
           <div className="flex-1 min-w-0 overflow-hidden border-r border-slate-200 dark:border-slate-700">
             <FileEditor
               filePath={editingFile.path}
@@ -822,9 +901,17 @@ export function ChatPage() {
           </div>
         ) : null}
 
-        {/* Chat panel */}
+        {/* Chat panel — hidden on mobile when another tab is active */}
         <div
-          className={`${editingFile || showArchViewer ? "w-[450px] flex-shrink-0" : "flex-1"} min-w-0 flex flex-col overflow-hidden`}
+          className={`${
+            isMobile
+              ? mobileTab === "chat" || mobileTab === "history"
+                ? "flex-1"
+                : "hidden"
+              : editingFile || showArchViewer
+                ? "w-[450px] flex-shrink-0"
+                : "flex-1"
+          } min-w-0 flex flex-col overflow-hidden`}
         >
           <div className="flex-1 flex flex-col overflow-hidden p-3 sm:p-4">
             {isHistoryView ? (
@@ -893,6 +980,12 @@ export function ChatPage() {
                   planPermissionData={planPermissionData}
                   thinkingLevel={thinkingLevel}
                   onThinkingLevelChange={setThinkingLevel}
+                  // Layout-reshape signature so ChatInput re-focuses the
+                  // textarea when arch viewer or file editor toggles. Both
+                  // collapse the chat panel between w-[450px] and flex-1.
+                  focusTrigger={
+                    (showArchViewer ? 1 : 0) + (editingFile ? 2 : 0)
+                  }
                   pendingImages={pendingImages}
                   onImageAdd={(files) => {
                     const newImages = files.map((f) => ({
@@ -943,6 +1036,15 @@ export function ChatPage() {
           </div>
         </div>
       </div>
+
+      {/* Mobile bottom tab bar — only mounts on mobile breakpoint */}
+      {isMobile && (
+        <MobileTabBar
+          activeTab={mobileTab}
+          editorEnabled={!!editingFile}
+          onSelect={handleMobileTabSelect}
+        />
+      )}
 
       {/* Settings Modal */}
       <SettingsModal isOpen={isSettingsOpen} onClose={handleSettingsClose} />

@@ -57,7 +57,7 @@ export function getSettings(): AppSettings {
   // settings object stays a complete AppSettings and TS isn't lying to us.
   if (unifiedSettings && unifiedSettings.version === 1) {
     const upgraded: AppSettings = {
-      theme: unifiedSettings.theme ?? "light",
+      theme: unifiedSettings.theme ?? "glass",
       phosphor: "green",
       enterBehavior: unifiedSettings.enterBehavior ?? "send",
       version: CURRENT_SETTINGS_VERSION,
@@ -75,15 +75,13 @@ export function setSettings(settings: AppSettings): void {
 }
 
 function migrateLegacySettings(): AppSettings {
-  // Get system theme preference
-  const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-  const systemDefaultTheme: Theme = prefersDark ? "dark" : "light";
+  // SpAIglass defaults to "glass" for new installs. Existing users who had a
+  // legacy theme key get their previous choice preserved below; only first-time
+  // visitors with no localStorage at all land on glass.
+  const defaultTheme: Theme = "glass";
 
   // Load legacy settings
-  const legacyTheme = getStorageItem<Theme>(
-    STORAGE_KEYS.THEME,
-    systemDefaultTheme,
-  );
+  const legacyTheme = getStorageItem<Theme>(STORAGE_KEYS.THEME, defaultTheme);
   const legacyEnterBehavior = getStorageItem<EnterBehavior>(
     STORAGE_KEYS.ENTER_BEHAVIOR,
     "send",

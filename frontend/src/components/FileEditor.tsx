@@ -123,6 +123,7 @@ export function FileEditor({ filePath, fileName, onClose }: FileEditorProps) {
           )}
           <button
             onClick={onClose}
+            aria-label="Close file"
             className="text-xs px-2 py-1 text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition-colors"
           >
             Close

@@ -476,6 +476,40 @@ function computeFrontendBundleSha256(): string {
 }
 const FRONTEND_BUNDLE_SHA256 = computeFrontendBundleSha256();
 
+// Latest frontend bundle version. Distinct from spaiglassVersion (the install
+// package version) so cosmetic frontend rolls — rsyncing a new dist into
+// RELAY_FRONTEND_DIR — can advance independently without false-alarming the
+// per-VM "out of date" dashboard banner, which is anchored to the install
+// package.
+//
+// Read on every request so a frontend deploy doesn't require a relay restart.
+// Source of truth, in order:
+//   1. RELAY_FRONTEND_DIR/VERSION  (one-line text file written by the deploy
+//      procedure — semver, human-readable)
+//   2. First 12 chars of a freshly-hashed RELAY_FRONTEND_DIR/index.html
+//      (always changes when the bundle changes; works without any deploy-side
+//      coordination, and unlike FRONTEND_BUNDLE_SHA256 it is recomputed each
+//      call so cosmetic deploys do not require a relay restart)
+//   3. "unknown" if the bundle itself is missing
+//
+// Both the in-page version-skew toast and external observers consume this via
+// /api/release.frontendVersion and /api/health.frontendVersion.
+function getLatestFrontendVersion(): string {
+  try {
+    const versionPath = pathJoin(RELAY_FRONTEND_DIR, "VERSION");
+    if (existsSync(versionPath)) {
+      const v = readFileSync(versionPath, "utf-8").trim();
+      if (v) return v;
+    }
+    const indexPath = pathJoin(RELAY_FRONTEND_DIR, "index.html");
+    if (existsSync(indexPath)) {
+      const buf = readFileSync(indexPath);
+      return createHash("sha256").update(buf).digest("hex").slice(0, 12);
+    }
+  } catch { /* fall through */ }
+  return "unknown";
+}
+
 // Health check (before auth-required routes). Includes commit SHA and frontend
 // bundle hash so external observers can verify the live relay is serving a
 // known, attested release without needing relay credentials.
@@ -488,6 +522,7 @@ app.get("/api/health", (c) => {
     commit: RELAY_COMMIT,
     frontend_sha256: FRONTEND_BUNDLE_SHA256,
     spaiglassVersion: getLatestSpaiglassVersion(),
+    frontendVersion: getLatestFrontendVersion(),
     connectors: stats.connectors,
     browsers: stats.browsers,
   });
@@ -495,10 +530,14 @@ app.get("/api/health", (c) => {
 
 // Public release info — clients can poll this to see the latest available version
 // without authenticating. Used by install.sh and could be used by /api/version on
-// the VM side too.
+// the VM side too. `version` is the install package (used by the per-VM stale
+// banner); `frontendVersion` is the served bundle (used by the in-page skew
+// toast). They move independently so cosmetic frontend rolls do not false-alarm
+// the per-VM banner.
 app.get("/api/release", (c) => {
   return c.json({
     version: getLatestSpaiglassVersion(),
+    frontendVersion: getLatestFrontendVersion(),
     tarball: `${PUBLIC_URL}/dist.tar.gz`,
     install: `${PUBLIC_URL}/install.sh`,
   });
@@ -1908,16 +1947,26 @@ function tryServeFromRelayFrontend(
 
   const prefix = `/vm/${slug}`;
   const relayVersion = getLatestSpaiglassVersion();
+  const frontendVersion = getLatestFrontendVersion();
   html = html.replace(/<title>[^<]*<\/title>/, `<title>${tabTitle}</title>`);
   html = html.replace(/<link rel="icon"[^>]*>/, FAVICON);
-  // Embed served version + skew detector + URL inject. Order matters: the
+  // Embed served versions + skew detector + URL inject. Order matters: the
   // skew detector must run BEFORE makeInjectScript so it captures the
   // original (unpatched) fetch before the inject script rewrites it.
+  //
+  // Two distinct versions are embedded:
+  //   - <meta spaiglass-version>     install package (matches /api/release.version)
+  //   - <meta spaiglass-frontend-version> + window.__SG_VERSION
+  //                                  served bundle (matches /api/release.frontendVersion)
+  // The skew toast reads __SG_VERSION and compares against frontendVersion so
+  // cosmetic frontend deploys trigger the reload prompt without disturbing
+  // the install-package-anchored per-VM dashboard banner.
   html = html.replace(
     "<head>",
     "<head>" +
       `<meta name="spaiglass-version" content="${relayVersion}">` +
-      `<script nonce="${nonce}">window.__SG_VERSION=${JSON.stringify(relayVersion)}</script>` +
+      `<meta name="spaiglass-frontend-version" content="${frontendVersion}">` +
+      `<script nonce="${nonce}">window.__SG_VERSION=${JSON.stringify(frontendVersion)}</script>` +
       makeVersionSkewScript(nonce) +
       makeInjectScript(slug, nonce),
   );
@@ -1963,8 +2012,16 @@ function tryServeFromRelayFrontend(
 }
 
 // Frontend version-skew detector. Polls /api/release every 5 minutes; when
-// the relay's version rolls forward past the version we were served with,
-// shows a small "reload to update" banner. Pure inline JS — no React deps.
+// the relay's served frontend bundle rolls forward past the version we were
+// served with, shows a small "reload to update" banner. Pure inline JS — no
+// React deps.
+//
+// Compares window.__SG_VERSION (the frontend bundle version baked into the
+// HTML at serve time) against /api/release.frontendVersion (the live relay's
+// current bundle version). It is intentionally decoupled from the install
+// package version (`/api/release.version`) so cosmetic frontend deploys can
+// trigger this reload prompt WITHOUT advancing the install-package version
+// that drives the per-VM dashboard "out of date" banner.
 //
 // IMPORTANT: must run BEFORE makeInjectScript so it captures the original
 // (unpatched) fetch reference. After that the page-level fetch wrapper
@@ -1979,7 +2036,7 @@ function show(latest){
   b.id='sg-skew-banner';
   b.style.cssText='position:fixed;bottom:16px;right:16px;z-index:99999;background:#1a1a2e;color:#f0f0f5;padding:10px 14px;border-radius:8px;font:13px system-ui,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,.3);border:1px solid #4a4a6e;max-width:320px';
   b.innerHTML='<div style="margin-bottom:6px;font-weight:600">Update available</div>'+
-    '<div style="opacity:.8;margin-bottom:8px">Spaiglass '+latest+' was released. Reload to refresh this page.</div>'+
+    '<div style="opacity:.8;margin-bottom:8px">A new Spaiglass frontend ('+latest+') is available. Reload to refresh this page.</div>'+
     '<button id="sg-skew-reload" style="background:#5a9ee0;color:#fff;border:0;padding:5px 12px;border-radius:5px;cursor:pointer;font:inherit;margin-right:6px">Reload</button>'+
     '<button id="sg-skew-dismiss" style="background:transparent;color:#aaa;border:0;padding:5px 8px;cursor:pointer;font:inherit">Dismiss</button>';
   document.body.appendChild(b);
@@ -1992,7 +2049,7 @@ function check(){
   // Use the captured original fetch so the request goes to the relay,
   // not through the /vm/:slug rewrite that the inject script installs.
   _origFetch('/api/release',{cache:'no-store'}).then(function(r){return r.json()}).then(function(d){
-    if(d&&d.version&&d.version!==have&&d.version!=='unknown')show(d.version);
+    if(d&&d.frontendVersion&&d.frontendVersion!==have&&d.frontendVersion!=='unknown')show(d.frontendVersion);
   }).catch(function(){});
 }
 setTimeout(check,30000);

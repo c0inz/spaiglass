@@ -27,25 +27,31 @@ html.glass {
   color: #e0e0f0;
 }
 
-/* Glass surface treatment for the most common dark slate panel utilities */
-html.glass .bg-slate-800,
-html.glass .bg-slate-800\/50,
-html.glass .bg-slate-800\/80,
-html.glass .bg-slate-800\/90,
-html.glass .bg-slate-700,
-html.glass .bg-slate-700\/50,
-html.glass .bg-slate-900,
-html.glass .bg-slate-900\/50,
-html.glass .bg-slate-900\/80,
-html.glass .dark\:bg-slate-800,
-html.glass .dark\:bg-slate-700,
-html.glass .dark\:bg-slate-900,
-html.glass .dark\:bg-slate-700\/50,
-html.glass .dark\:bg-slate-800\/50 {
+/* Glass surface treatment — match every dark slate background variant
+ * (bg-slate-800, bg-slate-800/60, dark:bg-slate-800/60, etc.) in one shot
+ * via attribute substring selectors. Tailwind utility class names contain
+ * "bg-slate-700/800/900" only for these variants, so the match is safe.
+ *
+ * The /60 and /70 variants matter for the terminal renderer (PANEL_BG)
+ * which would otherwise stay opaque and hide the radial gradient. */
+html.glass [class*="bg-slate-700"],
+html.glass [class*="bg-slate-800"],
+html.glass [class*="bg-slate-900"],
+html.glass [class*="bg-slate-950"] {
   background: rgba(255, 255, 255, 0.04) !important;
   backdrop-filter: blur(12px) !important;
   -webkit-backdrop-filter: blur(12px) !important;
   border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* The light-mode slate panel that the terminal renderer uses (bg-slate-50/80)
+ * also needs to step out of the way so glass actually shows through when the
+ * .dark variant doesn't apply to that specific class. */
+html.glass [class*="bg-slate-50"],
+html.glass [class*="bg-slate-100"] {
+  background: rgba(255, 255, 255, 0.04) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
 }
 
 /* Header / inputs / cards extra polish */
