@@ -13,11 +13,12 @@ import { createNodeWebSocket } from "@hono/node-ws";
 import { getCookie } from "hono/cookie";
 import { readFileSync, existsSync, statSync, createReadStream } from "node:fs";
 import { join as pathJoin } from "node:path";
+import { createHash } from "node:crypto";
 import { initDb, cleanExpiredSessions, getUserBySessionToken, getConnectorById, getConnectorBySlug, getConnectorAccess, type ConnectorRole } from "./db.ts";
 import { authRoutes, SESSION_COOKIE } from "./auth.ts";
 import { connectorRoutes } from "./connectors.ts";
 import { agentKeyRoutes } from "./agent-keys.ts";
-import { authMiddleware, rateLimit } from "./middleware.ts";
+import { authMiddleware, rateLimit, securityHeaders } from "./middleware.ts";
 import { handleConnectorWs, createBrowserWsHandler, getChannelManager } from "./tunnel.ts";
 import type { RelayEnv } from "./types.ts";
 
@@ -33,6 +34,11 @@ const DB_PATH = process.env.DB_PATH || "./relay.db";
 // Read from /opt/sgcleanrelay/release/VERSION (or RELEASE_DIR/VERSION) at startup.
 // Connectors reporting an older version trigger the update banner on the dashboard.
 const RELEASE_DIR = process.env.RELEASE_DIR || "/opt/sgcleanrelay/release";
+
+// Git commit SHA the relay was built from. Set by CI (GIT_SHA env var) or via
+// the `RELAY_COMMIT` env var when running locally. Exposed in /api/health so
+// users can run `gh attestation verify` against a known commit.
+const RELAY_COMMIT = process.env.RELAY_COMMIT || process.env.GIT_SHA || "unknown";
 // Frontend bundle served for /vm/:slug/ pages. We serve the SPA from the relay
 // instead of tunneling each page load through the connector — VMs only need
 // to handle /api/* requests. Falls back to tunneled serving if this dir is
@@ -411,6 +417,13 @@ app.use("*", async (c, next) => {
   await next();
 });
 
+// Standard security headers (HSTS, X-Frame-Options, Permissions-Policy, …) on
+// every response. CSP and SRI are wired up separately — see Phase 8 steps A
+// and B in ROADMAP.md. Per SECURITY.md, none of these stop a compromised
+// origin from serving its own malicious bundle, but they harden every other
+// attack class.
+app.use("*", securityHeaders());
+
 // CORS
 app.use("*", cors({
   origin: PUBLIC_URL,
@@ -439,13 +452,41 @@ function getLatestSpaiglassVersion(): string {
   }
 }
 
-// Health check (before auth-required routes)
+// SHA-256 of RELAY_FRONTEND_DIR/index.html. Computed once at startup and
+// cached — the bundle is immutable for the lifetime of a relay process, and
+// re-hashing on every /api/health hit would be wasteful.
+//
+// This hash is the anchor for the "is the live relay serving the JavaScript I
+// expect" check documented in SECURITY.md and README.md. Pair it with
+// `gh release view <tag>` to verify the live relay matches a published,
+// attested release.
+//
+// Returns "missing" if the bundle isn't deployed yet, "error" if the file
+// exists but couldn't be read.
+function computeFrontendBundleSha256(): string {
+  try {
+    if (!existsSync(RELAY_FRONTEND_DIR)) return "missing";
+    const indexPath = pathJoin(RELAY_FRONTEND_DIR, "index.html");
+    if (!existsSync(indexPath)) return "missing";
+    const buf = readFileSync(indexPath);
+    return createHash("sha256").update(buf).digest("hex");
+  } catch {
+    return "error";
+  }
+}
+const FRONTEND_BUNDLE_SHA256 = computeFrontendBundleSha256();
+
+// Health check (before auth-required routes). Includes commit SHA and frontend
+// bundle hash so external observers can verify the live relay is serving a
+// known, attested release without needing relay credentials.
 app.get("/api/health", (c) => {
   const cm = getChannelManager();
   const stats = cm.stats();
   return c.json({
     status: "ok",
     version: "0.1.0",
+    commit: RELAY_COMMIT,
+    frontend_sha256: FRONTEND_BUNDLE_SHA256,
     spaiglassVersion: getLatestSpaiglassVersion(),
     connectors: stats.connectors,
     browsers: stats.browsers,
@@ -1844,6 +1885,16 @@ function tryServeFromRelayFrontend(
   if (!indexFile) return undefined; // no index.html → fall through to tunnel
   let html = readFileSync(indexFile, "utf-8");
 
+  // Per-request CSP nonce. Every inline <script> tag we emit on this page
+  // gets this nonce; the strict CSP header below only allows inline scripts
+  // that carry it. The Vite-built script tag is loaded via src= and is
+  // covered by 'self' — no nonce needed.
+  const nonce = createHash("sha256")
+    .update(crypto.randomUUID() + ":" + Date.now())
+    .digest("base64")
+    .replace(/[+/=]/g, "")
+    .slice(0, 22);
+
   // Tab title from /vm/:slug/<project>-<role>/ segment
   const afterSlug = vmPath.replace(/^\//, "").replace(/\/$/, "");
   const segment = afterSlug.split("/")[0] || "";
@@ -1866,16 +1917,47 @@ function tryServeFromRelayFrontend(
     "<head>",
     "<head>" +
       `<meta name="spaiglass-version" content="${relayVersion}">` +
-      `<script>window.__SG_VERSION=${JSON.stringify(relayVersion)}</script>` +
-      makeVersionSkewScript() +
-      makeInjectScript(slug),
+      `<script nonce="${nonce}">window.__SG_VERSION=${JSON.stringify(relayVersion)}</script>` +
+      makeVersionSkewScript(nonce) +
+      makeInjectScript(slug, nonce),
   );
   // Rewrite absolute src/href paths so /assets/... becomes /vm/:slug/assets/...
   // (We serve those via the asset branch above.)
   html = html.replace(/((?:src|href|action)=["'])\/(?!\/)/g, `$1${prefix}/`);
 
+  // Strict CSP for the SPA. Notes on each directive:
+  //   default-src 'none'              — deny everything not explicitly allowed
+  //   script-src 'self' 'nonce-...'   — same-origin Vite bundle + our 3 inline blocks
+  //   style-src 'self' 'unsafe-inline'— React inline styles + Tailwind/Vite CSS
+  //                                     bundle. Inline styles are far less
+  //                                     dangerous than inline scripts; tightening
+  //                                     this further would require restyling
+  //                                     several components.
+  //   img-src 'self' data: blob:      — favicon, embedded SVG icons, blob previews
+  //   font-src 'self' data:           — bundled fonts + base64 fallbacks
+  //   connect-src 'self' ws: wss:     — fetch + WebSocket back to the relay
+  //   frame-ancestors 'none'          — overlap with X-Frame-Options DENY
+  //   form-action 'self'              — no third-party form posting
+  //   base-uri 'none'                 — block <base href> hijacks
+  //   object-src 'none'               — no Flash/applet embeds
+  //   upgrade-insecure-requests       — force https on any stray http:// asset
+  const csp = [
+    "default-src 'none'",
+    `script-src 'self' 'nonce-${nonce}'`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    "connect-src 'self' ws: wss:",
+    "frame-ancestors 'none'",
+    "form-action 'self'",
+    "base-uri 'none'",
+    "object-src 'none'",
+    "upgrade-insecure-requests",
+  ].join("; ");
+
   c.header("Content-Type", "text/html; charset=utf-8");
   c.header("Cache-Control", "no-cache, no-store, must-revalidate");
+  c.header("Content-Security-Policy", csp);
   c.header("X-Spaiglass-Version", relayVersion);
   return new Response(html, { status: 200, headers: c.res.headers });
 }
@@ -1887,8 +1969,8 @@ function tryServeFromRelayFrontend(
 // IMPORTANT: must run BEFORE makeInjectScript so it captures the original
 // (unpatched) fetch reference. After that the page-level fetch wrapper
 // rewrites /api/* to /vm/:slug/api/* (which would tunnel to the VM and 404).
-function makeVersionSkewScript(): string {
-  return `<script>(function(){
+function makeVersionSkewScript(nonce: string): string {
+  return `<script nonce="${nonce}">(function(){
 var _origFetch=window.fetch.bind(window);
 var SHOWN=false;
 function show(latest){
@@ -1920,9 +2002,9 @@ setInterval(check,5*60*1000);
 
 // URL rewriting script injected into HTML responses from the VM backend.
 // Patches fetch() and WebSocket() to prepend /vm/:slug so requests route through the relay.
-function makeInjectScript(slug: string): string {
+function makeInjectScript(slug: string, nonce: string): string {
   const prefix = `/vm/${slug}`;
-  return `<script>(function(){` +
+  return `<script nonce="${nonce}">(function(){` +
     `var B='${prefix}';` +
     `var H=location.origin;` +
     // Tell React Router's BrowserRouter to use this basename
@@ -2068,13 +2150,38 @@ ${FAVICON}
       html = html.replace(/<title>[^<]*<\/title>/, `<title>${tabTitle}</title>`);
       // Inject relay favicon
       html = html.replace(/<link rel="icon"[^>]*>/, FAVICON);
-      // Inject the fetch/WebSocket patching script at the very top of <head>
-      // MUST execute before any other scripts (including deferred modules)
-      html = html.replace("<head>", "<head>" + makeInjectScript(slug));
+      // Inject the fetch/WebSocket patching script at the very top of <head>.
+      // MUST execute before any other scripts (including deferred modules).
+      // The legacy tunneled-HTML path also gets a per-request CSP nonce so
+      // the inject script can run under the strict policy. Note: we cannot
+      // easily nonce inline scripts already in the tunneled HTML body — if
+      // the VM backend serves any inline <script>, this CSP will block it.
+      // The Vite build pipeline does not produce inline scripts so this is
+      // fine in practice.
+      const tunnelNonce = createHash("sha256")
+        .update(crypto.randomUUID() + ":" + Date.now())
+        .digest("base64")
+        .replace(/[+/=]/g, "")
+        .slice(0, 22);
+      html = html.replace("<head>", "<head>" + makeInjectScript(slug, tunnelNonce));
       // Rewrite absolute src/href paths in HTML tags (after inject so inject isn't affected)
       html = html.replace(/((?:src|href|action)=["'])\/(?!\/)/g, `$1${prefix}/`);
       // Don't cache HTML — always get fresh inject script
       c.header("Cache-Control", "no-cache, no-store, must-revalidate");
+      const tunnelCsp = [
+        "default-src 'none'",
+        `script-src 'self' 'nonce-${tunnelNonce}'`,
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data: blob:",
+        "font-src 'self' data:",
+        "connect-src 'self' ws: wss:",
+        "frame-ancestors 'none'",
+        "form-action 'self'",
+        "base-uri 'none'",
+        "object-src 'none'",
+        "upgrade-insecure-requests",
+      ].join("; ");
+      c.header("Content-Security-Policy", tunnelCsp);
       return c.html(html, resp.status as any);
     }
 

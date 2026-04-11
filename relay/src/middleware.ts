@@ -87,3 +87,73 @@ setInterval(() => {
     if (now > entry.resetAt) rateLimitMap.delete(key);
   }
 }, 60_000);
+
+/**
+ * Standard security headers applied to every relay response.
+ *
+ * These headers do not stop a compromised relay from serving its own malicious
+ * frontend bundle (see SECURITY.md "Trust assumption: the relay originates the
+ * frontend bundle"), but they raise the cost of every other attack class:
+ * MITM, third-party CDN compromise, framing/clickjacking, MIME sniffing, and
+ * privacy-leaky referrers / browser features.
+ *
+ * CSP and SRI are wired up separately (Phase 8 steps A and B) because they
+ * need to interact with the HTML response body and the Vite build pipeline.
+ */
+export function securityHeaders(): MiddlewareHandler {
+  return async (c, next) => {
+    await next();
+
+    // Force HTTPS for one year, include subdomains, allow preload-list submission.
+    // Safe to send unconditionally — browsers ignore HSTS over plain HTTP.
+    c.header(
+      "Strict-Transport-Security",
+      "max-age=31536000; includeSubDomains; preload",
+    );
+
+    // Block framing entirely. SpAIglass has no legitimate iframe embedders.
+    c.header("X-Frame-Options", "DENY");
+
+    // Stop browsers from MIME-sniffing responses away from their declared type.
+    c.header("X-Content-Type-Options", "nosniff");
+
+    // Send only the origin (not the full path) on cross-origin navigations,
+    // and nothing at all on downgrades. Avoids leaking session-id-bearing URLs.
+    c.header("Referrer-Policy", "strict-origin-when-cross-origin");
+
+    // Disable browser features SpAIglass does not use. The terminal renderer
+    // needs none of these — clipboard read/write is handled inside the WS
+    // payload, not via the Async Clipboard API.
+    c.header(
+      "Permissions-Policy",
+      [
+        "accelerometer=()",
+        "ambient-light-sensor=()",
+        "autoplay=()",
+        "battery=()",
+        "camera=()",
+        "display-capture=()",
+        "document-domain=()",
+        "encrypted-media=()",
+        "fullscreen=(self)",
+        "geolocation=()",
+        "gyroscope=()",
+        "magnetometer=()",
+        "microphone=()",
+        "midi=()",
+        "payment=()",
+        "picture-in-picture=()",
+        "publickey-credentials-get=()",
+        "screen-wake-lock=()",
+        "sync-xhr=()",
+        "usb=()",
+        "xr-spatial-tracking=()",
+      ].join(", "),
+    );
+
+    // Cross-origin isolation primitives. We do not need SharedArrayBuffer or
+    // cross-origin window access, so the strictest values are safe.
+    c.header("Cross-Origin-Opener-Policy", "same-origin");
+    c.header("Cross-Origin-Resource-Policy", "same-origin");
+  };
+}
