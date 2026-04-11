@@ -45,7 +45,7 @@ export async function handleUploadRequest(c: Context) {
   const filePath = join(uploadsDir, filename);
 
   const arrayBuffer = await file.arrayBuffer();
-  await fs.writeFile(filePath, Buffer.from(arrayBuffer));
+  await fs.writeFile(filePath, new Uint8Array(arrayBuffer));
 
   logger.app.info("File uploaded: {path}", { path: filePath });
 
