@@ -93,8 +93,10 @@ jobs:
       - name: Attach binaries to GitHub release
         uses: softprops/action-gh-release@6cbd405e2c4e67a21c47fa9e383d020e4e28b836 # v2.3.3
         with:
+          tag_name: ${{ github.ref_name }}
+          name: SpAIglass ${{ github.ref_name }}
           files: |
             release/*.tar.gz
             release/checksums.txt
-          draft: true
+          draft: false
           generate_release_notes: true
