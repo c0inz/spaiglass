@@ -1,5 +1,7 @@
 # SpAIglass
 
+[![CI](https://github.com/c0inz/spaiglass/actions/workflows/ci.yml/badge.svg)](https://github.com/c0inz/spaiglass/actions/workflows/ci.yml)
+
 **Claude chat and markdown access from ANYWHERE.**
 
 > Browser-based multi-VM interface for Claude Code. Open source. Fully auditable. Your code never leaves your machine.
