@@ -15,14 +15,13 @@ import { type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { Query, Options } from "@anthropic-ai/claude-agent-sdk";
 
 // startup() is exported at runtime but missing from sdk.d.ts in 0.2.97
-const { startup } = (await import(
-  "@anthropic-ai/claude-agent-sdk"
-)) as unknown as {
-  startup: (params: { options?: Options }) => Promise<{
-    query: (prompt: string | AsyncIterable<SDKUserMessage>) => Query;
-    close: () => void;
-  }>;
-};
+const { startup } =
+  (await import("@anthropic-ai/claude-agent-sdk")) as unknown as {
+    startup: (params: { options?: Options }) => Promise<{
+      query: (prompt: string | AsyncIterable<SDKUserMessage>) => Query;
+      close: () => void;
+    }>;
+  };
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { basename, extname } from "node:path";
