@@ -13,7 +13,7 @@ _Last updated: 2026-04-10_
 ## How to use this document
 
 - Phase numbers are stable identifiers. **Execution order is separate from phase numbers** and is set at the bottom of this file under "Active todo list → Execution order." As of 2026-04-10 the order is: **P1 → P2 → P3 → P4 → P6 → P8 → P9 → P7 → P5**.
-- **Phases 1, 2, 3, 4, 6** are committed product engineering. P6 is the *last* product phase before the hardening/baseline tail. Don't start P6 until P1-P4 are shipped or unblocked.
+- **Phases 1, 2, 3, 4, 6** are committed product engineering. P6 is the _last_ product phase before the hardening/baseline tail. Don't start P6 until P1-P4 are shipped or unblocked.
 - **Phases 8-9** are security hardening of the live relay (P8) and the documentation that ships with it (P9). P9 is doc-only and lands BEFORE P8's technical work.
 - **Phase 7** is the open-source repo hygiene work (CONTRIBUTING/SECURITY/release/badges). Moved to second-to-last 2026-04-10. It is in flight on disk but is **not** blocking product work — finish it after the product+hardening phases are done.
 - **Phase 5** (supply-chain hardening) is last. Moved to the bottom 2026-04-10. The original `Phase 8 → Phase 5` dependency on `/api/health` commit-SHA was resolved by pulling Phase 5 deliverable #8 forward into Phase 8 step 5 (John's call, option 2). Phase 5's #8 is now a verification checkbox.
@@ -86,16 +86,17 @@ Default to NDJSON unless a concrete need pushes us to SQLite.
 **Status:** ✅ shipped (relay-side). **Owner:** done. **Depends on:** Phase 1.
 
 > **Implementation notes (shipped):**
+>
 > - Schema: `vm_collaborators` keyed on `(connector_id, user_id)` (FK to `users.id`, not raw github_login — survives login changes), and `vm_audit_log` with actor/target user IDs.
 > - The owner is **implicit** — `connectors.user_id` defines ownership, no row in `vm_collaborators`.
 > - Single source of truth: `getConnectorAccess(connectorId, userId)` returns `'owner' | 'editor' | 'viewer' | null`. All permission checks consult it.
-> - Viewer mode is enforced at the relay: HTTP layer rejects any non-safe method (POST/PUT/PATCH/DELETE), and the WS tunnel parses *only* the `type` field of each browser→VM frame to drop write-type messages (`message`, `interrupt`) and rewrite `session_start`/`session_restart` into a passive `resume` so a viewer can never spawn a Claude process.
+> - Viewer mode is enforced at the relay: HTTP layer rejects any non-safe method (POST/PUT/PATCH/DELETE), and the WS tunnel parses _only_ the `type` field of each browser→VM frame to drop write-type messages (`message`, `interrupt`) and rewrite `session_start`/`session_restart` into a passive `resume` so a viewer can never spawn a Claude process.
 > - The frontend hook (`useWebSocketSession`) captures the role from the relay's `connected` handshake and skips the resume→session_start fallback when the user is a viewer. Viewer UI binding lands when ChatPage migrates onto the WS hook.
 > - Endpoints shipped: `GET /api/connectors` (now returns owned + shared), `GET/POST/PATCH/DELETE /api/connectors/:id/collaborators`, `GET /api/connectors/:id/audit`. Dashboard has a "Manage" modal and a "Shared with me" section.
 
 **This has to exist.** Spaiglass VMs are not single-tenant. Today only the GitHub user who registered a connector can access it — there is no way to share a VM with a teammate, no concept of viewer-only access. This is a hard gap for any team use case.
 
-Phase 2's committed scope is **shared access only**: each user gets their own session on the shared VM, with role-based permissions enforced at the relay. *Concurrent presence on the same session* (multiple users attached to the same session ID, typing indicators, input lock, per-message attribution) is **out of scope for this phase** — it's a future-roadmap item, see Backlog. We're not even sure Claude itself supports the concurrent-attach pattern at the API level; that needs verification before any future work.
+Phase 2's committed scope is **shared access only**: each user gets their own session on the shared VM, with role-based permissions enforced at the relay. _Concurrent presence on the same session_ (multiple users attached to the same session ID, typing indicators, input lock, per-message attribution) is **out of scope for this phase** — it's a future-roadmap item, see Backlog. We're not even sure Claude itself supports the concurrent-attach pattern at the API level; that needs verification before any future work.
 
 ## Identity, ownership, and permissions
 
@@ -148,7 +149,7 @@ hasCollaboratorRole(session_user, connector, required_role)
 
 For viewer access, the middleware also strips write-capable WebSocket frames before forwarding (or rejects them with a clear error). For editor and owner access, full bidirectional forwarding as today.
 
-Each user gets **their own session** on the shared VM. Two collaborators do not share session IDs — each opens their own chat against the same Claude installation. This is the simple, well-defined model: shared *VM access*, not shared *session presence*.
+Each user gets **their own session** on the shared VM. Two collaborators do not share session IDs — each opens their own chat against the same Claude installation. This is the simple, well-defined model: shared _VM access_, not shared _session presence_.
 
 ## Dashboard UI
 
@@ -241,6 +242,7 @@ Bun compiles a TypeScript entry point + dependencies into a single self-containe
 6. The Anthropic Claude Code CLI remains a separate prerequisite — outside our control, user already installs it.
 
 **Risks:**
+
 - Bun's compile target may not perfectly match Node's spawn semantics. Verify the Claude Code CLI spawn flow works under Bun before committing.
 - Native modules (we don't currently use any in `backend/`) would need extra work. Audit before committing.
 - Binary size ~50 MB vs current ~130 KB tarball + 100+ MB of `node_modules`. Net win on disk and download.
@@ -277,7 +279,7 @@ This is the fallback, not the plan. Try Bun first.
 - `backend/session/manager.ts` and `backend/handlers/chat.ts` thread `getClaudeSpawnEnv()` into the SDK `env` option so the next Claude CLI spawn picks up `ANTHROPIC_API_KEY` without a service restart.
 - `frontend/src/components/settings/GeneralSettings.tsx` adds the **Anthropic API Key** card: masked status display, password-style input, validate-on-save, clear button, error/success feedback.
 - The key never leaves the host. The relay sees nothing — there is no relay-side API for it.
-- Per-session override (key per project) is *not* implemented. The host-wide key is the single source. We can add per-session overrides later if anyone asks; deferred to keep the surface area small.
+- Per-session override (key per project) is _not_ implemented. The host-wide key is the single source. We can add per-session overrides later if anyone asks; deferred to keep the surface area small.
 
 Users today must have a Claude Max subscription on the host because that's how the Claude Code CLI authenticates by default. This locks out anyone who wants to use direct Anthropic API billing or who is on a different Claude tier.
 
@@ -307,13 +309,13 @@ Users today must have a Claude Max subscription on the host because that's how t
 
 # Phase 6 — Rich terminal-style chat renderer
 
-**Status:** in progress — 6.1 and 6.2 shipped behind `?renderer=terminal`; 6.0 spike, 6.3 cutover, 6.4 interactive widgets, and 6.5 polish remain. **Owner:** Claude. **Depends on:** nothing strict, but **do not start** until P1-P4 are shipped or unblocked. (Phase 5 was moved to the bottom 2026-04-10; it is no longer a P6 prerequisite.) This is the last *product* phase before the hardening/baseline tail by explicit decision.
+**Status:** in progress — 6.1 and 6.2 shipped behind `?renderer=terminal`; 6.0 spike, 6.3 cutover, 6.4 interactive widgets, and 6.5 polish remain. **Owner:** Claude. **Depends on:** nothing strict, but **do not start** until P1-P4 are shipped or unblocked. (Phase 5 was moved to the bottom 2026-04-10; it is no longer a P6 prerequisite.) This is the last _product_ phase before the hardening/baseline tail by explicit decision.
 
 ## 6.1/6.2 implementation notes
 
 - `frontend/src/terminal/components.tsx` — TermBox, TermText, TermSpinner, TermProgressBar, TermChecklist, TermCodeBlock, TermToolCard, TermTable, TermDiff. All non-interactive; interactive widgets deferred to 6.4.
 - `frontend/src/terminal/theme.ts` — ANSI 16-color → tailwind class map respecting the existing 6-theme system via `dark:` variants.
-- `frontend/src/terminal/interpreter.tsx` — adapter from the existing `AllMessage` stream (the same one `useMessageProcessor` produces) to a Term* component tree. Bash/Edit/generic tool results, plan, todo, thinking, file delivery, system/result/error all covered.
+- `frontend/src/terminal/interpreter.tsx` — adapter from the existing `AllMessage` stream (the same one `useMessageProcessor` produces) to a Term\* component tree. Bash/Edit/generic tool results, plan, todo, thinking, file delivery, system/result/error all covered.
 - `frontend/src/terminal/TerminalChat.tsx` — drop-in replacement for the legacy `ChatMessages` body (same scroll + empty-state contract).
 - `frontend/src/components/chat/ChatMessages.tsx` reads `?renderer=terminal` and dispatches to `<TerminalChat>` when set; default behavior unchanged.
 - `frontend/src/terminal/interpreter.test.tsx` — 7 vitest cases covering chat (user/assistant), Bash tool result, Edit tool result with structured patch → diff, todo checklist, plan, file delivery.
@@ -345,6 +347,7 @@ Listed in priority order. Every item in this list is committed scope.
 ## Renderer architecture: custom React components, no Ink dependency
 
 After considering Ink, we're building our own small React component library instead. Rationale:
+
 - Ink targets ANSI terminals via Yoga; using it in the browser requires writing a custom reconciler, which is complex and would lock us into Ink's component vocabulary.
 - Our render target is the DOM, not ANSI. We get free flexbox, free hover/click, free a11y semantics.
 - We control the abstraction. New Claude message types map to new components without fighting an upstream library.
@@ -352,20 +355,20 @@ After considering Ink, we're building our own small React component library inst
 
 Build a small `frontend/src/terminal/` library of components:
 
-| Component | Purpose |
-|---|---|
-| `<TermBox>` | Flexbox container with optional ASCII border |
-| `<TermText color="green">` | Colored monospace text, theme-aware |
-| `<TermSpinner />` | Animated frame cycle |
-| `<TermProgressBar value={0.4} />` | Long-running operation progress |
-| `<TermChecklist items={...} />` | TodoWrite renderer |
-| `<TermCodeBlock language="rust">` | Syntax-highlighted code via Shiki |
-| `<TermToolCard tool="Bash" args={...} status="running">` | Tool-call card with streaming output area |
-| `<TermTable rows={...}>` | ASCII grid renderer |
-| `<TermDiff before={...} after={...}>` | Diff/merge view for `tool_permission` write_file events |
-| `<TermInput masked />` | Interactive masked input — implements `prompt_secret` |
-| `<TermButton onApprove onReject>` | Interactive approval — implements `tool_permission` |
-| `<TermChoice options={...}>` | Multi-choice prompt |
+| Component                                                | Purpose                                                 |
+| -------------------------------------------------------- | ------------------------------------------------------- |
+| `<TermBox>`                                              | Flexbox container with optional ASCII border            |
+| `<TermText color="green">`                               | Colored monospace text, theme-aware                     |
+| `<TermSpinner />`                                        | Animated frame cycle                                    |
+| `<TermProgressBar value={0.4} />`                        | Long-running operation progress                         |
+| `<TermChecklist items={...} />`                          | TodoWrite renderer                                      |
+| `<TermCodeBlock language="rust">`                        | Syntax-highlighted code via Shiki                       |
+| `<TermToolCard tool="Bash" args={...} status="running">` | Tool-call card with streaming output area               |
+| `<TermTable rows={...}>`                                 | ASCII grid renderer                                     |
+| `<TermDiff before={...} after={...}>`                    | Diff/merge view for `tool_permission` write_file events |
+| `<TermInput masked />`                                   | Interactive masked input — implements `prompt_secret`   |
+| `<TermButton onApprove onReject>`                        | Interactive approval — implements `tool_permission`     |
+| `<TermChoice options={...}>`                             | Multi-choice prompt                                     |
 
 A new module `frontend/src/terminal/interpreter.ts` consumes the WebSocket NDJSON stream defined in `agent-terminal-json.md` and produces a React component tree. It replaces the rendering side of `useMessageProcessor.ts`.
 
@@ -373,7 +376,7 @@ A new module `frontend/src/terminal/interpreter.ts` consumes the WebSocket NDJSO
 
 This is the **single biggest feasibility question** and 6.0 must answer it before committing to the full scope.
 
-Claude in non-interactive streaming mode (which spaiglass uses) does **not** pause for user input mid-stream — it generates a response, then ends. So "ask for a masked secret" can't just be a UI element; it has to be a *thing Claude can call and wait for*.
+Claude in non-interactive streaming mode (which spaiglass uses) does **not** pause for user input mid-stream — it generates a response, then ends. So "ask for a masked secret" can't just be a UI element; it has to be a _thing Claude can call and wait for_.
 
 The mechanism is **MCP tools we register with the spawned Claude Code CLI** on the host backend:
 
@@ -382,14 +385,16 @@ The mechanism is **MCP tools we register with the spawned Claude Code CLI** on t
 - `request_choice(prompt, choices[])` — Same flow, returns the chosen value.
 
 This is architecturally clean because:
+
 - Claude already knows how to wait for tool results — that's the entire point of tool use
 - The frontend already knows how to render arbitrary tool-call cards — these are just special cards with input
 - No changes needed to Claude itself or to the streaming protocol
 - Works with both Claude Max subscription and BYO Anthropic key (Phase 4)
 
 **Three risks the spike must validate:**
+
 1. The host backend can register custom MCP tools with the spawned Claude Code CLI process. (Almost certainly yes — MCP is Claude Code's extensibility point.)
-2. Claude will actually call our `request_user_input` tool when prompted to ask for a secret. May need a system-prompt addition: *"When you need a secret value or approval, call the request_user_input or request_approval tool — never ask in plain text."*
+2. Claude will actually call our `request_user_input` tool when prompted to ask for a secret. May need a system-prompt addition: _"When you need a secret value or approval, call the request_user_input or request_approval tool — never ask in plain text."_
 3. The round-trip latency through the WebSocket is acceptable. (Should be — same WebSocket as everything else.)
 
 If 6.0 fails on any of these, rich rendering still ships — only interactive widgets (`<TermInput>`, `<TermButton>`, `<TermChoice>`) get cut and move to the backlog with "blocked on Anthropic native support."
@@ -397,6 +402,7 @@ If 6.0 fails on any of these, rich rendering still ships — only interactive wi
 ## Theming
 
 The current theme system has 6 themes (including the 70s CRT phosphor). The new renderer:
+
 - Maps ANSI 16-color to each theme's palette
 - Honors the existing theme switcher (no separate "terminal theme")
 - Keeps the CRT phosphor theme's 5-color picker working — those colors override the ANSI palette
@@ -421,6 +427,7 @@ Before committing to full scope, validate the three risk assumptions above:
 ### 6.1 Core component library (5 days)
 
 Build the `frontend/src/terminal/` non-interactive components without yet touching the existing renderer. Storybook (or equivalent) for visual testing. Ship:
+
 - `<TermBox>`, `<TermText>`, `<TermSpinner>`, `<TermProgressBar>`
 - `<TermChecklist>`, `<TermCodeBlock>` (syntax highlighting via Shiki)
 - `<TermToolCard>`, `<TermTable>`, `<TermDiff>`
@@ -443,6 +450,7 @@ Delete the old `ChatMessages.tsx` rendering path and the rendering side of `useM
 ### 6.4 Interactive widgets (4 days, depends on 6.0 going green)
 
 Implement the interactive components and the MCP tool plumbing per `agent-terminal-json.md`:
+
 - Host backend registers `request_user_input`, `request_approval`, `request_choice` MCP tools
 - Tools emit the `prompt_secret` / `tool_permission` events to the active WebSocket session
 - Frontend renders `<TermInput>` / `<TermButton>` / `<TermChoice>` and wires submit/click back through the WS as `tool_result` events
@@ -490,7 +498,7 @@ Implement the interactive components and the MCP tool plumbing per `agent-termin
 
 # Phase 8 — CSP and frontend integrity
 
-**Status:** not started, but the design decision is **now** because audit findings make this urgent. **Estimate:** 1-2 weeks (now includes ~1 hour of `GIT_SHA` plumbing pulled forward from Phase 5). **Owner:** TBD.
+**Status:** in progress (2026-04-11). Steps A-D code complete, CI updated. Pending: deploy to live relay and tag first release with bundle hash. **Owner:** Claude (code) + John (deploy).
 
 > **Dependency resolved (2026-04-10):** Phase 5 was moved to the bottom of the execution order, which would have left Phase 8 step 5 stranded waiting on the `/api/health` commit-SHA work from Phase 5 deliverable #8. **John's call: option 2 — pull deliverable #8 forward into Phase 8.** The 1-hour `GIT_SHA` plumbing now lives inside Phase 8 (see step 5 below). Phase 5 deliverable #8 has been retitled as a cross-reference pointing back here. Phase 8 ships as a complete unit with all 5 steps.
 
@@ -503,45 +511,49 @@ $ curl -sI https://spaiglass.xyz/ | grep -iE "content-security|strict-transport|
 (no output)
 ```
 
-| Check | Result |
-|---|---|
-| `Content-Security-Policy` | **Missing** |
-| `Strict-Transport-Security` | **Missing** |
-| `X-Frame-Options` | **Missing** |
-| `X-Content-Type-Options` | **Missing** |
-| `Referrer-Policy` | **Missing** |
-| `Permissions-Policy` | **Missing** |
-| SRI hashes on script tags | **None** |
-| Frontend bundle signing/verification | **None** |
-| Inline scripts injected by relay | Two (`makeInjectScript`, `makeVersionSkewScript` at `relay/src/server.ts:1664-1672`) — both would conflict with strict CSP unless given nonces |
+| Check                                | Result                                                                                                                                         |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Content-Security-Policy`            | **Missing**                                                                                                                                    |
+| `Strict-Transport-Security`          | **Missing**                                                                                                                                    |
+| `X-Frame-Options`                    | **Missing**                                                                                                                                    |
+| `X-Content-Type-Options`             | **Missing**                                                                                                                                    |
+| `Referrer-Policy`                    | **Missing**                                                                                                                                    |
+| `Permissions-Policy`                 | **Missing**                                                                                                                                    |
+| SRI hashes on script tags            | **None**                                                                                                                                       |
+| Frontend bundle signing/verification | **None**                                                                                                                                       |
+| Inline scripts injected by relay     | Two (`makeInjectScript`, `makeVersionSkewScript` at `relay/src/server.ts:1664-1672`) — both would conflict with strict CSP unless given nonces |
 
 ## The threat-model asymmetry
 
-The README rightly claims the relay forwards WebSocket frames without inspection. That's true at the routing layer. But the relay also *originates* the JavaScript that runs in the user's browser, and that JavaScript reads chat input *before* it ever becomes a WebSocket frame. **A compromised relay doesn't need to inspect frames — it can replace the frontend bundle and silently exfiltrate everything users type.** The README does not state this trust assumption today.
+The README rightly claims the relay forwards WebSocket frames without inspection. That's true at the routing layer. But the relay also _originates_ the JavaScript that runs in the user's browser, and that JavaScript reads chat input _before_ it ever becomes a WebSocket frame. **A compromised relay doesn't need to inspect frames — it can replace the frontend bundle and silently exfiltrate everything users type.** The README does not state this trust assumption today.
 
 ## What CSP and SRI actually buy
 
 **Content-Security-Policy** is a browser-enforced allowlist for what the page can load and execute. A strict CSP defends against:
+
 - XSS where an attacker injects `<script>` via a parameter or stored content
 - Malicious third-party scripts loaded transitively
 - A subset of MITM attacks where injected scripts come from elsewhere
 
 CSP does NOT defend against:
+
 - A compromised origin serving its own malicious JavaScript with the right nonce
 - Anything the relay itself decides to ship — the relay generates the CSP header
 
 **Subresource Integrity (SRI)** is a per-script hash check (`<script src="..." integrity="sha384-...">`). The browser refuses to execute a script whose hash doesn't match.
 
 SRI defends against:
+
 - An asset CDN being compromised independently of the origin HTML
 - MITM injection of tampered assets when origin HTML is fine
 
 SRI does NOT defend against:
+
 - A compromised origin that updates both HTML and integrity hash to match its new malicious payload
 
 ## The hard truth
 
-**Neither CSP nor SRI protects against a compromised relay.** Both protect against attackers *other than* the origin operator. If someone owns the droplet, they can serve any JavaScript with any CSP and any SRI hash, and the browser will execute it.
+**Neither CSP nor SRI protects against a compromised relay.** Both protect against attackers _other than_ the origin operator. If someone owns the droplet, they can serve any JavaScript with any CSP and any SRI hash, and the browser will execute it.
 
 The realistic defenses against a compromised relay are:
 
@@ -556,14 +568,14 @@ The realistic defenses against a compromised relay are:
 
 ## Decision matrix
 
-| Option | Stops compromised relay? | Stops XSS / MITM / 3rd-party? | Cost |
-|---|---|---|---|
-| **A. Strict CSP with nonces** | No | Yes | 1-2 days |
-| **B. SRI on Vite assets** | No | Partial | Half day |
-| **C. HSTS + standard hardening headers** | No | Partial | 1 hour |
-| **D. Independent bundle verification** (depends on Phase 5) | **Yes** (detection) | Indirectly | 2-3 days |
-| **E. Service worker hash pinning (TOFU)** | Partial (post-pin) | No | 1 week, complex |
-| **F. Honest README amendment** | n/a — sets correct expectations | n/a | 1 hour |
+| Option                                                      | Stops compromised relay?        | Stops XSS / MITM / 3rd-party? | Cost            |
+| ----------------------------------------------------------- | ------------------------------- | ----------------------------- | --------------- |
+| **A. Strict CSP with nonces**                               | No                              | Yes                           | 1-2 days        |
+| **B. SRI on Vite assets**                                   | No                              | Partial                       | Half day        |
+| **C. HSTS + standard hardening headers**                    | No                              | Partial                       | 1 hour          |
+| **D. Independent bundle verification** (depends on Phase 5) | **Yes** (detection)             | Indirectly                    | 2-3 days        |
+| **E. Service worker hash pinning (TOFU)**                   | Partial (post-pin)              | No                            | 1 week, complex |
+| **F. Honest README amendment**                              | n/a — sets correct expectations | n/a                           | 1 hour          |
 
 ## Recommended path
 
@@ -608,7 +620,7 @@ Order:
 
 # Phase 9 — Honest README & threat model amendment
 
-**Status:** not started. **Estimate:** 1 hour. **Owner:** TBD. **Lands before:** Phase 8.
+**Status:** shipped (2026-04-11). README trust section, SECURITY.md threat model expansion, and verification docs all updated.
 
 A doc-only pass. Numbered as a separate phase because it can ship independently of the technical hardening in Phase 8 and should not be blocked on it. It updates README.md, ARCHITECTURE.md, and SECURITY.md with these explicit additions:
 
@@ -647,6 +659,7 @@ It is intentionally **not** Phase 1. Product work outranks repo hygiene. Phase 7
 1. Stage the prettier-fixed files plus `CONTRIBUTING.md`, `SECURITY.md`, `ROADMAP.md`, and `agent-terminal-json.md`.
 2. Do **not** stage `backend/static`, `relay/relay.db-shm`, or `relay/relay.db-wal` (runtime artifacts).
 3. Commit message:
+
    ```
    Add CONTRIBUTING.md, SECURITY.md, ROADMAP.md, agent-terminal-json.md, fix CI prettier check
 
@@ -656,6 +669,7 @@ It is intentionally **not** Phase 1. Product work outranks repo hygiene. Phase 7
    - agent-terminal-json.md: Ink Layer WebSocket protocol contract
    - Run prettier --write across backend/ and frontend/ to unblock CI
    ```
+
 4. Push using the **classic PAT** at `~/credentials/github.json` (the fine-grained PAT lacks Contents: Write):
    ```bash
    PAT=$(jq -r .pat_classic_write ~/credentials/github.json) && \
@@ -677,6 +691,7 @@ It is intentionally **not** Phase 1. Product work outranks repo hygiene. Phase 7
 ## 7.3 Add `MAINTAINERS.md`
 
 Short file. Structure:
+
 - Primary maintainer: John Davenport (`@c0inz`) — ReadyStack.dev
 - Backup contact: `jddavenpor46@gmail.com` (nominated 2026-04-10)
 - Responsibilities: triage issues, review PRs, cut releases, operate the live relay at `spaiglass.xyz`
@@ -687,18 +702,18 @@ Short file. Structure:
 
 ## 7.4 Branding and upstream attribution cleanup
 
-The user said *"some of our code has the original author or should."* Audit findings:
+The user said _"some of our code has the original author or should."_ Audit findings:
 
-| File | Issue | Action |
-|---|---|---|
-| `backend/package.json` | Named `claude-code-webui` v0.1.56, author `sugyan`, repo URL points to `sugyan/claude-code-webui` | Rename to `spaiglass-backend` v0.1.0, author `ReadyStack.dev`, repo `c0inz/spaiglass`, bin `spaiglass-backend`. Add attribution: `"Forked from sugyan/claude-code-webui"` in description. |
-| `backend/cli/args.ts:27` | `.name("claude-code-webui")` and description `"Claude Code Web UI Backend Server"` | Rename to `spaiglass-backend` and `"SpAIglass host backend (forked from claude-code-webui)"` |
-| `backend/utils/fs.ts:110` | Temp dir prefix `"claude-code-webui-temp-"` | Rename to `"spaiglass-temp-"` |
-| `backend/history/pathUtils.ts:11` | Example comment `/Users/sugyan/tmp/` | Change to `/Users/alice/tmp/` |
-| `frontend/src/utils/mockResponseGenerator.ts` | Demo paths `/Users/demo/claude-code-webui` (lines 46, 345, 438, 481, 673, 692) | Change to `/Users/demo/spaiglass` |
-| `frontend/src/components/DemoPage.tsx:324` | `demoWorkingDirectory = "/Users/demo/claude-code-webui"` | Change to `/Users/demo/spaiglass` |
-| `frontend/src/utils/storage.ts` | localStorage keys `claude-code-webui-*` | **Defer.** Renaming would orphan user settings. Add a TODO comment and revisit with a v2→v3 storage migration. |
-| `LICENSE` | Already correctly attributes both ReadyStack and upstream | **No change** |
+| File                                          | Issue                                                                                             | Action                                                                                                                                                                                    |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `backend/package.json`                        | Named `claude-code-webui` v0.1.56, author `sugyan`, repo URL points to `sugyan/claude-code-webui` | Rename to `spaiglass-backend` v0.1.0, author `ReadyStack.dev`, repo `c0inz/spaiglass`, bin `spaiglass-backend`. Add attribution: `"Forked from sugyan/claude-code-webui"` in description. |
+| `backend/cli/args.ts:27`                      | `.name("claude-code-webui")` and description `"Claude Code Web UI Backend Server"`                | Rename to `spaiglass-backend` and `"SpAIglass host backend (forked from claude-code-webui)"`                                                                                              |
+| `backend/utils/fs.ts:110`                     | Temp dir prefix `"claude-code-webui-temp-"`                                                       | Rename to `"spaiglass-temp-"`                                                                                                                                                             |
+| `backend/history/pathUtils.ts:11`             | Example comment `/Users/sugyan/tmp/`                                                              | Change to `/Users/alice/tmp/`                                                                                                                                                             |
+| `frontend/src/utils/mockResponseGenerator.ts` | Demo paths `/Users/demo/claude-code-webui` (lines 46, 345, 438, 481, 673, 692)                    | Change to `/Users/demo/spaiglass`                                                                                                                                                         |
+| `frontend/src/components/DemoPage.tsx:324`    | `demoWorkingDirectory = "/Users/demo/claude-code-webui"`                                          | Change to `/Users/demo/spaiglass`                                                                                                                                                         |
+| `frontend/src/utils/storage.ts`               | localStorage keys `claude-code-webui-*`                                                           | **Defer.** Renaming would orphan user settings. Add a TODO comment and revisit with a v2→v3 storage migration.                                                                            |
+| `LICENSE`                                     | Already correctly attributes both ReadyStack and upstream                                         | **No change**                                                                                                                                                                             |
 
 After making these edits: run `npm run typecheck` and `npm test` in `backend/` and `frontend/`. The package rename is the only risky change — verify nothing imports by package name.
 
@@ -711,6 +726,7 @@ After making these edits: run `npm run typecheck` and `npm test` in `backend/` a
 `tagpr` is upstream's release-PR automation and is currently failing on every run. Once 7.4 changes the package name, it will need a config update.
 
 When the decision lands:
+
 - **Keep-and-fix path:** update `.tagpr` (repo root) to point at the new package name and version path.
 - **Disable path:** rename `.github/workflows/tagpr.yml` to `tagpr.yml.disabled` and add a note to `MAINTAINERS.md` that releases are cut manually.
 
@@ -768,8 +784,10 @@ Once 7.6 is shipped:
      -d '{"has_discussions": true}'
    ```
 3. Add a Community section to README:
+
    ```markdown
    ## Community
+
    - **Discussions:** https://github.com/c0inz/spaiglass/discussions
    - **Issues:** https://github.com/c0inz/spaiglass/issues — bugs and feature requests
    - **Security:** see [SECURITY.md](SECURITY.md) for private vulnerability reporting
@@ -823,16 +841,16 @@ The README's `Build & release verification` section already promises reproducibl
 
 These appear in the external review or other discussions. Documenting why so the question doesn't keep coming up.
 
-| Item | Reason |
-|---|---|
-| LLM-agnostic abstraction layer (OpenAI, Gemini, local models) | Category error. This is a Claude Code product. The open-source license already lets anyone fork to add other models — that's the right channel. |
-| Full Go/Rust rewrite of the backend | Months of work for marginal security gain. `bun build --compile` (Phase 3) gets the same footprint win in a week without throwing away the Claude SDK. |
-| PTY-backed daemon for sessions | Reviewer's Phase 4. We start with the in-memory replay buffer (Phase 1). Revisit PTY only if v1 proves insufficient. |
-| Generic phase tracker / `.ai/ACTIVE_TASK.md` workflow engine | Overly prescriptive. Not every Claude task fits a fixed pipeline. The existing `agents/*.md` system handles role definition lightweightly; that's enough. |
-| Centralized credential / key management | Conflicts with the "relay knows nothing" guarantee. Each host owns its own keys. |
-| Chrome extension or native desktop app | Browser-first is the entire point. Native apps are a different product. |
-| Real-time CRDT collaborative file editing (Yjs etc.) | Too heavy for v1 multi-user. Backlog. |
-| Audio/video chat between collaborators | Different product. |
+| Item                                                          | Reason                                                                                                                                                    |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| LLM-agnostic abstraction layer (OpenAI, Gemini, local models) | Category error. This is a Claude Code product. The open-source license already lets anyone fork to add other models — that's the right channel.           |
+| Full Go/Rust rewrite of the backend                           | Months of work for marginal security gain. `bun build --compile` (Phase 3) gets the same footprint win in a week without throwing away the Claude SDK.    |
+| PTY-backed daemon for sessions                                | Reviewer's Phase 4. We start with the in-memory replay buffer (Phase 1). Revisit PTY only if v1 proves insufficient.                                      |
+| Generic phase tracker / `.ai/ACTIVE_TASK.md` workflow engine  | Overly prescriptive. Not every Claude task fits a fixed pipeline. The existing `agents/*.md` system handles role definition lightweightly; that's enough. |
+| Centralized credential / key management                       | Conflicts with the "relay knows nothing" guarantee. Each host owns its own keys.                                                                          |
+| Chrome extension or native desktop app                        | Browser-first is the entire point. Native apps are a different product.                                                                                   |
+| Real-time CRDT collaborative file editing (Yjs etc.)          | Too heavy for v1 multi-user. Backlog.                                                                                                                     |
+| Audio/video chat between collaborators                        | Different product.                                                                                                                                        |
 
 ---
 
@@ -916,31 +934,31 @@ Persisted here so it survives across Claude sessions. Update statuses when work 
 
 Phase numbers are preserved from the original plan; only the **order in which work happens** changed when John moved Phase 5 to last and Phase 7 to second-to-last.
 
-| Position | Phase | Title |
-|---|---|---|
-| 1 | P1 | Session resumption after disconnect |
-| 2 | P2 | Multi-user collaboration (shared access) |
-| 3 | P3 | Single-binary host with no Node prerequisite |
-| 4 | P4 | Bring Your Own Anthropic Key |
-| 5 | P6 | Rich terminal-style chat renderer |
-| 6 | P8 | CSP and frontend integrity |
-| 7 | P9 | Honest README & threat model amendment |
-| 8 | P7 | Open-source baseline (in flight) |
-| 9 | P5 | Supply-chain hardening |
+| Position | Phase | Title                                        |
+| -------- | ----- | -------------------------------------------- |
+| 1        | P1    | Session resumption after disconnect          |
+| 2        | P2    | Multi-user collaboration (shared access)     |
+| 3        | P3    | Single-binary host with no Node prerequisite |
+| 4        | P4    | Bring Your Own Anthropic Key                 |
+| 5        | P6    | Rich terminal-style chat renderer            |
+| 6        | P8    | CSP and frontend integrity                   |
+| 7        | P9    | Honest README & threat model amendment       |
+| 8        | P7    | Open-source baseline (in flight)             |
+| 9        | P5    | Supply-chain hardening                       |
 
 **CI workflow fix (#47) is paused** — no work on it until positional 1-7 ship.
 
-| # | Status | Phase | Task |
-|---|---|---|---|
-| 43 | ✅ completed | 7.0 | Add `CONTRIBUTING.md` |
-| 45 | ✅ completed | 7.0 | Add `SECURITY.md` with private disclosure path |
-| 47 | ⏸️ paused | 7.1 | Fix failing CI — baseline pushed in `3681296` but CI still red. Paused 2026-04-10 by John: do not work on this until positional 1-7 of the new execution order ship (P1, P2, P3, P4, P6, P8, P9). Two issues catalogued: (1) prettier version drift — local pins 3.6.2, CI installs 3.8.2 and reformats `backend/session/manager.ts` differently; (2) frontend lint has 34 inherited `no-explicit-any` errors in `mockResponseGenerator.ts`, `UnifiedMessageProcessor.ts`, and friends. |
-| 44 | ⏳ pending | 7.2 | Add `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1) |
-| 46 | ⏳ pending | 7.3 | Add `MAINTAINERS.md` / succession plan — backup contact `jddavenpor46@gmail.com` confirmed; ready to write |
-| 48 | ⏳ pending | 7.4 | Audit upstream attribution in source files (audit done, fixes not applied) |
-| —  | ⏸️ deferred | 7.5 | `tagpr` workflow keep-or-disable — decision deferred by John 2026-04-10 |
-| 49 | ⏳ pending | 7.6 | Tag and publish v0.1.0 release |
-| 50 | ⏳ pending | 7.7 | Wire CI badge into README + enable Discussions |
+| #   | Status       | Phase | Task                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| --- | ------------ | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 43  | ✅ completed | 7.0   | Add `CONTRIBUTING.md`                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 45  | ✅ completed | 7.0   | Add `SECURITY.md` with private disclosure path                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 47  | ⏸️ paused    | 7.1   | Fix failing CI — baseline pushed in `3681296` but CI still red. Paused 2026-04-10 by John: do not work on this until positional 1-7 of the new execution order ship (P1, P2, P3, P4, P6, P8, P9). Two issues catalogued: (1) prettier version drift — local pins 3.6.2, CI installs 3.8.2 and reformats `backend/session/manager.ts` differently; (2) frontend lint has 34 inherited `no-explicit-any` errors in `mockResponseGenerator.ts`, `UnifiedMessageProcessor.ts`, and friends. |
+| 44  | ⏳ pending   | 7.2   | Add `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1)                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 46  | ⏳ pending   | 7.3   | Add `MAINTAINERS.md` / succession plan — backup contact `jddavenpor46@gmail.com` confirmed; ready to write                                                                                                                                                                                                                                                                                                                                                                              |
+| 48  | ⏳ pending   | 7.4   | Audit upstream attribution in source files (audit done, fixes not applied)                                                                                                                                                                                                                                                                                                                                                                                                              |
+| —   | ⏸️ deferred  | 7.5   | `tagpr` workflow keep-or-disable — decision deferred by John 2026-04-10                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 49  | ⏳ pending   | 7.6   | Tag and publish v0.1.0 release                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| 50  | ⏳ pending   | 7.7   | Wire CI badge into README + enable Discussions                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 ## Uncommitted on disk right now
 

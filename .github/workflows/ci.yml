@@ -108,6 +108,17 @@ jobs:
 
       - name: Build
         run: npm run build
+        env:
+          GIT_SHA: ${{ github.sha }}
+
+      - name: Compute frontend bundle hash
+        id: bundle_hash
+        run: |
+          if [ -f dist/index.html ]; then
+            HASH=$(sha256sum dist/index.html | cut -d' ' -f1)
+            echo "frontend_sha256=$HASH" >> "$GITHUB_OUTPUT"
+            echo "Frontend bundle SHA-256: $HASH"
+          fi
 
   # Summary job for branch protection rules
   ci-success:

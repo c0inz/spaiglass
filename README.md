@@ -10,12 +10,12 @@ SpAIglass lets you run Claude Code on remote VMs and access them through your br
 
 > **Trust assumption (please read).** Using the hosted relay at `spaiglass.xyz` means trusting ReadyStack.dev to serve a legitimate frontend bundle. The relay originates the JavaScript that runs in your browser, so a compromised relay could in principle replace that JavaScript with a tampered version. We mitigate this with independent bundle verification — see [Verifying the live relay](#verifying-the-live-relay) below — and we recommend self-hosting the relay if your threat model can't accept this assumption. SECURITY.md has the full disclosure.
 
-| | |
-|---|---|
+|                 |                                                                  |
+| --------------- | ---------------------------------------------------------------- |
 | **Source code** | [github.com/c0inz/spaiglass](https://github.com/c0inz/spaiglass) |
-| **Live relay** | [spaiglass.xyz](https://spaiglass.xyz) |
-| **License** | [MIT](LICENSE) — free and open source |
-| **Operator** | [ReadyStack.dev](https://readystack.dev) |
+| **Live relay**  | [spaiglass.xyz](https://spaiglass.xyz)                           |
+| **License**     | [MIT](LICENSE) — free and open source                            |
+| **Operator**    | [ReadyStack.dev](https://readystack.dev)                         |
 
 ### Features
 
@@ -40,11 +40,11 @@ SpAIglass lets you run Claude Code on remote VMs and access them through your br
 
 Spaiglass uses the official **Anthropic Claude Code CLI** to spawn sessions on each host. It runs anywhere the Claude CLI does:
 
-| Platform | Versions | Service | Installer |
-|---|---|---|---|
-| **Linux** | Ubuntu, Debian, Fedora, Arch — anything with `bash`, `tar`, `node>=20` | `systemd --user` with linger | `curl -fsSL https://spaiglass.xyz/install.sh \| bash -s -- ...` |
-| **macOS** | 12+ on Intel or Apple Silicon | launchd LaunchAgent under `~/Library/LaunchAgents` | `curl -fsSL https://spaiglass.xyz/install.sh \| bash -s -- ...` |
-| **Windows** | 10 (build 17063+) and 11 | Per-user Scheduled Task at logon (no admin) | `& ([scriptblock]::Create((iwr https://spaiglass.xyz/install.ps1 -useb))) ...` |
+| Platform    | Versions                                                               | Service                                            | Installer                                                                      |
+| ----------- | ---------------------------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------ |
+| **Linux**   | Ubuntu, Debian, Fedora, Arch — anything with `bash`, `tar`, `node>=20` | `systemd --user` with linger                       | `curl -fsSL https://spaiglass.xyz/install.sh \| bash -s -- ...`                |
+| **macOS**   | 12+ on Intel or Apple Silicon                                          | launchd LaunchAgent under `~/Library/LaunchAgents` | `curl -fsSL https://spaiglass.xyz/install.sh \| bash -s -- ...`                |
+| **Windows** | 10 (build 17063+) and 11                                               | Per-user Scheduled Task at logon (no admin)        | `& ([scriptblock]::Create((iwr https://spaiglass.xyz/install.ps1 -useb))) ...` |
 
 Install the Claude Code CLI first via [`claude.ai/install.sh`](https://claude.ai/install.sh) (Linux/macOS) or [`claude.ai/install.ps1`](https://claude.ai/install.ps1) (Windows), then run the spaiglass installer for your platform.
 
@@ -88,12 +88,12 @@ Anthropic API (api.anthropic.com)
 
 ### Components
 
-| Directory | What it is |
-|---|---|
-| `relay/` | SGCleanRelay -- stateless routing proxy (Hono + SQLite) |
-| `backend/` | SpAIglass VM backend (Claude Code SDK, session manager) |
-| `frontend/` | SpAIglass web UI (React, chat interface) |
-| `research/` | Design specs and architecture decisions |
+| Directory   | What it is                                              |
+| ----------- | ------------------------------------------------------- |
+| `relay/`    | SGCleanRelay -- stateless routing proxy (Hono + SQLite) |
+| `backend/`  | SpAIglass VM backend (Claude Code SDK, session manager) |
+| `frontend/` | SpAIglass web UI (React, chat interface)                |
+| `research/` | Design specs and architecture decisions                 |
 
 ---
 
@@ -118,11 +118,12 @@ SpAIglass is open source specifically so that you (and your LLM agents) can veri
 - No long-lived OAuth tokens -- GitHub tokens are used once during sign-in and discarded
 - No analytics, tracking cookies, or third-party scripts
 
-> **Viewer-mode caveat:** for connections by users with the `viewer` role, the relay parses *only* the `type` field of each browser→VM JSON frame to enforce read-only access (e.g. blocking `message` and `interrupt`). Frame *content* is never read or logged. Owner and editor traffic is forwarded fully opaquely.
+> **Viewer-mode caveat:** for connections by users with the `viewer` role, the relay parses _only_ the `type` field of each browser→VM JSON frame to enforce read-only access (e.g. blocking `message` and `interrupt`). Frame _content_ is never read or logged. Owner and editor traffic is forwarded fully opaquely.
 
 ### Data flow transparency
 
 All browser-to-VM communication uses WebSocket tunneling. The relay:
+
 1. Authenticates the browser session (cookie) and validates VM ownership
 2. Looks up the target VM's live WebSocket connection
 3. Forwards each frame bidirectionally without modification
@@ -132,9 +133,9 @@ The relay is **stateless for payload data** — WebSocket frames carrying chat m
 
 ### The relay trust boundary (compromised-relay scenario)
 
-The README's "stateless / does not inspect frames" guarantees describe the relay's *routing* behavior. There is a separate trust assumption that needs to be stated explicitly:
+The README's "stateless / does not inspect frames" guarantees describe the relay's _routing_ behavior. There is a separate trust assumption that needs to be stated explicitly:
 
-**The relay also originates the JavaScript that runs in your browser.** A compromised relay does not need to inspect WebSocket frames to read your input — it can serve a tampered frontend bundle that captures keystrokes before they ever become a frame. Browser-side defenses like CSP and SRI raise the cost of *other* attack classes (XSS, MITM, third-party CDN compromise) but **do not stop a compromised origin** from serving its own malicious JavaScript with a matching CSP nonce and matching SRI hash.
+**The relay also originates the JavaScript that runs in your browser.** A compromised relay does not need to inspect WebSocket frames to read your input — it can serve a tampered frontend bundle that captures keystrokes before they ever become a frame. Browser-side defenses like CSP and SRI raise the cost of _other_ attack classes (XSS, MITM, third-party CDN compromise) but **do not stop a compromised origin** from serving its own malicious JavaScript with a matching CSP nonce and matching SRI hash.
 
 The realistic defenses against a compromised relay are:
 
@@ -144,52 +145,62 @@ The realistic defenses against a compromised relay are:
 
 ### Build & release verification
 
-> **Status: Planned -- implementation in progress**
-
-We are implementing the following verification mechanisms. This section will be updated with concrete instructions as each ships.
-
-**Reproducible builds**
-All release artifacts will be built in CI with pinned dependencies. Build logs will be public. Anyone can clone the repo and produce a byte-identical artifact.
-
 **SHA-256 checksums**
-Every release will publish a `checksums.txt` file containing SHA-256 hashes for all artifacts. Verify with:
+Every release publishes a `checksums.txt` containing SHA-256 hashes for all artifacts:
+
 ```bash
-# Example (placeholder -- actual hashes published per release)
+# Download checksums and verify
+gh release download <tag> --repo c0inz/spaiglass --pattern checksums.txt
 sha256sum -c checksums.txt
 ```
 
-**Signed commits**
-All release commits will be GPG-signed. Verify with:
+**Supply chain attestation (Sigstore)**
+Release artifacts are signed using GitHub's artifact attestation backed by Sigstore. Each binary is cryptographically tied to the CI workflow that built it:
+
 ```bash
-git verify-commit HEAD
+gh release download <tag> --repo c0inz/spaiglass --pattern 'spaiglass-host-linux-x64.tar.gz'
+gh attestation verify spaiglass-host-linux-x64.tar.gz --repo c0inz/spaiglass
 ```
 
-**Supply chain attestation**
-We plan to use GitHub's artifact attestation (Sigstore-backed) so that each release artifact is cryptographically tied to the CI workflow that built it. Verify with:
-```bash
-# Example (placeholder -- will use gh attestation verify)
-gh attestation verify <artifact> --repo c0inz/spaiglass
-```
+**Frontend bundle hash**
+Each release records the SHA-256 hash of the frontend `index.html` in its release notes (`frontend_sha256`). The live relay reports this same hash via `/api/health`, enabling independent verification that the relay is serving a published bundle.
 
 ### Verifying the live relay
 
-You can ask the live relay what bundle it is currently serving and check that against the published release. This is the mitigation for the [compromised-relay scenario](#the-relay-trust-boundary-compromised-relay-scenario) above.
+You can check what the live relay is serving and compare it against published releases. This is the primary mitigation for the [compromised-relay scenario](#the-relay-trust-boundary-compromised-relay-scenario) above.
+
+**Quick check:**
 
 ```bash
-# 1. Ask the live relay what it's running
-curl https://spaiglass.xyz/api/health
-# {"status":"ok","commit":"<git_sha>","frontend_sha256":"<bundle hash>"}
-
-# 2. Compare against the GitHub release notes for that commit
-gh release view v0.1.0 --json body --jq .body | grep frontend_sha256
-
-# 3. Verify the release artifact attestation against the recorded hash
-gh attestation verify <artifact> --repo c0inz/spaiglass
+curl -s https://spaiglass.xyz/api/health | grep -E '"commit"|"frontend_sha256"'
 ```
 
-If the live `/api/health` reports a `commit` that does not appear on `c0inz/spaiglass`, or a `frontend_sha256` that does not match the published release notes, the relay is serving something other than a published release. Stop using it and report.
+The `commit` should match a commit on [github.com/c0inz/spaiglass](https://github.com/c0inz/spaiglass/commits/main). If it doesn't exist in the public repo, the relay is serving unpublished code.
 
-> The implementation of `/api/health` reporting the bundle hash and `GIT_SHA` is part of [Phase 8 step 5](ROADMAP.md#phase-8--csp-and-frontend-integrity). If you are reading this section before Phase 8 ships, the verification commands above are aspirational; the threat model and mitigation plan are not.
+**Full verification:**
+
+```bash
+# 1. Get the live relay's commit and bundle hash
+curl -s https://spaiglass.xyz/api/health | jq '{commit, frontend_sha256}'
+
+# 2. Check the matching release
+gh release list --repo c0inz/spaiglass --limit 5
+gh release view <tag> --repo c0inz/spaiglass --json body --jq .body | grep frontend_sha256
+
+# 3. Verify Sigstore attestation on the release artifact
+gh release download <tag> --repo c0inz/spaiglass --pattern 'spaiglass-host-linux-x64.tar.gz'
+gh attestation verify spaiglass-host-linux-x64.tar.gz --repo c0inz/spaiglass
+```
+
+**Automated script:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/c0inz/spaiglass/main/verify.sh | bash
+```
+
+The script queries `/api/health`, checks the commit against GitHub, matches the bundle hash against published releases, and runs Sigstore attestation if the `gh` CLI is installed. See [`verify.sh`](verify.sh) for the source.
+
+If the live `/api/health` reports a `commit` that does not appear on `c0inz/spaiglass`, or a `frontend_sha256` that does not match the published release notes, the relay is serving something other than a published release. Stop using it and [report it](SECURITY.md).
 
 ### Network security
 
@@ -204,13 +215,13 @@ If the live `/api/health` reports a `commit` that does not appear on `c0inz/spai
 
 The relay is ~800 lines of TypeScript across 8 files in `relay/src/`. Start here:
 
-| File | What to audit |
-|---|---|
-| [`relay/src/server.ts`](relay/src/server.ts) | Route definitions, middleware stack |
-| [`relay/src/tunnel.ts`](relay/src/tunnel.ts) | WebSocket forwarding -- verify no data inspection |
-| [`relay/src/auth.ts`](relay/src/auth.ts) | OAuth flow -- verify token handling |
-| [`relay/src/middleware.ts`](relay/src/middleware.ts) | Auth + rate limiting logic |
-| [`relay/src/db.ts`](relay/src/db.ts) | Schema -- verify what's stored |
+| File                                                 | What to audit                                     |
+| ---------------------------------------------------- | ------------------------------------------------- |
+| [`relay/src/server.ts`](relay/src/server.ts)         | Route definitions, middleware stack               |
+| [`relay/src/tunnel.ts`](relay/src/tunnel.ts)         | WebSocket forwarding -- verify no data inspection |
+| [`relay/src/auth.ts`](relay/src/auth.ts)             | OAuth flow -- verify token handling               |
+| [`relay/src/middleware.ts`](relay/src/middleware.ts) | Auth + rate limiting logic                        |
+| [`relay/src/db.ts`](relay/src/db.ts)                 | Schema -- verify what's stored                    |
 
 ---
 
@@ -312,13 +323,13 @@ npx tsx src/server.ts
 
 ## Documentation
 
-| File | Purpose |
-|---|---|
+| File                               | Purpose                               |
+| ---------------------------------- | ------------------------------------- |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Technical decisions and system design |
-| [REQUIREMENTS.md](REQUIREMENTS.md) | User requirements |
-| [FEATURES.md](FEATURES.md) | Feature reference |
-| [TASKS.md](TASKS.md) | Build status and progress |
-| [research/](research/) | Design specs and investigation notes |
+| [REQUIREMENTS.md](REQUIREMENTS.md) | User requirements                     |
+| [FEATURES.md](FEATURES.md)         | Feature reference                     |
+| [TASKS.md](TASKS.md)               | Build status and progress             |
+| [research/](research/)             | Design specs and investigation notes  |
 
 ---
 

@@ -51,6 +51,9 @@ jobs:
           cd frontend
           npm ci
           npm run build
+        env:
+          GIT_SHA: ${{ github.sha }}
+          SPAIGLASS_VERSION: ${{ github.ref_name }}
 
       - name: Install backend deps (bun)
         run: bun install --frozen-lockfile
@@ -76,7 +79,35 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
+      - name: Checkout (for frontend build to compute bundle hash)
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend (for bundle hash)
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+        env:
+          GIT_SHA: ${{ github.sha }}
+          SPAIGLASS_VERSION: ${{ github.ref_name }}
+
+      - name: Compute frontend bundle hash
+        id: bundle_hash
+        run: |
+          HASH=$(sha256sum frontend/dist/index.html | cut -d' ' -f1)
+          echo "frontend_sha256=$HASH" >> "$GITHUB_OUTPUT"
+          echo "Frontend bundle SHA-256: $HASH"
+
       - name: Download build artifacts
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
@@ -90,6 +121,11 @@ jobs:
           sha256sum *.tar.gz > checksums.txt
           ls -la
 
+      - name: Attest build provenance (Sigstore)
+        uses: actions/attest-build-provenance@db473fddc028af60658334401dc6fa3ffd8669fd # v2.3.0
+        with:
+          subject-path: release/*.tar.gz
+
       - name: Attach binaries to GitHub release
         uses: softprops/action-gh-release@6cbd405e2c4e67a21c47fa9e383d020e4e28b836 # v2.3.3
         with:
@@ -99,4 +135,24 @@ jobs:
             release/*.tar.gz
             release/checksums.txt
           draft: false
-          generate_release_notes: true
+          body: |
+            ## Verification
+
+            **Frontend bundle hash (index.html):**
+            ```
+            frontend_sha256: ${{ steps.bundle_hash.outputs.frontend_sha256 }}
+            commit: ${{ github.sha }}
+            ```
+
+            **Verify the live relay is serving this release:**
+            ```bash
+            curl -s https://spaiglass.xyz/api/health | jq '{commit, frontend_sha256}'
+            # Should match the values above
+            ```
+
+            **Verify artifact provenance (Sigstore):**
+            ```bash
+            gh attestation verify spaiglass-host-linux-x64.tar.gz --repo c0inz/spaiglass
+            ```
+
+            ---
