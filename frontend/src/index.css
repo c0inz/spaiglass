@@ -3,6 +3,26 @@
 @variant dark (.dark &);
 
 /* ============================================================================
+ * GLOBAL OVERFLOW GUARD — mobile horizontal scroll fix.
+ * Any descendant that spills past the viewport (long paths, wide code blocks,
+ * unbreakable tokens in terminal output) would otherwise stretch html/body
+ * and let the user finger-swipe the whole chat sideways. Clamping the root
+ * plus restricting root touch-action to vertical pans removes the effect
+ * without interfering with inner scroll panes that opt back in explicitly.
+ * ============================================================================ */
+html,
+body {
+  overflow-x: hidden;
+  max-width: 100%;
+}
+
+#root {
+  touch-action: pan-y;
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+/* ============================================================================
  * GLASS THEME — sits on top of dark mode. Adds glassmorphism overlay:
  *   - Body gets dark gradient background with cyan/purple radial highlights
  *   - Major surfaces (panels, cards, modals) get backdrop-filter blur + translucent bg

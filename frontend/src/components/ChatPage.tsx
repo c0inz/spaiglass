@@ -764,8 +764,8 @@ export function ChatPage() {
   return (
     <div className="h-screen flex flex-col bg-slate-50 dark:bg-slate-900 transition-colors duration-300 overflow-hidden">
       {/* Header — always at top */}
-      <div className="flex items-center justify-between px-4 py-3 flex-shrink-0 border-b border-slate-200 dark:border-slate-700">
-        <div className="flex items-center gap-4">
+      <div className="flex items-center justify-between px-4 py-3 flex-shrink-0 border-b border-slate-200 dark:border-slate-700 min-w-0 gap-2">
+        <div className="flex items-center gap-4 min-w-0 flex-1">
           {isHistoryView && (
             <button
               onClick={handleBackToChat}
@@ -784,28 +784,28 @@ export function ChatPage() {
               <ChevronLeftIcon className="w-5 h-5 text-slate-600 dark:text-slate-400" />
             </button>
           )}
-          <div>
-            <div className="flex items-center">
-              <span className="text-slate-800 dark:text-slate-100 text-lg sm:text-2xl font-bold tracking-tight px-1 -mx-1">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center min-w-0">
+              <span className="text-slate-800 dark:text-slate-100 text-lg sm:text-2xl font-bold tracking-tight px-1 -mx-1 flex-shrink-0">
                 SpAIglass
               </span>
               {workingDirectory && (
                 <span
-                  className="ml-3 text-sm font-medium text-blue-500 dark:text-blue-400"
+                  className="ml-3 text-sm font-medium text-blue-500 dark:text-blue-400 truncate min-w-0"
                   title={workingDirectory}
                 >
                   {workingDirectory}
                 </span>
               )}
               {activeContext && (
-                <span className="ml-2 text-xs font-medium text-emerald-500 dark:text-emerald-400">
+                <span className="ml-2 text-xs font-medium text-emerald-500 dark:text-emerald-400 flex-shrink-0">
                   / {activeContext.name}
                 </span>
               )}
               {(isHistoryView || sessionId) && (
                 <>
-                  <span className="text-slate-400 mx-2">›</span>
-                  <span className="text-slate-800 dark:text-slate-100 text-lg font-bold">
+                  <span className="text-slate-400 mx-2 flex-shrink-0">›</span>
+                  <span className="text-slate-800 dark:text-slate-100 text-lg font-bold flex-shrink-0">
                     {isHistoryView ? "History" : "Conversation"}
                   </span>
                 </>
@@ -814,7 +814,8 @@ export function ChatPage() {
             {workingDirectory && (
               <button
                 onClick={handleBackToProjectChat}
-                className="text-xs font-mono text-slate-500 dark:text-slate-400 hover:text-blue-500 transition-colors"
+                className="text-xs font-mono text-slate-500 dark:text-slate-400 hover:text-blue-500 transition-colors truncate max-w-full block text-left"
+                title={workingDirectory}
               >
                 {workingDirectory}
                 {sessionId && (

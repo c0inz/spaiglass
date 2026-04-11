@@ -170,6 +170,10 @@ async function handleHttpRequest(msg: Record<string, unknown>) {
     const isText = /text|json|javascript|css|xml|svg|html|font\/woff/.test(
       contentType,
     );
+    // Streaming responses (NDJSON, SSE) must be forwarded incrementally
+    // rather than buffered — otherwise the browser gets everything at once.
+    const isStreaming =
+      contentType.includes("x-ndjson") || contentType.includes("event-stream");
 
     const respHeaders: Record<string, string> = {};
     resp.headers.forEach((v, k) => {
@@ -181,24 +185,58 @@ async function handleHttpRequest(msg: Record<string, unknown>) {
       }
     });
 
-    let respBody: string;
-    if (isText) {
-      respBody = await resp.text();
-    } else {
-      const buf = Buffer.from(await resp.arrayBuffer());
-      respBody = buf.toString("base64");
-    }
+    if (isStreaming && resp.body) {
+      // Stream: send headers immediately, then forward each chunk as it arrives.
+      relayWs!.send(
+        JSON.stringify({
+          type: "http_stream_start",
+          reqId,
+          status: resp.status,
+          headers: respHeaders,
+        }),
+      );
 
-    relayWs!.send(
-      JSON.stringify({
-        type: "http_response",
-        reqId,
-        status: resp.status,
-        headers: respHeaders,
-        body: respBody,
-        bodyEncoding: isText ? "utf-8" : "base64",
-      }),
-    );
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const text = decoder.decode(value, { stream: true });
+          if (text) {
+            relayWs!.send(
+              JSON.stringify({
+                type: "http_stream_chunk",
+                reqId,
+                data: text,
+              }),
+            );
+          }
+        }
+      } finally {
+        relayWs!.send(JSON.stringify({ type: "http_stream_end", reqId }));
+      }
+    } else {
+      // Buffered: read entire body, send as one message (existing behavior).
+      let respBody: string;
+      if (isText) {
+        respBody = await resp.text();
+      } else {
+        const buf = Buffer.from(await resp.arrayBuffer());
+        respBody = buf.toString("base64");
+      }
+
+      relayWs!.send(
+        JSON.stringify({
+          type: "http_response",
+          reqId,
+          status: resp.status,
+          headers: respHeaders,
+          body: respBody,
+          bodyEncoding: isText ? "utf-8" : "base64",
+        }),
+      );
+    }
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
     log(`HTTP proxy error for ${method} ${path}: ${message}`);

@@ -31,16 +31,38 @@ const VIEWER_BLOCKED_TYPES = new Set([
 ]);
 
 export interface HttpProxyResponse {
+  kind: "buffered";
   status: number;
   headers: Record<string, string>;
   body: string;
   bodyEncoding?: "utf-8" | "base64";
 }
 
+export interface HttpStreamResponse {
+  kind: "stream";
+  status: number;
+  headers: Record<string, string>;
+  stream: ReadableStream<Uint8Array>;
+}
+
+export type HttpProxyResult = HttpProxyResponse | HttpStreamResponse;
+
 interface PendingHttpRequest {
-  resolve: (resp: HttpProxyResponse) => void;
+  resolve: (resp: HttpProxyResult) => void;
   reject: (err: Error) => void;
   timer: ReturnType<typeof setTimeout>;
+  /**
+   * Set when the connector has sent `http_stream_start` for this request.
+   * Subsequent `http_stream_chunk` / `http_stream_end` frames for the same
+   * reqId are piped into this controller. The entry is removed from
+   * `httpPending` on `http_stream_end` (or on abort).
+   */
+  streamController?: ReadableStreamDefaultController<Uint8Array>;
+  /**
+   * Timer used while a stream is in flight to guard against a silently
+   * dropped connector → relay socket. Reset on every chunk.
+   */
+  streamIdleTimer?: ReturnType<typeof setTimeout>;
 }
 
 interface ConnectorChannel {
@@ -153,17 +175,30 @@ class ChannelManager {
     }
   }
 
-  /** Proxy an HTTP request through the connector WebSocket tunnel */
-  httpRequest(connectorId: string, method: string, path: string, headers: Record<string, string>, body?: string, bodyEncoding?: "utf-8" | "base64"): Promise<HttpProxyResponse> {
+  /**
+   * Proxy an HTTP request through the connector WebSocket tunnel.
+   *
+   * The initial response handshake (first `http_response` or `http_stream_start`
+   * frame) must arrive within 60s. For streaming responses we then allow up to
+   * 10 minutes of idle time between chunks before declaring the stream dead,
+   * which comfortably covers long Claude thinking windows without leaking
+   * forever on a wedged connector.
+   */
+  httpRequest(connectorId: string, method: string, path: string, headers: Record<string, string>, body?: string, bodyEncoding?: "utf-8" | "base64"): Promise<HttpProxyResult> {
     const channel = this.channels.get(connectorId);
     if (!channel) return Promise.reject(new Error("VM offline"));
 
     const reqId = crypto.randomUUID();
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
+        const pending = this.httpPending.get(reqId);
+        if (pending?.streamController) {
+          // Stream already started — don't reject; the idle timer owns lifetime.
+          return;
+        }
         this.httpPending.delete(reqId);
-        reject(new Error("HTTP proxy timeout"));
-      }, 30_000);
+        reject(new Error("HTTP proxy timeout (initial response)"));
+      }, 60_000);
 
       this.httpPending.set(reqId, { resolve, reject, timer });
 
@@ -185,13 +220,70 @@ class ChannelManager {
     });
   }
 
-  /** Resolve a pending HTTP proxy request with the VM's response */
+  /** Resolve a pending HTTP proxy request with the VM's buffered response */
   resolveHttpResponse(reqId: string, response: HttpProxyResponse): void {
     const pending = this.httpPending.get(reqId);
     if (!pending) return;
     clearTimeout(pending.timer);
     this.httpPending.delete(reqId);
     pending.resolve(response);
+  }
+
+  /** VM has started streaming an HTTP response — create the stream and resolve the promise */
+  startHttpStream(reqId: string, status: number, headers: Record<string, string>): void {
+    const pending = this.httpPending.get(reqId);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+
+    const stream = new ReadableStream<Uint8Array>({
+      start: (controller) => {
+        pending.streamController = controller;
+      },
+      cancel: () => {
+        // Browser aborted — clean up immediately
+        if (pending.streamIdleTimer) clearTimeout(pending.streamIdleTimer);
+        this.httpPending.delete(reqId);
+      },
+    });
+
+    // Arm idle watchdog (reset on every chunk). 10 minute ceiling on silence.
+    const armIdle = () => {
+      if (pending.streamIdleTimer) clearTimeout(pending.streamIdleTimer);
+      pending.streamIdleTimer = setTimeout(() => {
+        try {
+          pending.streamController?.error(new Error("HTTP stream idle timeout"));
+        } catch { /* controller may already be closed */ }
+        this.httpPending.delete(reqId);
+      }, 600_000);
+    };
+    armIdle();
+    // Replace the arm function so chunk handler can call it
+    (pending as PendingHttpRequest & { rearmIdle?: () => void }).rearmIdle = armIdle;
+
+    pending.resolve({ kind: "stream", status, headers, stream });
+  }
+
+  /** VM sent a chunk of a streaming HTTP response — feed it into the ReadableStream */
+  pushHttpStreamChunk(reqId: string, data: string): void {
+    const pending = this.httpPending.get(reqId) as
+      | (PendingHttpRequest & { rearmIdle?: () => void })
+      | undefined;
+    if (!pending?.streamController) return;
+    try {
+      pending.streamController.enqueue(new TextEncoder().encode(data));
+      pending.rearmIdle?.();
+    } catch { /* controller closed — ignore late chunks */ }
+  }
+
+  /** VM finished streaming — close the ReadableStream */
+  endHttpStream(reqId: string): void {
+    const pending = this.httpPending.get(reqId);
+    if (!pending) return;
+    if (pending.streamIdleTimer) clearTimeout(pending.streamIdleTimer);
+    try {
+      pending.streamController?.close();
+    } catch { /* already closed */ }
+    this.httpPending.delete(reqId);
   }
 
   stats(): { connectors: number; browsers: number } {
@@ -268,11 +360,41 @@ export function handleConnectorWs() {
         const reqId = msg.reqId as string;
         if (reqId) {
           cm.resolveHttpResponse(reqId, {
+            kind: "buffered",
             status: msg.status as number,
             headers: (msg.headers || {}) as Record<string, string>,
             body: (msg.body || "") as string,
             bodyEncoding: msg.bodyEncoding as "utf-8" | "base64" | undefined,
           });
+        }
+        return;
+      }
+
+      // Streaming HTTP response from VM — matches connector.ts's http_stream_*
+      // frames for NDJSON / event-stream responses (chat, tool output, etc.).
+      if (msg.type === "http_stream_start") {
+        const reqId = msg.reqId as string;
+        if (reqId) {
+          cm.startHttpStream(
+            reqId,
+            (msg.status as number) ?? 200,
+            (msg.headers || {}) as Record<string, string>,
+          );
+        }
+        return;
+      }
+      if (msg.type === "http_stream_chunk") {
+        const reqId = msg.reqId as string;
+        const data = msg.data as string;
+        if (reqId && typeof data === "string") {
+          cm.pushHttpStreamChunk(reqId, data);
+        }
+        return;
+      }
+      if (msg.type === "http_stream_end") {
+        const reqId = msg.reqId as string;
+        if (reqId) {
+          cm.endHttpStream(reqId);
         }
         return;
       }

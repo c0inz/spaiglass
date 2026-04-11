@@ -299,7 +299,12 @@ export async function handleChatRequest(
   return new Response(stream, {
     headers: {
       "Content-Type": "application/x-ndjson",
-      "Cache-Control": "no-cache",
+      // no-transform prevents proxies from mangling chunks; X-Accel-Buffering
+      // tells nginx to flush every write immediately. Without these, messages
+      // queue up in intermediate buffers and the client spinner hangs until
+      // the whole response is drained at stream close.
+      "Cache-Control": "no-cache, no-transform",
+      "X-Accel-Buffering": "no",
       Connection: "keep-alive",
     },
   });

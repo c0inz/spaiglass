@@ -2178,6 +2178,19 @@ ${FAVICON}
       }
     }
 
+    // Streaming response path — the VM opted into http_stream_start/chunk/end.
+    // Pipe the ReadableStream straight through to the browser without buffering
+    // so chat NDJSON lines arrive incrementally. HTML injection only applies
+    // to buffered text responses below.
+    if (resp.kind === "stream") {
+      c.header("Cache-Control", "no-cache, no-transform");
+      c.header("X-Accel-Buffering", "no");
+      return new Response(resp.stream, {
+        status: resp.status,
+        headers: c.res.headers,
+      });
+    }
+
     const isHtml = resp.headers["content-type"]?.includes("text/html");
 
     if (isHtml && resp.bodyEncoding !== "base64") {
