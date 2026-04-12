@@ -1,7 +1,7 @@
 /**
- * SGCleanRelay — Stateless routing proxy for Spaiglass VM fleet.
+ * SGCleanRelay — Stateless routing proxy for SpAIglass VM fleet.
  *
- * Routes browser WebSocket connections to private Spaiglass VMs.
+ * Routes browser WebSocket connections to private SpAIglass VMs.
  * GitHub OAuth for identity. No secrets, files, or conversations stored.
  */
 
@@ -444,7 +444,7 @@ app.use("*", authMiddleware());
 // Latest spaiglass install version. Read from RELEASE_DIR/VERSION on every
 // request so a new release tarball can be dropped in without restarting the
 // relay. Falls back to "unknown" if the file is missing.
-function getLatestSpaiglassVersion(): string {
+function getLatestSpAIglassVersion(): string {
   try {
     return readFileSync(pathJoin(RELEASE_DIR, "VERSION"), "utf-8").trim() || "unknown";
   } catch {
@@ -521,7 +521,7 @@ app.get("/api/health", (c) => {
     version: "0.1.0",
     commit: RELAY_COMMIT,
     frontend_sha256: FRONTEND_BUNDLE_SHA256,
-    spaiglassVersion: getLatestSpaiglassVersion(),
+    spaiglassVersion: getLatestSpAIglassVersion(),
     frontendVersion: getLatestFrontendVersion(),
     connectors: stats.connectors,
     browsers: stats.browsers,
@@ -536,7 +536,7 @@ app.get("/api/health", (c) => {
 // the per-VM banner.
 app.get("/api/release", (c) => {
   return c.json({
-    version: getLatestSpaiglassVersion(),
+    version: getLatestSpAIglassVersion(),
     frontendVersion: getLatestFrontendVersion(),
     tarball: `${PUBLIC_URL}/dist.tar.gz`,
     install: `${PUBLIC_URL}/install.sh`,
@@ -575,7 +575,7 @@ app.get("/dist.tar.gz", (c) => {
   c.header("Content-Type", "application/gzip");
   c.header("Content-Length", String(stat.size));
   c.header("Cache-Control", "no-cache");
-  c.header("X-Spaiglass-Version", getLatestSpaiglassVersion());
+  c.header("X-SpAIglass-Version", getLatestSpAIglassVersion());
   // @ts-expect-error Hono accepts a Node Readable as the body
   return c.body(createReadStream(path));
 });
@@ -607,7 +607,7 @@ app.get("/releases/spaiglass-host-:target{.+\\.tar\\.gz}", (c) => {
   c.header("Content-Type", "application/gzip");
   c.header("Content-Length", String(stat.size));
   c.header("Cache-Control", "no-cache");
-  c.header("X-Spaiglass-Version", getLatestSpaiglassVersion());
+  c.header("X-SpAIglass-Version", getLatestSpAIglassVersion());
   // @ts-expect-error Hono accepts a Node Readable as the body
   return c.body(createReadStream(path));
 });
@@ -616,8 +616,8 @@ app.get("/releases/spaiglass-host-:target{.+\\.tar\\.gz}", (c) => {
 // Both /setup (HTML) and /api/setup (JSON) render from this.
 function getSetupData() {
   return {
-    project: "Spaiglass",
-    description: "Browser-based multi-VM interface for Claude Code. Spaiglass is a stateless relay that routes browser WebSocket connections to Claude Code running on your own machines.",
+    project: "SpAIglass",
+    description: "Browser-based multi-VM interface for Claude Code. SpAIglass is a stateless relay that routes browser WebSocket connections to Claude Code running on your own machines.",
     license: "MIT",
     source: "https://github.com/c0inz/spaiglass",
     relay: PUBLIC_URL,
@@ -632,7 +632,7 @@ function getSetupData() {
     steps: [
       {
         title: "Authenticate",
-        description: "Exchange a GitHub PAT for a Spaiglass agent key. The PAT proves your GitHub identity. The agent key is used for all subsequent API calls.",
+        description: "Exchange a GitHub PAT for a SpAIglass agent key. The PAT proves your GitHub identity. The agent key is used for all subsequent API calls.",
         endpoint: `POST ${PUBLIC_URL}/api/auth/token-exchange`,
         body: '{ "github_pat": "ghp_YOUR_TOKEN", "key_name": "my-agent" }',
         note: "Save the agent_key — it is shown only once. If you already have an agent key, skip this step. If using the browser dashboard, sign in with GitHub instead.",
@@ -646,7 +646,7 @@ function getSetupData() {
       },
       {
         title: "Install Claude Code CLI on the host",
-        description: "Spaiglass spawns the official Anthropic Claude Code CLI to run sessions. It must be installed and authenticated before the spaiglass installer runs.",
+        description: "SpAIglass spawns the official Anthropic Claude Code CLI to run sessions. It must be installed and authenticated before the spaiglass installer runs.",
         requirements: ["Node.js >= 20", "Claude Code CLI authenticated (claude --version should work)"],
         commands: [
           "# Linux / macOS:",
@@ -657,7 +657,7 @@ function getSetupData() {
           "irm https://claude.ai/install.ps1 | iex",
           "claude  # one-time interactive auth",
         ],
-        note: "Spaiglass looks for the binary at ~/.local/bin/claude on Linux/macOS and %USERPROFILE%\\.local\\bin\\claude.exe on Windows.",
+        note: "SpAIglass looks for the binary at ~/.local/bin/claude on Linux/macOS and %USERPROFILE%\\.local\\bin\\claude.exe on Windows.",
       },
       {
         title: "Install spaiglass on the host (one liner)",
@@ -758,7 +758,7 @@ app.get("/setup", (c) => {
   `).join("");
 
   return c.html(`<!DOCTYPE html>
-<html><head><title>Setup — Spaiglass</title>
+<html><head><title>Setup — SpAIglass</title>
 ${FAVICON}
 ${THEME_HEAD}
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -788,12 +788,12 @@ ${THEME_TOGGLE_HTML}
   <a href="/">&larr; Home</a>
   <a href="https://github.com/c0inz/spaiglass">GitHub</a>
 </div>
-<h1>Spaiglass Setup Guide</h1>
+<h1>SpAIglass Setup Guide</h1>
 <p class="subtitle">${data.description}</p>
 
 <div class="features">
   <h2>Supported Platforms</h2>
-  <p style="margin: 4px 0 10px; font-size: 0.92em; color: #475569;">Spaiglass runs anywhere the Anthropic Claude Code CLI runs. Mix and match in the same fleet.</p>
+  <p style="margin: 4px 0 10px; font-size: 0.92em; color: #475569;">SpAIglass runs anywhere the Anthropic Claude Code CLI runs. Mix and match in the same fleet.</p>
   <ul>
     <li><strong>Linux</strong> — Ubuntu, Debian, Fedora, Arch, etc. Installs as a <code>systemd --user</code> service with linger so it survives logout.</li>
     <li><strong>macOS</strong> 12+ (Intel or Apple Silicon) — installs as a launchd LaunchAgent under <code>~/Library/LaunchAgents</code>.</li>
@@ -853,7 +853,7 @@ app.get("/api/setup", (c) => {
 // Terms of Service
 app.get("/terms", (c) => {
   return c.html(`<!DOCTYPE html>
-<html><head><title>Terms of Service - Spaiglass</title>
+<html><head><title>Terms of Service - SpAIglass</title>
 ${FAVICON}
 ${THEME_HEAD}
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -870,7 +870,7 @@ ${THEME_TOGGLE_HTML}
 <p class="updated">Last updated: April 9, 2026</p>
 
 <h2>1. Service Description</h2>
-<p>Spaiglass ("the Service") is a browser-based interface that routes connections to your virtual machines through a relay server. The Service is operated by ReadyStack.dev.</p>
+<p>SpAIglass ("the Service") is a browser-based interface that routes connections to your virtual machines through a relay server. The Service is operated by ReadyStack.dev.</p>
 
 <h2>2. Eligibility</h2>
 <p>You must have a valid GitHub account to use the Service. By signing in, you agree to these terms.</p>
@@ -897,19 +897,19 @@ ${THEME_TOGGLE_HTML}
 <p>We may suspend or terminate your access at any time for violation of these terms. You may stop using the Service at any time.</p>
 
 <h2>8. Open Source</h2>
-<p>Spaiglass is open source software released under the <a href="https://github.com/c0inz/spaiglass/blob/main/LICENSE">MIT License</a>. The complete source code is available at <a href="https://github.com/c0inz/spaiglass">github.com/c0inz/spaiglass</a>.</p>
+<p>SpAIglass is open source software released under the <a href="https://github.com/c0inz/spaiglass/blob/main/LICENSE">MIT License</a>. The complete source code is available at <a href="https://github.com/c0inz/spaiglass">github.com/c0inz/spaiglass</a>.</p>
 
 <h2>9. Changes</h2>
 <p>We may update these terms. Continued use after changes constitutes acceptance.</p>
 
-<p><a href="/">&larr; Back to Spaiglass</a></p>
+<p><a href="/">&larr; Back to SpAIglass</a></p>
 </body></html>`);
 });
 
 // Privacy Policy
 app.get("/privacy", (c) => {
   return c.html(`<!DOCTYPE html>
-<html><head><title>Privacy Policy - Spaiglass</title>
+<html><head><title>Privacy Policy - SpAIglass</title>
 ${FAVICON}
 ${THEME_HEAD}
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -955,12 +955,12 @@ ${THEME_TOGGLE_HTML}
 <p>We use GitHub OAuth for authentication. GitHub's privacy policy applies to data they collect during the sign-in process. We use Cloudflare for DNS and Caddy for TLS — standard infrastructure that does not process your VM traffic.</p>
 
 <h2>7. Open Source</h2>
-<p>Spaiglass is open source under the <a href="https://github.com/c0inz/spaiglass/blob/main/LICENSE">MIT License</a>. You can audit the complete relay source code at <a href="https://github.com/c0inz/spaiglass/tree/main/relay/src">github.com/c0inz/spaiglass</a> to verify exactly what data is collected and how it flows.</p>
+<p>SpAIglass is open source under the <a href="https://github.com/c0inz/spaiglass/blob/main/LICENSE">MIT License</a>. You can audit the complete relay source code at <a href="https://github.com/c0inz/spaiglass/tree/main/relay/src">github.com/c0inz/spaiglass</a> to verify exactly what data is collected and how it flows.</p>
 
 <h2>8. Changes</h2>
 <p>We may update this policy. Material changes will be noted on this page with an updated date.</p>
 
-<p><a href="/">&larr; Back to Spaiglass</a></p>
+<p><a href="/">&larr; Back to SpAIglass</a></p>
 </body></html>`);
 });
 
@@ -980,7 +980,7 @@ function renderFleetRelay(c: Context<RelayEnv>) {
   const user = c.get("user");
   if (!user) {
     return c.html(`<!DOCTYPE html>
-<html><head><title>Spaiglass</title>
+<html><head><title>SpAIglass</title>
 ${FAVICON}
 ${THEME_HEAD}
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -1005,7 +1005,7 @@ ${THEME_HEAD}
 </style>
 </head><body>
 ${THEME_TOGGLE_HTML}
-<h1>Spaiglass</h1>
+<h1>SpAIglass</h1>
 <p class="tagline">Claude chat--markdown access--one interface--ANYWHERE</p>
 <p class="pitch">Browser-based interface for Claude Code across your machines. See your project files, edit markdown, run tools, and chat with Claude — from any device, anywhere. Open source. Fully auditable. Your code never leaves your machine.</p>
 <p class="pitch" style="font-size: 0.95em; color: #475569;">Runs anywhere the Claude Code CLI runs: <strong>Linux</strong>, <strong>macOS</strong> (Intel + Apple Silicon), and <strong>Windows&nbsp;10/11</strong>. One dashboard, mixed fleet, one-line installer per platform.</p>
@@ -1032,7 +1032,7 @@ function copyPrompt(el) {
   }
 
   return c.html(`<!DOCTYPE html>
-<html><head><title>Spaiglass Fleet</title>
+<html><head><title>SpAIglass Fleet</title>
 ${FAVICON}
 ${THEME_HEAD}
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -1114,7 +1114,7 @@ ${THEME_TOGGLE_HTML}
       <circle cx="34" cy="34" r="20" fill="url(#hl)"/>
       <ellipse cx="26" cy="25" rx="3.5" ry="2.8" fill="white" opacity=".25"/>
     </svg>
-    <span class="brand-name">Spaiglass</span>
+    <span class="brand-name">SpAIglass</span>
   </a>
   <div class="user">
     <img src="${user.github_avatar}" alt="${user.github_login}">
@@ -1371,34 +1371,34 @@ function compareVersion(a, b) {
 }
 
 // Cached latest version from /api/health. Refreshed each loadConnectors tick.
-var latestSpaiglassVersion = null;
+var latestSpAIglassVersion = null;
 var bannerDismissedFor = sessionStorage.getItem('sg_banner_dismissed') || '';
 
 document.getElementById('versionBannerDismiss').addEventListener('click', function() {
-  sessionStorage.setItem('sg_banner_dismissed', latestSpaiglassVersion || '');
-  bannerDismissedFor = latestSpaiglassVersion || '';
+  sessionStorage.setItem('sg_banner_dismissed', latestSpAIglassVersion || '');
+  bannerDismissedFor = latestSpAIglassVersion || '';
   document.getElementById('versionBanner').style.display = 'none';
 });
 
 function updateVersionBanner(connectors) {
   var banner = document.getElementById('versionBanner');
-  if (!latestSpaiglassVersion || latestSpaiglassVersion === 'unknown') {
+  if (!latestSpAIglassVersion || latestSpAIglassVersion === 'unknown') {
     banner.style.display = 'none';
     return;
   }
   // Only count online VMs whose reported version is older than latest
   var stale = connectors.filter(function(c) {
-    return c.online && compareVersion(c.spaiglassVersion, latestSpaiglassVersion) < 0;
+    return c.online && compareVersion(c.spaiglassVersion, latestSpAIglassVersion) < 0;
   });
-  if (stale.length === 0 || bannerDismissedFor === latestSpaiglassVersion) {
+  if (stale.length === 0 || bannerDismissedFor === latestSpAIglassVersion) {
     banner.style.display = 'none';
     return;
   }
   var names = stale.map(function(c) { return c.name; }).join(', ');
   document.getElementById('versionBannerText').innerHTML =
     '<strong>' + stale.length + ' of ' + connectors.filter(function(c){return c.online;}).length +
-    ' online VM(s) running an out-of-date Spaiglass</strong> &nbsp; ' +
-    '(latest <code>' + latestSpaiglassVersion + '</code>) &nbsp; ' +
+    ' online VM(s) running an out-of-date SpAIglass</strong> &nbsp; ' +
+    '(latest <code>' + latestSpAIglassVersion + '</code>) &nbsp; ' +
     '<span style="color:#92400e;">' + names + '</span><br>' +
     '<span style="font-size:0.92em;">Run this on each VM to upgrade. The installer reuses the existing token.</span>';
   banner.style.display = 'block';
@@ -1409,7 +1409,7 @@ async function loadConnectors() {
   // Refresh latest-version metadata in parallel with the connector list.
   // /api/health is unauthenticated, so it's cheap and shareable across browsers.
   fetch('/api/health').then(function(r) { return r.json(); }).then(function(h) {
-    latestSpaiglassVersion = h.spaiglassVersion || null;
+    latestSpAIglassVersion = h.spaiglassVersion || null;
   }).catch(function() { /* ignore */ });
 
   var res = await fetch('/api/connectors');
@@ -1451,10 +1451,10 @@ async function loadConnectors() {
     var hasHidden = hiddenRoles.some(function(h) { return h.startsWith(c.id + ':'); });
     var verPill = '';
     if (c.online && c.spaiglassVersion) {
-      var stale = latestSpaiglassVersion && compareVersion(c.spaiglassVersion, latestSpaiglassVersion) < 0;
+      var stale = latestSpAIglassVersion && compareVersion(c.spaiglassVersion, latestSpAIglassVersion) < 0;
       var color = stale ? '#92400e' : '#475569';
       var bg = stale ? '#fef3c7' : '#f1f5f9';
-      var title = stale ? ('Out of date — latest is ' + latestSpaiglassVersion) : 'Up to date';
+      var title = stale ? ('Out of date — latest is ' + latestSpAIglassVersion) : 'Up to date';
       verPill = '<span title="' + title + '" style="font-size:0.75em; padding: 2px 8px; border-radius: 10px; background: ' + bg + '; color: ' + color + '; font-family: ui-monospace, monospace;">' + c.spaiglassVersion + '</span>';
     }
     var rolePill = '';
@@ -1946,7 +1946,7 @@ function tryServeFromRelayFrontend(
   else                 tabTitle = connectorName;
 
   const prefix = `/vm/${slug}`;
-  const relayVersion = getLatestSpaiglassVersion();
+  const relayVersion = getLatestSpAIglassVersion();
   const frontendVersion = getLatestFrontendVersion();
   html = html.replace(/<title>[^<]*<\/title>/, `<title>${tabTitle}</title>`);
   html = html.replace(/<link rel="icon"[^>]*>/, FAVICON);
@@ -2007,7 +2007,7 @@ function tryServeFromRelayFrontend(
   c.header("Content-Type", "text/html; charset=utf-8");
   c.header("Cache-Control", "no-cache, no-store, must-revalidate");
   c.header("Content-Security-Policy", csp);
-  c.header("X-Spaiglass-Version", relayVersion);
+  c.header("X-SpAIglass-Version", relayVersion);
   return new Response(html, { status: 200, headers: c.res.headers });
 }
 
@@ -2036,7 +2036,7 @@ function show(latest){
   b.id='sg-skew-banner';
   b.style.cssText='position:fixed;bottom:16px;right:16px;z-index:99999;background:#1a1a2e;color:#f0f0f5;padding:10px 14px;border-radius:8px;font:13px system-ui,sans-serif;box-shadow:0 4px 16px rgba(0,0,0,.3);border:1px solid #4a4a6e;max-width:320px';
   b.innerHTML='<div style="margin-bottom:6px;font-weight:600">Update available</div>'+
-    '<div style="opacity:.8;margin-bottom:8px">A new Spaiglass frontend ('+latest+') is available. Reload to refresh this page.</div>'+
+    '<div style="opacity:.8;margin-bottom:8px">A new SpAIglass frontend ('+latest+') is available. Reload to refresh this page.</div>'+
     '<button id="sg-skew-reload" style="background:#5a9ee0;color:#fff;border:0;padding:5px 12px;border-radius:5px;cursor:pointer;font:inherit;margin-right:6px">Reload</button>'+
     '<button id="sg-skew-dismiss" style="background:transparent;color:#aaa;border:0;padding:5px 8px;cursor:pointer;font:inherit">Dismiss</button>';
   document.body.appendChild(b);

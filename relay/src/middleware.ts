@@ -111,7 +111,7 @@ export function securityHeaders(): MiddlewareHandler {
       "max-age=31536000; includeSubDomains; preload",
     );
 
-    // Block framing entirely. Spaiglass has no legitimate iframe embedders.
+    // Block framing entirely. SpAIglass has no legitimate iframe embedders.
     c.header("X-Frame-Options", "DENY");
 
     // Stop browsers from MIME-sniffing responses away from their declared type.
@@ -121,7 +121,7 @@ export function securityHeaders(): MiddlewareHandler {
     // and nothing at all on downgrades. Avoids leaking session-id-bearing URLs.
     c.header("Referrer-Policy", "strict-origin-when-cross-origin");
 
-    // Disable browser features Spaiglass does not use. The terminal renderer
+    // Disable browser features SpAIglass does not use. The terminal renderer
     // needs none of these — clipboard read/write is handled inside the WS
     // payload, not via the Async Clipboard API.
     c.header(

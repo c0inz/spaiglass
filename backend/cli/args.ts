@@ -27,7 +27,7 @@ export function parseCliArgs(): ParsedArgs {
     .name("spaiglass-backend")
     .version(version, "-v, --version", "display version number")
     .description(
-      "Spaiglass host backend — runs Claude Code SDK and tunnels session frames to the relay",
+      "SpAIglass host backend — runs Claude Code SDK and tunnels session frames to the relay",
     )
     .option(
       "-p, --port <port>",

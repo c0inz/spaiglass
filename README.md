@@ -38,7 +38,7 @@ SpAIglass lets you run Claude Code on remote VMs and access them through your br
 
 ### Supported Claude CLI platforms
 
-Spaiglass uses the official **Anthropic Claude Code CLI** to spawn sessions on each host. It runs anywhere the Claude CLI does:
+SpAIglass uses the official **Anthropic Claude Code CLI** to spawn sessions on each host. It runs anywhere the Claude CLI does:
 
 | Platform    | Versions                                                               | Service                                            | Installer                                                                      |
 | ----------- | ---------------------------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------ |
@@ -66,7 +66,7 @@ SGCleanRelay (spaiglass.xyz)              <-- this repo: relay/
   |
   | WSS (persistent, dialed OUT from the host)
   v
-Spaiglass host (Linux / macOS / Windows)  <-- this repo: backend/ + connector
+SpAIglass host (Linux / macOS / Windows)  <-- this repo: backend/ + connector
   |  - Backend on 127.0.0.1:8080
   |  - Outbound connector dials wss://spaiglass.xyz/connector
   |  - File browser, editor, project discovery

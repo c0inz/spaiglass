@@ -2,7 +2,7 @@
   "name": "spaiglass-backend",
   "version": "0.1.0",
   "type": "module",
-  "description": "Host backend for Spaiglass — runs the Claude Code SDK on the user's machine and tunnels session frames to the relay over WebSocket",
+  "description": "Host backend for SpAIglass — runs the Claude Code SDK on the user's machine and tunnels session frames to the relay over WebSocket",
   "keywords": [
     "spaiglass",
     "claude",

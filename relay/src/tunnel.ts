@@ -1,5 +1,5 @@
 /**
- * WebSocket tunnel — bridges browsers to Spaiglass VMs.
+ * WebSocket tunnel — bridges browsers to SpAIglass VMs.
  *
  * Three proxy modes:
  * - /connector — VM inbound: VM connects, sends token, gets registered

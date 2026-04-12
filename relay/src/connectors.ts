@@ -46,7 +46,7 @@ export function connectorRoutes(): Hono<RelayEnv> {
       online: cm.isOnline(conn.id),
       lastSeen: conn.last_seen,
       createdAt: conn.created_at,
-      // Spaiglass install version reported by the VM on its WS auth handshake.
+      // SpAIglass install version reported by the VM on its WS auth handshake.
       // Null when offline. Dashboard compares against LATEST_SPAIGLASS_VERSION.
       spaiglassVersion: cm.getVersion(conn.id),
     }));
@@ -113,7 +113,7 @@ export function connectorRoutes(): Hono<RelayEnv> {
 
     const publicUrl = c.env.PUBLIC_URL;
     const envContent = [
-      `# Spaiglass VM Connector Configuration`,
+      `# SpAIglass VM Connector Configuration`,
       `# Generated for: ${connector.name}`,
       `# Relay: ${publicUrl}`,
       `# Source: https://github.com/c0inz/spaiglass (MIT License)`,
@@ -148,7 +148,7 @@ export function connectorRoutes(): Hono<RelayEnv> {
       `CONNECTOR_TOKEN=${connector.token}`,
       `CONNECTOR_ID=${connector.id}`,
       ``,
-      `# Spaiglass backend settings`,
+      `# SpAIglass backend settings`,
       `PORT=8080`,
       `HOST=0.0.0.0`,
       ``,

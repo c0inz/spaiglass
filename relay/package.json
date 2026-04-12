@@ -2,7 +2,7 @@
   "name": "sgcleanrelay",
   "version": "0.1.0",
   "type": "module",
-  "description": "SGCleanRelay — Stateless routing proxy for Spaiglass VM fleet",
+  "description": "SGCleanRelay — Stateless routing proxy for SpAIglass VM fleet",
   "main": "src/server.ts",
   "scripts": {
     "dev": "tsx watch src/server.ts",

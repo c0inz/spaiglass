@@ -7,7 +7,7 @@ import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Spaiglass build version: date-based (YYYY.MM.DD). Embedded into the bundle
+// SpAIglass build version: date-based (YYYY.MM.DD). Embedded into the bundle
 // at build time so the relay can detect VMs running an out-of-date frontend.
 // Override with SPAIGLASS_VERSION env var for reproducible/release builds.
 function spaiglassVersion(): string {

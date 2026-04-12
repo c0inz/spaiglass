@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# pack.sh — build the slim Spaiglass VM tarball that the installer downloads.
+# pack.sh — build the slim SpAIglass VM tarball that the installer downloads.
 #
 # Layout produced:
 #
@@ -36,7 +36,7 @@ for arg in "$@"; do
 done
 
 VERSION="$(date -u +%Y.%m.%d)"
-echo "==> Spaiglass VM tarball pack — version $VERSION"
+echo "==> SpAIglass VM tarball pack — version $VERSION"
 
 # 1. Build backend bundle (skip the static copy step entirely — relay serves frontend)
 if [ "$DO_BUILD" = "1" ]; then

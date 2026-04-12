@@ -1,5 +1,5 @@
 /**
- * Spaiglass Relay Connector Client
+ * SpAIglass Relay Connector Client
  *
  * Runs on the VM alongside the backend. Connects outbound to the relay
  * and bridges WebSocket traffic between remote browsers and the local
@@ -353,7 +353,7 @@ export function startConnector(): void {
   CONNECTOR_TOKEN = process.env.CONNECTOR_TOKEN;
   CONNECTOR_ID = process.env.CONNECTOR_ID;
   LOCAL_PORT = process.env.PORT || "8080";
-  // Spaiglass install version (date string like "2026.04.10"). Written into
+  // SpAIglass install version (date string like "2026.04.10"). Written into
   // .env by install.sh so the relay can detect VMs on out-of-date installs.
   SPAIGLASS_VERSION = process.env.SPAIGLASS_VERSION || "unknown";
   LOCAL_WS = `ws://127.0.0.1:${LOCAL_PORT}/api/ws`;
@@ -367,7 +367,7 @@ export function startConnector(): void {
     RELAY_URL.replace(/^https:/, "wss:").replace(/^http:/, "ws:") +
     "/connector";
 
-  log("Spaiglass Relay Connector Client");
+  log("SpAIglass Relay Connector Client");
   log(`Relay: ${RELAY_URL}`);
   log(`Local backend: ${LOCAL_WS}`);
   log(`Connector ID: ${CONNECTOR_ID || "(from token)"}`);

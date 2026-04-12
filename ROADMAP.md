@@ -31,7 +31,7 @@ These are decisions that should not be relitigated for any item below:
 1. **Claude Code only.** No LLM-agnostic abstraction layer. The product's value is "Claude Code from anywhere," not "any model from anywhere." The code is open source — anyone who wants to run a different model is welcome to fork. We will not maintain a generic adapter ourselves.
 2. **Minimally intrusive on the host.** Every host installer change must move toward smaller footprint, fewer prerequisites, and easier uninstall. New runtime dependencies on the host are an explicit non-goal.
 3. **Bring your own key.** Users must be able to swap between Claude Max subscriptions and direct Anthropic API keys without reinstalling. No lock-in to a specific Anthropic billing model.
-4. **Multi-user shared access from day one.** Spaiglass VMs are not single-tenant. Shared access (Phase 2) is a non-negotiable feature, not a backlog item.
+4. **Multi-user shared access from day one.** SpAIglass VMs are not single-tenant. Shared access (Phase 2) is a non-negotiable feature, not a backlog item.
 5. **Open source and auditable.** Every change must keep the relay readable in an afternoon. New top-level dependencies in `relay/` need a written justification.
 6. **Security claims must be honest.** If a guarantee has a footnote, the README and SECURITY.md state the footnote. We do not let marketing language get ahead of code.
 
@@ -94,7 +94,7 @@ Default to NDJSON unless a concrete need pushes us to SQLite.
 > - The frontend hook (`useWebSocketSession`) captures the role from the relay's `connected` handshake and skips the resume→session_start fallback when the user is a viewer. Viewer UI binding lands when ChatPage migrates onto the WS hook.
 > - Endpoints shipped: `GET /api/connectors` (now returns owned + shared), `GET/POST/PATCH/DELETE /api/connectors/:id/collaborators`, `GET /api/connectors/:id/audit`. Dashboard has a "Manage" modal and a "Shared with me" section.
 
-**This has to exist.** Spaiglass VMs are not single-tenant. Today only the GitHub user who registered a connector can access it — there is no way to share a VM with a teammate, no concept of viewer-only access. This is a hard gap for any team use case.
+**This has to exist.** SpAIglass VMs are not single-tenant. Today only the GitHub user who registered a connector can access it — there is no way to share a VM with a teammate, no concept of viewer-only access. This is a hard gap for any team use case.
 
 Phase 2's committed scope is **shared access only**: each user gets their own session on the shared VM, with role-based permissions enforced at the relay. _Concurrent presence on the same session_ (multiple users attached to the same session ID, typing indicators, input lock, per-message attribution) is **out of scope for this phase** — it's a future-roadmap item, see Backlog. We're not even sure Claude itself supports the concurrent-attach pattern at the API level; that needs verification before any future work.
 

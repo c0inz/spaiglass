@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Unified single-binary entry point for the Spaiglass host.
+ * Unified single-binary entry point for the SpAIglass host.
  *
  * Runs both the local HTTP/WS backend and the relay connector in one
  * process, replacing the legacy two-process layout where install.sh

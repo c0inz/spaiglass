@@ -75,7 +75,7 @@ export function setSettings(settings: AppSettings): void {
 }
 
 function migrateLegacySettings(): AppSettings {
-  // Spaiglass defaults to "glass" for new installs. Existing users who had a
+  // SpAIglass defaults to "glass" for new installs. Existing users who had a
   // legacy theme key get their previous choice preserved below; only first-time
   // visitors with no localStorage at all land on glass.
   const defaultTheme: Theme = "glass";
