@@ -14,7 +14,8 @@ import type { Context } from "hono";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promises as fs } from "node:fs";
-import { readTextFile, writeTextFile, exists } from "../utils/fs.ts";
+import { randomBytes } from "node:crypto";
+import { readTextFile, exists } from "../utils/fs.ts";
 
 const SECRETS_DIR = join(homedir(), ".spaiglass");
 const SECRETS_FILE = join(SECRETS_DIR, "secrets.json");
@@ -22,6 +23,9 @@ const SECRETS_FILE = join(SECRETS_DIR, "secrets.json");
 interface SecretsStore {
   [name: string]: string;
 }
+
+// Serialize all read-modify-write operations to prevent data loss
+let secretsLock: Promise<void> = Promise.resolve();
 
 async function readSecrets(): Promise<SecretsStore> {
   if (!(await exists(SECRETS_FILE))) return {};
@@ -34,9 +38,16 @@ async function readSecrets(): Promise<SecretsStore> {
 
 async function writeSecrets(store: SecretsStore): Promise<void> {
   await fs.mkdir(SECRETS_DIR, { recursive: true });
-  await writeTextFile(SECRETS_FILE, JSON.stringify(store, null, 2), {
-    mode: 0o600,
-  });
+  // Atomic write: write to temp file then rename (prevents partial writes)
+  const tmp = SECRETS_FILE + "." + randomBytes(4).toString("hex") + ".tmp";
+  await fs.writeFile(tmp, JSON.stringify(store, null, 2), { mode: 0o600 });
+  await fs.rename(tmp, SECRETS_FILE);
+}
+
+function withSecretsLock<T>(fn: () => Promise<T>): Promise<T> {
+  const next = secretsLock.then(fn, fn);
+  secretsLock = next.then(() => {}, () => {});
+  return next;
 }
 
 function mask(value: string): string {
@@ -79,10 +90,13 @@ export async function handlePutSecret(c: Context) {
     return c.json({ error: "value must be a non-empty string" }, 400);
   }
 
-  const store = await readSecrets();
-  store[name] = body.value;
-  await writeSecrets(store);
-  return c.json({ ok: true, name, masked: mask(body.value) });
+  const value = body.value;
+  return withSecretsLock(async () => {
+    const store = await readSecrets();
+    store[name] = value;
+    await writeSecrets(store);
+    return c.json({ ok: true, name, masked: mask(value) });
+  });
 }
 
 /**
@@ -92,11 +106,13 @@ export async function handleDeleteSecret(c: Context) {
   const name = c.req.param("name");
   if (!name) return c.json({ error: "name required" }, 400);
 
-  const store = await readSecrets();
-  if (!(name in store)) {
-    return c.json({ error: "secret not found" }, 404);
-  }
-  delete store[name];
-  await writeSecrets(store);
-  return c.json({ ok: true });
+  return withSecretsLock(async () => {
+    const store = await readSecrets();
+    if (!(name in store)) {
+      return c.json({ error: "secret not found" }, 404);
+    }
+    delete store[name];
+    await writeSecrets(store);
+    return c.json({ ok: true });
+  });
 }

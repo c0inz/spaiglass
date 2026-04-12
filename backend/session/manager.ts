@@ -106,6 +106,7 @@ interface Session {
 
 export class SessionManager {
   private sessions = new Map<string, Session>();
+  private sessionLocks = new Map<string, Promise<SessionInfo>>();
   private cliPath: string;
   private maxSessions: number;
 
@@ -131,6 +132,15 @@ export class SessionManager {
     contextContent?: string,
   ): Promise<SessionInfo> {
     const key = this.sessionKey(userId, roleFile);
+
+    // Mutex: if another call is already creating this session, wait for it
+    const pending = this.sessionLocks.get(key);
+    if (pending) {
+      await pending;
+      // After the lock resolves, the session exists — re-enter to attach consumer
+      return this.getOrCreateSession(userId, roleFile, workingDirectory, consumer, contextContent);
+    }
+
     let session = this.sessions.get(key);
 
     if (session && session.running) {
@@ -159,6 +169,14 @@ export class SessionManager {
       throw new Error(`Max sessions (${this.maxSessions}) reached`);
     }
 
+    // Lock this key while we create the session — prevents concurrent
+    // getOrCreateSession calls from spawning duplicate CLI processes.
+    let releaseLock!: (info: SessionInfo) => void;
+    const lockPromise = new Promise<SessionInfo>((resolve) => {
+      releaseLock = resolve;
+    });
+    this.sessionLocks.set(key, lockPromise);
+
     // Create new session
     session = {
       id: randomUUID(),
@@ -183,13 +201,19 @@ export class SessionManager {
     // Start the SDK session in the background
     this.startSession(session, workingDirectory, contextContent);
 
+    const info = this.toSessionInfo(session);
+
+    // Release the lock so waiting callers can proceed
+    this.sessionLocks.delete(key);
+    releaseLock(info);
+
     logger.app.info("New session {sessionId} for {userId}/{roleFile}", {
       sessionId: session.id,
       userId,
       roleFile,
     });
 
-    return this.toSessionInfo(session);
+    return info;
   }
 
   /**

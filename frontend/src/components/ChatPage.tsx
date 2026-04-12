@@ -298,13 +298,21 @@ export function ChatPage() {
     }
   }, [currentSessionId, workingDirectory, roleFile]);
 
-  // Wire WebSocket callbacks so the hook can pipe messages into useChatState
+  // Keep currentAssistantMessage in a ref so WS callbacks don't go stale
+  // every time the streaming text updates state.
+  const currentAssistantMessageRef = useRef(currentAssistantMessage);
+  currentAssistantMessageRef.current = currentAssistantMessage;
+
+  // Wire WebSocket callbacks so the hook can pipe messages into useChatState.
+  // currentAssistantMessage is read via ref — NOT in the dependency array.
   useEffect(() => {
     ws.setCallbacks({
       addMessage,
       updateLastMessage,
       setCurrentAssistantMessage,
-      currentAssistantMessage,
+      get currentAssistantMessage() {
+        return currentAssistantMessageRef.current;
+      },
       onSessionId: (sid: string) => {
         setCurrentSessionId(sid);
         sessionStatsRef.current = { ...sessionStatsRef.current, sessionId: sid };
@@ -320,7 +328,7 @@ export function ChatPage() {
       },
       onStatusUpdate: updateStatus,
     });
-  }, [addMessage, updateLastMessage, updateStatus, setCurrentAssistantMessage, currentAssistantMessage, ws.setCallbacks, setCurrentSessionId, resetRequestState]);
+  }, [addMessage, updateLastMessage, updateStatus, setCurrentAssistantMessage, ws.setCallbacks, setCurrentSessionId, resetRequestState]);
 
   // Start/join session once WS is connected and we have roleFile + workingDirectory
   useEffect(() => {

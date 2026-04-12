@@ -58,7 +58,11 @@ const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 
 export function rateLimit(maxRequests: number, windowMs: number): MiddlewareHandler {
   return async (c, next) => {
-    const ip = c.req.header("x-forwarded-for")?.split(",")[0]?.trim()
+    // Use the LAST X-Forwarded-For entry — that's the one Caddy (our trusted
+    // proxy) appends. The first entries are client-controlled and spoofable.
+    const xff = c.req.header("x-forwarded-for");
+    const xffEntries = xff?.split(",").map((s) => s.trim()).filter(Boolean);
+    const ip = (xffEntries && xffEntries.length > 0 ? xffEntries[xffEntries.length - 1] : null)
       || c.req.header("cf-connecting-ip")
       || "unknown";
     const now = Date.now();

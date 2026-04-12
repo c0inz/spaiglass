@@ -36,6 +36,7 @@ interface WSSessionState {
 
 export function useWebSocketSession(options: WSSessionOptions = {}) {
   const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const processorRef = useRef(new UnifiedMessageProcessor());
   // --- Phase 1: replay-on-reconnect state ---
   // Highest cursor we've seen on any incoming frame. Sent back as `lastCursor`
@@ -110,8 +111,8 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
     ws.onclose = () => {
       setState((s) => ({ ...s, connected: false }));
       wsRef.current = null;
-      // Auto-reconnect after 2 seconds
-      setTimeout(() => connect(), 2000);
+      // Auto-reconnect after 2 seconds — store timer so it can be cancelled
+      reconnectTimerRef.current = setTimeout(() => connect(), 2000);
     };
 
     ws.onerror = () => {
@@ -449,6 +450,10 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
    * session marker so we don't try to rejoin a dead session on next load.
    */
   const disconnect = useCallback(() => {
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
     const ws = wsRef.current;
     if (ws) {
       ws.onclose = null; // Prevent auto-reconnect
@@ -478,6 +483,10 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
       if (wsRef.current) {
         wsRef.current.onclose = null;
         wsRef.current.close();

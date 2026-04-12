@@ -47,25 +47,25 @@ async function parseHistoryFile(
 ): Promise<ConversationFile | null> {
   try {
     const content = await readTextFile(filePath);
-    const lines = content
-      .trim()
-      .split("\n")
-      .filter((line) => line.trim());
-
-    if (lines.length === 0) {
-      return null; // Empty file
-    }
-
-    const messages: RawHistoryLine[] = [];
     const messageIds = new Set<string>();
     let startTime = "";
     let lastTime = "";
     let lastMessagePreview = "";
+    let messageCount = 0;
 
-    for (const line of lines) {
+    // Parse line-by-line without keeping all parsed objects in memory.
+    // Only metadata and messageIds are retained for the listing endpoint.
+    let searchStart = 0;
+    while (searchStart < content.length) {
+      let lineEnd = content.indexOf("\n", searchStart);
+      if (lineEnd === -1) lineEnd = content.length;
+      const line = content.substring(searchStart, lineEnd).trim();
+      searchStart = lineEnd + 1;
+      if (!line) continue;
+
       try {
         const parsed = JSON.parse(line) as RawHistoryLine;
-        messages.push(parsed);
+        messageCount++;
 
         // Track message IDs from assistant messages
         const msg = parsed.message as unknown as Record<string, unknown>;
@@ -83,25 +83,27 @@ async function parseHistoryFile(
 
         // Extract last message preview (from assistant messages)
         if (parsed.message?.role === "assistant" && parsed.message?.content) {
-          const content = parsed.message.content;
-          if (Array.isArray(content)) {
-            // Handle array format content
-            for (const item of content) {
+          const msgContent = parsed.message.content;
+          if (Array.isArray(msgContent)) {
+            for (const item of msgContent) {
               if (typeof item === "object" && item && "text" in item) {
                 lastMessagePreview = String(item.text).substring(0, 100);
                 break;
               }
             }
-          } else if (typeof content === "string") {
-            lastMessagePreview = content.substring(0, 100);
+          } else if (typeof msgContent === "string") {
+            lastMessagePreview = msgContent.substring(0, 100);
           }
         }
       } catch (parseError) {
         logger.history.error(`Failed to parse line in ${filePath}: {error}`, {
           error: parseError,
         });
-        // Continue processing other lines
       }
+    }
+
+    if (messageCount === 0) {
+      return null; // Empty file
     }
 
     // Extract session ID from file name (remove .jsonl extension)
@@ -111,11 +113,11 @@ async function parseHistoryFile(
     return {
       sessionId,
       filePath,
-      messages,
+      messages: [], // Not populated for listing — use conversationLoader for full content
       messageIds,
       startTime,
       lastTime,
-      messageCount: messages.length,
+      messageCount,
       lastMessagePreview: lastMessagePreview || "No preview available",
     };
   } catch (error) {

@@ -3,6 +3,7 @@ import { Suspense, lazy } from "react";
 import { ProjectSelector } from "./components/ProjectSelector";
 import { ChatPage } from "./components/ChatPage";
 import { RoleResolver } from "./components/RoleResolver";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { SettingsProvider } from "./contexts/SettingsContext";
 import { isDevelopment } from "./utils/environment";
 
@@ -17,6 +18,7 @@ const DemoPage = isDevelopment()
 
 function App() {
   return (
+    <ErrorBoundary>
     <SettingsProvider>
       <Router
         basename={(window as Window & { __SG_BASE?: string }).__SG_BASE || ""}
@@ -38,6 +40,7 @@ function App() {
         </Routes>
       </Router>
     </SettingsProvider>
+    </ErrorBoundary>
   );
 }
 

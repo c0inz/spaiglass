@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import type { AllMessage, ChatMessage } from "../../types";
 import type { DisplayStatus } from "../../utils/statusClassifier";
 import { generateId } from "../../utils/id";
@@ -14,14 +14,10 @@ export function useChatState(options: ChatStateOptions = {}) {
   const { initialMessages = DEFAULT_MESSAGES, initialSessionId = null } =
     options;
 
-  // Memoize initial messages to prevent infinite loops
-  const memoizedInitialMessages = useMemo(
-    () => initialMessages,
-    [initialMessages],
-  );
-
+  // Initialize state once. Do NOT re-sync from initialMessages on every parent
+  // render — that would wipe live messages arriving via WebSocket.
   const [messages, setMessages] = useState<AllMessage[]>(
-    memoizedInitialMessages,
+    () => initialMessages,
   );
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -38,11 +34,7 @@ export function useChatState(options: ChatStateOptions = {}) {
   // one before its stickyMs expires.
   const stickyRef = useRef<{ status: DisplayStatus; expiresAt: number } | null>(null);
 
-  // Update messages and sessionId when initial values change
-  useEffect(() => {
-    setMessages(memoizedInitialMessages);
-  }, [memoizedInitialMessages]);
-
+  // Only re-sync sessionId (not messages) when the parent changes it
   useEffect(() => {
     setCurrentSessionId(initialSessionId);
   }, [initialSessionId]);
