@@ -34,11 +34,7 @@ import {
 } from "./buffer.ts";
 import { logger } from "../utils/logger.ts";
 import { getClaudeSpawnEnv } from "../utils/anthropic-key.ts";
-import {
-  parseAgentFile,
-  prepareRoleConfigDir,
-  buildRoleEnv,
-} from "../utils/agent-config.ts";
+import { parseAgentFile } from "../utils/agent-config.ts";
 import {
   createInteractiveToolsServer,
   INTERACTIVE_TOOLS_SYSTEM_PROMPT,
@@ -217,16 +213,7 @@ export class SessionManager {
       const fm = parsed.frontmatter;
       const promptBody = parsed.body;
 
-      // Per-role CLAUDE_CONFIG_DIR: each role gets an isolated config
-      // directory so plugins, settings, and auth are scoped to the role.
-      // This is how SpAIglass supports multi-role on the same project
-      // without roles clobbering each other's settings.
-      const roleName = session.roleFile.replace(/\.md$/, "");
-      let spawnEnv = getClaudeSpawnEnv() || {};
-      if (fm.plugins || Object.keys(fm).length > 0) {
-        const configDir = prepareRoleConfigDir(workingDirectory, roleName, fm);
-        spawnEnv = buildRoleEnv(configDir, spawnEnv);
-      }
+      const spawnEnv = getClaudeSpawnEnv() || {};
 
       // Phase 6.4: build the per-session interactive-tools broker.
       const broker = this.makeBroker(session);
@@ -270,6 +257,25 @@ export class SessionManager {
       // Pass the AsyncQueue for multi-turn messaging
       const q = warmSession.query(session.queue);
       session.query = q;
+
+      // Load plugins declared in role frontmatter via CLI commands.
+      // These are queued before any user message, so Claude processes
+      // them as soon as the session is ready.
+      if (fm.plugins) {
+        for (const [pluginId, enabled] of Object.entries(fm.plugins)) {
+          const cmd = enabled
+            ? `/plugin ${pluginId} enable`
+            : `/plugin ${pluginId} disable`;
+          session.queue.push({
+            type: "user",
+            message: { role: "user" as const, content: cmd },
+            parent_tool_use_id: null,
+            uuid: randomUUID(),
+            session_id: session.sessionId || session.id,
+          } as SDKUserMessage);
+          logger.app.info("Queued plugin command: {cmd}", { cmd });
+        }
+      }
 
       // Consume SDK messages and broadcast
       for await (const sdkMessage of q) {
