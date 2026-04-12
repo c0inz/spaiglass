@@ -82,6 +82,54 @@ function inferToolCategory(
 }
 
 // ---------------------------------------------------------------------------
+// Extract a short context string from tool input for the status line.
+// Returns the most meaningful first-line detail (file path, command, pattern).
+// ---------------------------------------------------------------------------
+
+function extractContext(input: Record<string, unknown>): string {
+  // File path from Read, Write, Edit, Glob
+  const filePath = input.file_path ?? input.path ?? input.filePath;
+  if (typeof filePath === "string" && filePath) {
+    // Show just the filename + parent dir for brevity
+    const parts = filePath.replace(/\\/g, "/").split("/");
+    return parts.length > 2
+      ? parts.slice(-2).join("/")
+      : parts.join("/");
+  }
+
+  // Grep / search pattern
+  const pattern = input.pattern ?? input.query ?? input.search;
+  if (typeof pattern === "string" && pattern) {
+    return pattern.length > 60 ? pattern.slice(0, 57) + "…" : pattern;
+  }
+
+  // Bash command — first line, truncated
+  const command = input.command;
+  if (typeof command === "string" && command) {
+    const firstLine = command.split("\n")[0].trim();
+    return firstLine.length > 60 ? firstLine.slice(0, 57) + "…" : firstLine;
+  }
+
+  // Glob pattern
+  const glob = input.glob ?? input.include;
+  if (typeof glob === "string" && glob) return glob;
+
+  // Agent / subagent description
+  const desc = input.description ?? input.prompt;
+  if (typeof desc === "string" && desc) {
+    const firstLine = desc.split("\n")[0].trim();
+    return firstLine.length > 60 ? firstLine.slice(0, 57) + "…" : firstLine;
+  }
+
+  return "";
+}
+
+function statusLabel(category: string, context: string): string {
+  if (context) return `${category} ${context}`;
+  return category;
+}
+
+// ---------------------------------------------------------------------------
 // Classify a tool_use event
 // ---------------------------------------------------------------------------
 
@@ -91,90 +139,79 @@ export function classifyToolUse(
 ): DisplayStatus {
   const category = inferToolCategory(name, input);
   const n = name.toLowerCase();
+  const ctx = extractContext(input);
 
   // Subagent / Agent tool
   if (category === "subagent") {
     return {
-      label: "Delegating to subagent…",
+      label: statusLabel("Subagent:", ctx),
       kind: "subagent",
       priority: 90,
       stickyMs: 1200,
-      dedupeKey: "subagent",
+      dedupeKey: `subagent:${ctx}`,
     };
   }
 
   // Edit / patch / write
   if (category === "edit") {
-    if (/patch|diff/.test(n)) {
-      return { label: "Applying edits…", kind: "patch", priority: 95, stickyMs: 1200, dedupeKey: "patch" };
-    }
     if (/write/i.test(n)) {
-      return { label: "Updating files…", kind: "write", priority: 92, stickyMs: 1000, dedupeKey: "write" };
+      return { label: statusLabel("Writing:", ctx), kind: "write", priority: 92, stickyMs: 1000, dedupeKey: `write:${ctx}` };
     }
-    return { label: "Applying edits…", kind: "patch", priority: 95, stickyMs: 1200, dedupeKey: "patch" };
+    return { label: statusLabel("Editing:", ctx), kind: "patch", priority: 95, stickyMs: 1200, dedupeKey: `patch:${ctx}` };
   }
 
   // Search
   if (category === "search") {
-    return { label: "Searching codebase…", kind: "search", priority: 84, stickyMs: 800, dedupeKey: "search" };
+    return { label: statusLabel("Searching:", ctx), kind: "search", priority: 84, stickyMs: 800, dedupeKey: `search:${ctx}` };
   }
 
   // Filesystem read
   if (category === "filesystem") {
     if (/glob|list|ls|tree/.test(n)) {
-      return { label: "Scanning repository…", kind: "analysis", priority: 82, stickyMs: 800, dedupeKey: "repo-scan" };
+      return { label: statusLabel("Scanning:", ctx), kind: "analysis", priority: 82, stickyMs: 800, dedupeKey: `scan:${ctx}` };
     }
-    return { label: "Reading source files…", kind: "read", priority: 83, stickyMs: 800, dedupeKey: "read" };
+    return { label: statusLabel("Reading:", ctx), kind: "read", priority: 83, stickyMs: 800, dedupeKey: `read:${ctx}` };
   }
 
   // Shell / Bash — further classify by command content
   if (category === "shell" || /^bash$/i.test(n)) {
     const cmd = String(input.command ?? "").toLowerCase();
 
-    // Tests
     if (/\b(test|pytest|vitest|jest|playwright|cypress|cargo test|go test)\b/.test(cmd)) {
-      return { label: "Executing tests…", kind: "test", priority: 96, stickyMs: 1500, dedupeKey: "test" };
+      return { label: statusLabel("Testing:", ctx), kind: "test", priority: 96, stickyMs: 1500, dedupeKey: `test:${ctx}` };
     }
-
-    // Build / install
     if (/\b(build|compile|make|webpack|vite build|tsc)\b/.test(cmd)) {
-      return { label: "Building project…", kind: "build", priority: 94, stickyMs: 1500, dedupeKey: "build" };
+      return { label: statusLabel("Building:", ctx), kind: "build", priority: 94, stickyMs: 1500, dedupeKey: `build:${ctx}` };
     }
     if (/\b(install|npm i|pnpm i|yarn|bun install|pip install|apt|brew)\b/.test(cmd)) {
-      return { label: "Installing dependencies…", kind: "build", priority: 94, stickyMs: 1500, dedupeKey: "install" };
+      return { label: statusLabel("Installing:", ctx), kind: "build", priority: 94, stickyMs: 1500, dedupeKey: `install:${ctx}` };
     }
-
-    // Network
     if (/\b(curl|wget|fetch|http)\b/.test(cmd)) {
-      return { label: "Fetching data…", kind: "network", priority: 86, stickyMs: 1200, dedupeKey: "network" };
+      return { label: statusLabel("Fetching:", ctx), kind: "network", priority: 86, stickyMs: 1200, dedupeKey: `network:${ctx}` };
     }
-
-    // Git
     if (/\bgit\b/.test(cmd)) {
-      return { label: "Running git…", kind: "run", priority: 85, stickyMs: 1000, dedupeKey: "git" };
+      return { label: statusLabel("Git:", ctx), kind: "run", priority: 85, stickyMs: 1000, dedupeKey: `git:${ctx}` };
     }
-
-    // Generic command
-    return { label: "Running command…", kind: "run", priority: 85, stickyMs: 1000, dedupeKey: "command" };
+    return { label: statusLabel("Running:", ctx), kind: "run", priority: 85, stickyMs: 1000, dedupeKey: `cmd:${ctx}` };
   }
 
   // Test category (from args inference)
   if (category === "test") {
-    return { label: "Executing tests…", kind: "test", priority: 96, stickyMs: 1500, dedupeKey: "test" };
+    return { label: statusLabel("Testing:", ctx), kind: "test", priority: 96, stickyMs: 1500, dedupeKey: `test:${ctx}` };
   }
 
   // Build category
   if (category === "build") {
-    return { label: "Building project…", kind: "build", priority: 94, stickyMs: 1500, dedupeKey: "build" };
+    return { label: statusLabel("Building:", ctx), kind: "build", priority: 94, stickyMs: 1500, dedupeKey: `build:${ctx}` };
   }
 
   // Network / MCP
   if (category === "network" || category === "mcp") {
-    return { label: "Fetching data…", kind: "network", priority: 86, stickyMs: 1200, dedupeKey: "network" };
+    return { label: statusLabel("Fetching:", ctx), kind: "network", priority: 86, stickyMs: 1200, dedupeKey: `network:${ctx}` };
   }
 
   // Fallback
-  return { label: "Working…", kind: "thinking", priority: 10, stickyMs: 500, dedupeKey: "fallback" };
+  return { label: statusLabel("Working:", ctx), kind: "thinking", priority: 10, stickyMs: 500, dedupeKey: `fallback:${ctx}` };
 }
 
 // ---------------------------------------------------------------------------

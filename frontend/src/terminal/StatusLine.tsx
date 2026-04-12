@@ -12,7 +12,7 @@
 import { useState, useEffect, useRef, memo } from "react";
 import type { DisplayStatus } from "../utils/statusClassifier";
 
-const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const SPINNER_FRAMES = ["·", "+", "✦", "✿"];
 
 /**
  * Map DisplayStatus.kind to a Tailwind color class for the spinner + label.

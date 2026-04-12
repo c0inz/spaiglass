@@ -158,7 +158,7 @@ export function TermText({
 // TermSpinner — animated frame cycle (used during stream_thinking)
 // ---------------------------------------------------------------------------
 
-const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const SPINNER_FRAMES = ["·", "+", "✦", "✿"];
 
 interface TermSpinnerProps {
   label?: string;
