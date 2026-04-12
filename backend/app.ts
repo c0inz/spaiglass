@@ -37,6 +37,11 @@ import {
   handleGetAnthropicKey,
   handleSetAnthropicKey,
 } from "./handlers/settings.ts";
+import {
+  handleListSecrets,
+  handlePutSecret,
+  handleDeleteSecret,
+} from "./handlers/secrets.ts";
 import { createAuthMiddleware } from "./middleware/auth.ts";
 import { readBinaryFile } from "./utils/fs.ts";
 
@@ -125,6 +130,11 @@ export function createApp(
   // Phase 4: BYO Anthropic API key — host-local, never proxied through relay
   app.get("/api/settings/anthropic-key", (c) => handleGetAnthropicKey(c));
   app.post("/api/settings/anthropic-key", (c) => handleSetAnthropicKey(c));
+
+  // Secrets vault — named secrets stored in ~/.spaiglass/secrets.json
+  app.get("/api/secrets", (c) => handleListSecrets(c));
+  app.put("/api/secrets/:name", (c) => handlePutSecret(c));
+  app.delete("/api/secrets/:name", (c) => handleDeleteSecret(c));
 
   // Static file serving (assets only — SPA fallback added separately via finalizeSpa)
   const serveStatic = runtime.createStaticFileMiddleware({

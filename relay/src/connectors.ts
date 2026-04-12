@@ -17,6 +17,8 @@ import {
   findUserByLogin,
   appendAuditLog,
   listAuditLog,
+  getRoleLabels,
+  setRoleLabel,
 } from "./db.ts";
 import { requireAuth } from "./middleware.ts";
 import { getChannelManager } from "./tunnel.ts";
@@ -155,6 +157,37 @@ export function connectorRoutes(): Hono<RelayEnv> {
     c.header("Content-Type", "text/plain");
     c.header("Content-Disposition", `attachment; filename="connector-${connector.name}.env"`);
     return c.text(envContent);
+  });
+
+  // --- Role labels (server-persisted) ---
+
+  // Get all custom role labels for a connector.
+  app.get("/api/connectors/:id/labels", (c) => {
+    const user = c.get("user")!;
+    const id = c.req.param("id");
+    const role = getConnectorAccess(id, user.id);
+    if (!role) return c.json({ error: "Connector not found" }, 404);
+    return c.json(getRoleLabels(id));
+  });
+
+  // Set or clear a role label. Owner only.
+  app.put("/api/connectors/:id/labels", async (c) => {
+    const user = c.get("user")!;
+    const id = c.req.param("id");
+    const role = getConnectorAccess(id, user.id);
+    if (role !== "owner") {
+      return c.json({ error: "Only the owner can edit labels" }, 403);
+    }
+    const body = await c.req.json<{
+      projBase?: string;
+      roleFile?: string;
+      label?: string;
+    }>();
+    if (!body.projBase || !body.roleFile) {
+      return c.json({ error: "projBase and roleFile are required" }, 400);
+    }
+    setRoleLabel(id, body.projBase, body.roleFile, body.label ?? null);
+    return c.json({ ok: true });
   });
 
   // --- Phase 2: collaborator management routes ---

@@ -13,8 +13,81 @@
  */
 
 import type { ReactNode, FormEvent, MouseEvent } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import AnsiToHtml from "ansi-to-html";
 import { type AnsiColor, colorClass, PANEL_BG } from "./theme";
+
+/**
+ * Collapse carriage-return animations (progress bars, spinners) into just
+ * their final frame. For each line, anything before the last `\r` within
+ * that line is overwritten, so only the final segment is kept.
+ */
+function collapseCarriageReturns(s: string): string {
+  return s
+    .split("\n")
+    .map((line) => {
+      const idx = line.lastIndexOf("\r");
+      return idx === -1 ? line : line.slice(idx + 1);
+    })
+    .join("\n");
+}
+
+/**
+ * Shared ansi-to-html converter. Palette tuned for dark slate panels;
+ * bright variants stay readable on near-black backgrounds. `escapeXML`
+ * ensures user output containing `<` or `&` is rendered verbatim, not
+ * interpreted as HTML — this is the safety gate for dangerouslySetInnerHTML.
+ */
+const ansiConverter = new AnsiToHtml({
+  fg: "#e2e8f0",
+  bg: "transparent",
+  newline: false,
+  escapeXML: true,
+  colors: {
+    0: "#1e293b",
+    1: "#f87171",
+    2: "#4ade80",
+    3: "#facc15",
+    4: "#60a5fa",
+    5: "#c084fc",
+    6: "#22d3ee",
+    7: "#e2e8f0",
+    8: "#64748b",
+    9: "#fca5a5",
+    10: "#86efac",
+    11: "#fde047",
+    12: "#93c5fd",
+    13: "#d8b4fe",
+    14: "#67e8f9",
+    15: "#f1f5f9",
+  },
+});
+
+/**
+ * AnsiOutput — converts a raw string of bash stdout/stderr into styled HTML.
+ * CR-collapsed first, then piped through ansi-to-html with XML escaping. Safe
+ * to inject because escapeXML=true means user text can never emit arbitrary
+ * HTML — only the SGR-generated spans do.
+ */
+function AnsiOutput({
+  text,
+  className,
+}: {
+  text: string;
+  className?: string;
+}) {
+  const html = useMemo(
+    () => ansiConverter.toHtml(collapseCarriageReturns(text)),
+    [text],
+  );
+  return (
+    <pre
+      className={className}
+      // eslint-disable-next-line react/no-danger
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
+}
 
 // ---------------------------------------------------------------------------
 // TermBox — flexbox container with optional ASCII border
@@ -367,16 +440,16 @@ export function TermToolCard({
           </div>
           <div className="px-3 py-2 max-h-96 overflow-y-auto">
             {output && (
-              <pre className="whitespace-pre-wrap break-words pr-14">
-                {output}
-              </pre>
+              <AnsiOutput
+                text={output}
+                className="whitespace-pre-wrap break-words pr-14"
+              />
             )}
             {errorOutput && (
-              <pre
+              <AnsiOutput
+                text={errorOutput}
                 className={`whitespace-pre-wrap break-words pr-14 ${colorClass("red")}`}
-              >
-                {errorOutput}
-              </pre>
+              />
             )}
           </div>
         </div>

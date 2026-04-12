@@ -17,6 +17,12 @@ interface ChatMessagesProps {
     data?: unknown,
     reason?: string,
   ) => void;
+  /**
+   * Invoked when a markdown-embedded widget (secret-input / choice /
+   * confirm fenced block in an assistant message) wants to send a
+   * chat message. Wired to sendMessage in ChatPage.
+   */
+  onSubmitText?: (text: string) => void;
 }
 
 export function ChatMessages({
@@ -24,6 +30,7 @@ export function ChatMessages({
   isLoading,
   onOpenFile,
   onToolResult,
+  onSubmitText,
 }: ChatMessagesProps) {
   return (
     <TerminalChat
@@ -31,6 +38,7 @@ export function ChatMessages({
       isLoading={isLoading}
       onOpenFile={onOpenFile}
       onToolResult={onToolResult}
+      onSubmitText={onSubmitText}
     />
   );
 }

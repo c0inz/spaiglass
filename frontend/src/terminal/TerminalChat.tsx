@@ -36,6 +36,12 @@ interface TerminalChatProps {
     data?: unknown,
     reason?: string,
   ) => void;
+  /**
+   * Invoked when a markdown-embedded widget in an assistant message wants
+   * to send a chat message (e.g. secret-input submits the pasted secret,
+   * a choice button picks itself). Wired to sendMessage in ChatPage.
+   */
+  onSubmitText?: (text: string) => void;
 }
 
 /**
@@ -50,6 +56,7 @@ export function TerminalChat({
   isLoading,
   onOpenFile,
   onToolResult,
+  onSubmitText,
 }: TerminalChatProps) {
   const endRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -74,7 +81,7 @@ export function TerminalChat({
     <div
       ref={containerRef}
       onScroll={handleScroll}
-      className="flex-1 overflow-y-auto overflow-x-hidden min-w-0 bg-slate-950 text-slate-100 border border-slate-700 p-3 sm:p-5 mb-3 sm:mb-6 rounded-2xl shadow-sm flex flex-col"
+      className="sg-scroll flex-1 overflow-y-auto overflow-x-hidden min-w-0 bg-slate-950 text-slate-100 border border-slate-700 p-3 sm:p-5 mb-3 sm:mb-6 rounded-2xl shadow-sm flex flex-col touch-pan-y"
     >
       {messages.length === 0 ? (
         <TerminalEmptyState />
@@ -87,6 +94,7 @@ export function TerminalChat({
               message={msg}
               onOpenFile={onOpenFile}
               onToolResult={onToolResult}
+              onSubmitText={onSubmitText}
             />
           ))}
           {isLoading && (
@@ -110,14 +118,20 @@ interface MessageRowProps {
     data?: unknown,
     reason?: string,
   ) => void;
+  onSubmitText?: (text: string) => void;
 }
 
 function MessageRow({
   message,
   onOpenFile,
   onToolResult,
+  onSubmitText,
 }: MessageRowProps): ReactNode {
-  const node = renderTerminalMessage(message, { onOpenFile, onToolResult });
+  const node = renderTerminalMessage(message, {
+    onOpenFile,
+    onToolResult,
+    onSubmitText,
+  });
   if (node == null) return null;
   return <div className="min-w-0 max-w-full">{node}</div>;
 }

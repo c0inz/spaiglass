@@ -1,176 +1,164 @@
 {
   "project": {
-    "name": "Spyglass",
-    "summary": "Browser-based multi-VM Claude interface with fleet portal"
+    "name": "SpAIglass",
+    "summary": "Browser-based multi-VM Claude Code interface with fleet relay",
+    "version": "2026.04.12",
+    "owner": "johntdavenport",
+    "domain": "spaiglass.xyz",
+    "repo": "github.com/c0inz/spaiglass"
   },
-  "environments": [
-    { "id": "vm", "name": "Ubuntu VM (per-agent)" },
-    { "id": "super-server", "name": "Super-Server (fleet portal)" },
-    { "id": "browser", "name": "User Browser" }
+
+  "server": [
+    { "id": "relay-droplet", "name": "Relay Droplet", "ip": "spaiglass.xyz", "os": "Ubuntu 22.04", "cpu": "1 vCPU", "ram": "1 GB", "role": "gateway", "status": "active" },
+    { "id": "devops-vm", "name": "DevOps-VM", "ip": "192.168.1.153", "os": "Ubuntu 24.04", "cpu": "16 vCPU", "ram": "32 GB", "role": "build host", "status": "active" },
+    { "id": "fuzz", "name": "Fuzz", "ip": "192.168.1.113", "os": "Ubuntu 24.04", "role": "agent", "status": "active" },
+    { "id": "tombombadil", "name": "TomBombadil", "ip": "192.168.1.202", "os": "Ubuntu 24.04", "role": "agent", "status": "active" },
+    { "id": "daniel", "name": "Daniel", "ip": "192.168.1.213", "os": "Ubuntu 24.04", "role": "agent", "status": "active" },
+    { "id": "mombadil", "name": "Mombadil (jump)", "ip": "192.168.1.124", "os": "Ubuntu", "role": "jump host", "status": "active" }
   ],
+
+  "platform": {
+    "language": "TypeScript",
+    "runtime": "Node.js 22+",
+    "backend": "Hono 4.x",
+    "frontend": "React 19 + Vite 7",
+    "styling": "Tailwind CSS 4",
+    "networking": "Tailscale mesh + DigitalOcean relay",
+    "auth": "GitHub OAuth (relay) + cookie session",
+    "llm": "Claude Code CLI via Agent SDK"
+  },
+
   "components": [
-    {
-      "id": "portal",
-      "name": "Fleet Portal",
-      "type": "web-app",
-      "description": "Landing page listing all VMs with health status",
-      "runsOn": ["super-server"],
-      "environment": ["super-server"],
-      "dependsOn": [],
-      "owners": ["johntdavenport"],
-      "status": "active"
-    },
-    {
-      "id": "backend",
-      "name": "Hono Backend",
-      "type": "api-server",
-      "description": "Node.js API server — spawns Claude CLI, serves files, auth",
-      "runsOn": ["vm"],
-      "environment": ["vm"],
-      "dependsOn": ["claude-cli"],
-      "owners": ["johntdavenport"],
-      "status": "active"
-    },
-    {
-      "id": "frontend",
-      "name": "React Frontend",
-      "type": "spa",
-      "description": "Chat UI, file browser, editor, context selector",
-      "runsOn": ["vm"],
-      "environment": ["vm", "browser"],
-      "dependsOn": ["backend"],
-      "owners": ["johntdavenport"],
-      "status": "active"
-    },
-    {
-      "id": "claude-cli",
-      "name": "Claude CLI",
-      "type": "cli-tool",
-      "description": "Anthropic Claude Code CLI — spawned per chat session",
-      "runsOn": ["vm"],
-      "environment": ["vm"],
-      "dependsOn": [],
-      "owners": ["anthropic"],
-      "status": "active"
-    },
-    {
-      "id": "file-editor",
-      "name": "File Editor",
-      "type": "ui-component",
-      "description": "Monaco-based editor for .md/.json/.txt with save",
-      "runsOn": ["browser"],
-      "environment": ["browser"],
-      "dependsOn": ["backend"],
-      "owners": ["johntdavenport"],
-      "status": "active"
-    },
-    {
-      "id": "context-selector",
-      "name": "Context Selector",
-      "type": "ui-component",
-      "description": "Session start dialog — picks agents/*.md context files",
-      "runsOn": ["browser"],
-      "environment": ["browser"],
-      "dependsOn": ["backend"],
-      "owners": ["johntdavenport"],
-      "status": "active"
-    },
-    {
-      "id": "auth",
-      "name": "Auth Middleware",
-      "type": "middleware",
-      "description": "Single password auth with session cookie",
-      "runsOn": ["vm"],
-      "environment": ["vm"],
-      "dependsOn": [],
-      "owners": ["johntdavenport"],
-      "status": "active"
-    },
-    {
-      "id": "deploy-script",
-      "name": "Deploy Script",
-      "type": "script",
-      "description": "SSH-based fleet deployment from Super-Server",
-      "runsOn": ["super-server"],
-      "environment": ["super-server"],
-      "dependsOn": [],
-      "owners": ["johntdavenport"],
-      "status": "planned"
-    }
+    { "id": "relay", "name": "SGCleanRelay", "type": "gateway", "description": "Stateless routing proxy — WebSocket tunnels, GitHub OAuth, fleet dashboard, static frontend serving", "runsOn": ["relay-droplet"], "status": "active" },
+    { "id": "backend", "name": "Hono Backend", "type": "api-server", "description": "Per-VM API server — spawns Claude CLI, file ops, secrets, session state", "runsOn": ["agent-vm"], "dependsOn": ["claude-cli"], "status": "active" },
+    { "id": "connector", "name": "Connector", "type": "service", "description": "Persistent WebSocket link from VM to relay — registers the VM, tunnels HTTP/WS traffic", "runsOn": ["agent-vm"], "dependsOn": ["relay"], "status": "active" },
+    { "id": "frontend", "name": "React Frontend", "type": "spa", "description": "Terminal-themed chat UI, file browser, editor, arch viewer, secrets panel. PWA installable.", "runsOn": ["relay-droplet"], "status": "active" },
+    { "id": "claude-cli", "name": "Claude CLI", "type": "cli-tool", "description": "Anthropic Claude Code CLI — spawned per chat session via Agent SDK", "runsOn": ["agent-vm"], "status": "active" },
+    { "id": "terminal-renderer", "name": "Terminal Renderer", "type": "ui-component", "description": "Markdown rendering with GFM tables, syntax highlighting, intent-fenced widgets, ANSI color, mermaid diagrams", "runsOn": ["browser"], "dependsOn": ["frontend"], "status": "active" },
+    { "id": "secrets-panel", "name": "Secrets Panel", "type": "ui-component", "description": "CRUD panel for named secrets stored per-VM in ~/.spaiglass/secrets.json", "runsOn": ["browser"], "dependsOn": ["backend"], "status": "active" },
+    { "id": "arch-viewer", "name": "Architecture Viewer", "type": "ui-component", "description": "Colored collapsible renderer for architecture.json operational manifest", "runsOn": ["browser"], "dependsOn": ["frontend"], "status": "active" }
   ],
-  "infrastructure": [
-    {
-      "id": "super-server",
-      "name": "Super-Server (192.168.1.153)",
-      "type": "bare-metal",
-      "description": "Fleet portal host, deployment origin",
-      "hosts": ["portal", "deploy-script"]
-    },
-    {
-      "id": "vm",
-      "name": "Agent VMs (Tailscale mesh)",
-      "type": "virtual-machine",
-      "description": "Each VM runs one Spyglass instance with a defined role",
-      "hosts": ["backend", "frontend", "claude-cli", "auth"]
-    },
-    {
-      "id": "browser",
-      "name": "User Browser",
-      "type": "client",
-      "description": "Windows laptop or iPhone via any network",
-      "hosts": ["file-editor", "context-selector"]
-    }
-  ],
+
   "connections": [
+    { "id": "c1", "from": "Browser", "to": "Relay", "mode": "https", "purpose": "Dashboard, OAuth, frontend assets" },
+    { "id": "c2", "from": "Browser", "to": "Relay", "mode": "wss", "purpose": "Chat WebSocket tunneled to VM" },
+    { "id": "c3", "from": "Relay", "to": "Connector", "mode": "wss", "purpose": "HTTP-over-WebSocket tunnel" },
+    { "id": "c4", "from": "Backend", "to": "Claude CLI", "mode": "stdio", "purpose": "Spawn CLI, stream NDJSON responses" },
+    { "id": "c5", "from": "Connector", "to": "Backend", "mode": "http", "purpose": "Forward tunneled requests to local API" },
+    { "id": "c6", "from": "Fleet Scripts", "to": "Agent VMs", "mode": "ssh", "purpose": "Rollout, version updates, config push" }
+  ],
+
+  "infrastructure": [
+    { "id": "relay-droplet", "name": "DigitalOcean Droplet (spaiglass.xyz)", "type": "cloud", "description": "Public-facing relay, Caddy TLS termination, serves frontend bundle", "hosts": ["relay", "frontend"] },
+    { "id": "agent-vm", "name": "Agent VMs (19 total, Tailscale mesh)", "type": "virtual-machine", "description": "Each runs one spaiglass backend + connector + Claude CLI", "hosts": ["backend", "connector", "claude-cli"] },
+    { "id": "browser", "name": "User Browser / PWA", "type": "client", "description": "Chrome/Edge/Safari — installable as standalone PWA", "hosts": ["terminal-renderer", "secrets-panel", "arch-viewer"] }
+  ],
+
+  "datastores": [
+    { "id": "relay-db", "name": "Relay SQLite", "engine": "better-sqlite3", "path": "/opt/sgcleanrelay/data/relay.db", "description": "Users, connectors, sessions, agent keys, role assignments", "status": "active" },
+    { "id": "secrets-store", "name": "Secrets JSON", "engine": "filesystem", "path": "~/.spaiglass/secrets.json", "description": "Per-VM named secrets, chmod 600", "status": "active" },
+    { "id": "session-state", "name": "Session State", "engine": "filesystem", "path": "~/.claude-webui/last-session.json", "description": "Last session ID + project path for session resume", "status": "active" },
+    { "id": "claude-projects", "name": "Claude Projects", "engine": "filesystem", "path": "~/.claude.json", "description": "Claude Code project registry — auto-discovered by backend", "status": "active" }
+  ],
+
+  "frontends": [
+    { "id": "pwa", "name": "PWA (Chrome/Edge)", "type": "pwa", "framework": "React 19 + Vite", "description": "Installable standalone app, no browser chrome", "status": "active" },
+    { "id": "mobile-web", "name": "Mobile Web (Safari/Chrome)", "type": "responsive", "description": "Bottom tab bar, touch-optimized, safe-area insets for notch", "status": "active" },
+    { "id": "desktop-web", "name": "Desktop Web", "type": "responsive", "description": "Split-pane layout with sidebar, editor, arch viewer", "status": "active" }
+  ],
+
+  "siteMap": [
     {
-      "id": "c1",
-      "from": "Browser",
-      "to": "Fleet Portal",
-      "mode": "http",
-      "purpose": "VM list + health status"
+      "path": "/",
+      "label": "Landing",
+      "description": "Public home page with login",
+      "auth": false,
+      "children": [
+        { "path": "/setup", "label": "Setup Guide", "auth": false, "description": "VM installation walkthrough" },
+        { "path": "/terms", "label": "Terms of Service", "auth": false },
+        { "path": "/privacy", "label": "Privacy Policy", "auth": false },
+        { "path": "/api/setup", "label": "Setup JSON", "auth": false, "description": "Machine-readable setup data" }
+      ]
     },
     {
-      "id": "c2",
-      "from": "Browser",
-      "to": "React Frontend",
-      "mode": "http",
-      "purpose": "Chat UI served via Vite/static"
+      "path": "/fleetrelay",
+      "label": "Fleet Dashboard",
+      "description": "VM list, online status, role selector, add-VM modal",
+      "children": [
+        { "path": "/api/release", "label": "Release API", "description": "Current version info" },
+        { "path": "/api/connectors", "label": "Connector API", "description": "CRUD connectors" }
+      ]
     },
     {
-      "id": "c3",
-      "from": "React Frontend",
-      "to": "Hono Backend",
-      "mode": "http/ndjson",
-      "purpose": "Chat streaming, file ops, auth"
+      "path": "/vm/:slug/",
+      "label": "VM Chat",
+      "description": "React SPA — chat, files, editor, arch, secrets, history",
+      "children": [
+        { "path": "/vm/:slug/api/chat", "label": "Chat API", "description": "POST — NDJSON streaming chat" },
+        { "path": "/vm/:slug/api/files/*", "label": "File API", "description": "Tree, read, write, snapshot" },
+        { "path": "/vm/:slug/api/secrets", "label": "Secrets API", "description": "GET/PUT/DELETE named secrets" },
+        { "path": "/vm/:slug/api/ws", "label": "WebSocket", "description": "Bidirectional session channel" },
+        { "path": "/vm/:slug/api/config", "label": "Config API", "description": "VM config + health" }
+      ]
     },
     {
-      "id": "c4",
-      "from": "Hono Backend",
-      "to": "Claude CLI",
-      "mode": "stdio/sdk",
-      "purpose": "Spawn CLI process, stream responses"
-    },
-    {
-      "id": "c5",
-      "from": "Fleet Portal",
-      "to": "Hono Backend",
-      "mode": "http",
-      "purpose": "Health check ping"
-    },
-    {
-      "id": "c6",
-      "from": "Deploy Script",
-      "to": "Agent VMs",
-      "mode": "ssh",
-      "purpose": "Clone repo, install, create systemd service"
+      "path": "/auth/github",
+      "label": "GitHub OAuth",
+      "auth": false,
+      "description": "Login flow with redirect callback"
     }
   ],
+
+  "users": [
+    { "role": "owner", "description": "Full access — all VMs, all operations, fleet management", "accessLevel": "admin", "count": "1" },
+    { "role": "editor", "description": "Chat + file write on assigned VMs", "accessLevel": "write" },
+    { "role": "viewer", "description": "Read-only access to assigned VMs", "accessLevel": "read" }
+  ],
+
+  "dataScope": [
+    { "entity": "Chat transcripts", "storage": "Claude CLI JSONL", "size": "~50 KB/session", "retention": "indefinite", "sensitivity": "confidential" },
+    { "entity": "Secrets", "storage": "JSON file per VM", "size": "< 10 KB", "retention": "until deleted", "sensitivity": "confidential" },
+    { "entity": "Relay sessions", "storage": "SQLite", "size": "< 1 MB", "retention": "24h auto-expire", "sensitivity": "internal" },
+    { "entity": "File snapshots", "storage": "Project filesystem", "size": "varies", "retention": "indefinite", "sensitivity": "internal" },
+    { "entity": "Connector tokens", "storage": "SQLite", "size": "< 1 KB each", "retention": "until revoked", "sensitivity": "confidential" }
+  ],
+
+  "features": [
+    { "id": "terminal-chat", "name": "Terminal-themed chat", "description": "Monospace renderer with colored prompts, tool cards, streaming", "status": "active", "phase": "P6" },
+    { "id": "markdown-render", "name": "Full markdown rendering", "description": "GFM tables, syntax highlighting, task lists, mermaid, diff blocks", "status": "active", "phase": "P6.5" },
+    { "id": "intent-widgets", "name": "Intent-fenced widgets", "description": "secret-input, confirm, choice, mermaid, diff — intercepted from fenced code blocks", "status": "active", "phase": "P6.5" },
+    { "id": "secrets-vault", "name": "Secrets vault", "description": "Per-VM encrypted-at-rest named secrets with masked UI", "status": "active", "phase": "P6.5" },
+    { "id": "pwa-install", "name": "PWA installable", "description": "Standalone app mode, no browser chrome, offline shell caching", "status": "active", "phase": "P8" },
+    { "id": "file-browser", "name": "File browser + editor", "description": "Tree view, Monaco editor, context file management", "status": "active", "phase": "P4" },
+    { "id": "fleet-dashboard", "name": "Fleet dashboard", "description": "VM list, online status, role management, add-VM installer", "status": "active", "phase": "P7" },
+    { "id": "github-auth", "name": "GitHub OAuth", "description": "Login via GitHub, role-based access per connector", "status": "active", "phase": "P7" },
+    { "id": "themes", "name": "Themes", "description": "Dark, light, glass, plain, 70s-dark (5 phosphor colors), 70s-light", "status": "active", "phase": "P5" },
+    { "id": "arch-viewer", "name": "Architecture viewer", "description": "Colored collapsible operational manifest from architecture.json", "status": "active", "phase": "P8" },
+    { "id": "ansi-color", "name": "ANSI color in bash output", "description": "Preserves terminal colors and collapses CR progress bars", "status": "active", "phase": "P6.5" }
+  ],
+
+  "externalSystems": [
+    { "id": "github-oauth", "name": "GitHub OAuth", "type": "auth", "url": "github.com/login/oauth", "purpose": "User authentication", "status": "active" },
+    { "id": "anthropic-cli", "name": "Anthropic Claude Code", "type": "cli", "purpose": "LLM engine — all AI via Claude CLI subprocess", "status": "active" },
+    { "id": "digitalocean", "name": "DigitalOcean", "type": "iaas", "purpose": "Relay droplet hosting", "status": "active" },
+    { "id": "caddy", "name": "Caddy", "type": "reverse-proxy", "purpose": "TLS termination, HTTPS → localhost:4000", "status": "active" },
+    { "id": "tailscale", "name": "Tailscale", "type": "vpn", "purpose": "Mesh VPN connecting all VMs and user devices", "status": "active" }
+  ],
+
+  "deployments": [
+    { "id": "frontend-deploy", "name": "Frontend deploy", "method": "scp", "target": "relay droplet", "script": "tar + scp to /opt/sgcleanrelay/frontend/", "description": "Build locally, tar dist, push to droplet, no restart needed", "status": "active" },
+    { "id": "relay-deploy", "name": "Relay deploy", "method": "scp + systemctl", "target": "relay droplet", "script": "scp src/*.ts, systemctl restart sgcleanrelay", "description": "Push TypeScript source, restart — runs via tsx directly", "status": "active" },
+    { "id": "fleet-rollout", "name": "Fleet rollout", "method": "ssh", "target": "all agent VMs", "script": "~/scripts/fleet-rollout-spaiglass.sh", "description": "pack.sh builds tarball, uploads to relay, script fetches + installs on each VM", "status": "active" }
+  ],
+
   "architectureRules": [
-    "One Spyglass instance per VM — no multi-tenant",
-    "All traffic over Tailscale — nothing exposed to public internet",
-    "Auth is single password via AUTH_PASSWORD env var",
+    "One spaiglass instance per VM — no multi-tenant",
+    "Frontend served from relay only — VMs serve API only",
+    "All VM traffic tunneled through relay via HTTP-over-WebSocket",
+    "Secrets never leave the VM unmasked — relay only sees encrypted tunnel bytes",
     "Claude CLI is the only LLM integration — no provider switching",
     "File API restricted to project directory — path traversal blocked",
-    "Session context injected as first message, not system prompt override"
+    "GitHub OAuth required for relay — VMs trust the relay's session token",
+    "Architecture.json is the single operational manifest — agents must keep it current after architectural changes"
   ]
 }

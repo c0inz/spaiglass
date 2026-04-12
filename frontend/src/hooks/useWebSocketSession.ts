@@ -64,6 +64,7 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
     onSessionId?: (id: string) => void;
     onFileDelivery?: (path: string, filename: string) => void;
     onSlashCommands?: (commands: string[]) => void;
+    onTurnComplete?: () => void;
   } | null>(null);
 
   const setCallbacks = useCallback((cbs: typeof callbacksRef.current) => {
@@ -252,6 +253,10 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
         processorRef.current.processMessage(sdkMessage, processingContext, {
           isStreaming: true,
         });
+        // Signal turn completion when we receive a result message
+        if (sdkMessage.type === "result") {
+          cbs.onTurnComplete?.();
+        }
         break;
       }
 

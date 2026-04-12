@@ -1,19 +1,16 @@
 import { useEffect, useCallback, useState, useRef } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { ChevronLeftIcon, FolderIcon } from "@heroicons/react/24/outline";
+import { ChevronLeftIcon, FolderIcon, KeyIcon, CubeTransparentIcon } from "@heroicons/react/24/outline";
 import type {
-  ChatRequest,
   ChatMessage,
   ProjectInfo,
-  PermissionMode,
   SessionStats,
 } from "../types";
-import { useClaudeStreaming } from "../hooks/useClaudeStreaming";
 import { useChatState } from "../hooks/chat/useChatState";
 import { usePermissions } from "../hooks/chat/usePermissions";
 import { usePermissionMode } from "../hooks/chat/usePermissionMode";
-import { useAbortController } from "../hooks/chat/useAbortController";
 import { useAutoHistoryLoader } from "../hooks/useHistoryLoader";
+import { useWebSocketSession } from "../hooks/useWebSocketSession";
 import { SettingsButton } from "./SettingsButton";
 import { SettingsModal } from "./SettingsModal";
 import { HistoryButton } from "./chat/HistoryButton";
@@ -27,13 +24,13 @@ import { NewSessionDialog } from "./NewSessionDialog";
 import { StaleContextBanner } from "./StaleContextBanner";
 import { ArchitectureViewer } from "./ArchitectureViewer";
 import { MobileTabBar, type MobileTab } from "./MobileTabBar";
+import { SecretsPanel } from "./SecretsPanel";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { useFilePolling } from "../hooks/useFilePolling";
-import { getChatUrl, getProjectsUrl } from "../config/api";
+import { getProjectsUrl } from "../config/api";
 import { KEYBOARD_SHORTCUTS } from "../utils/constants";
 import { normalizeWindowsPath } from "../utils/pathUtils";
 import { useVmConfig } from "../hooks/useVmConfig";
-import type { StreamingContext } from "../hooks/streaming/useMessageProcessor";
 
 export function ChatPage() {
   const location = useLocation();
@@ -65,6 +62,7 @@ export function ChatPage() {
   const [staleFiles, setStaleFiles] = useState<string[]>([]);
   const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0);
   const [showArchViewer, setShowArchViewer] = useState(false);
+  const [showSecrets, setShowSecrets] = useState(false);
   const [pendingImages, setPendingImages] = useState<
     { file: File; preview: string }[]
   >([]);
@@ -185,8 +183,16 @@ export function ChatPage() {
     }
   }, [isHistoryView, sessionId, workingDirectory, contextChecked, roleFile]);
 
-  // Auto-resume last session on page load (no sessionId in URL)
+  // Auto-resume last session on page load (no sessionId in URL).
+  // ?new=1 skips resume and starts a fresh session.
   useEffect(() => {
+    if (searchParams.get("new") === "1") {
+      // Strip ?new=1 from URL so a refresh doesn't keep forcing new sessions
+      const params = new URLSearchParams(searchParams);
+      params.delete("new");
+      navigate({ search: params.toString() }, { replace: true });
+      return; // skip resume — start fresh
+    }
     if (sessionId || isHistoryView || !workingDirectory) return;
     fetch(
       `/api/session/last?projectPath=${encodeURIComponent(workingDirectory)}`,
@@ -202,8 +208,13 @@ export function ChatPage() {
       .catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { processStreamLine } = useClaudeStreaming();
-  const { abortRequest, createAbortHandler } = useAbortController();
+  // --- WebSocket session hook ---
+  const ws = useWebSocketSession();
+
+  // Connect on mount
+  useEffect(() => {
+    ws.connect();
+  }, [ws.connect]);
 
   // Permission mode state management
   const { permissionMode, setPermissionMode } = usePermissionMode();
@@ -245,18 +256,14 @@ export function ChatPage() {
     input,
     isLoading,
     currentSessionId,
-    currentRequestId,
-    hasShownInitMessage,
     currentAssistantMessage,
+    setMessages,
     setInput,
     setCurrentSessionId,
-    setHasShownInitMessage,
-    setHasReceivedInit,
     setCurrentAssistantMessage,
     addMessage,
     updateLastMessage,
     clearInput,
-    generateRequestId,
     resetRequestState,
     startRequest,
   } = useChatState({
@@ -279,80 +286,74 @@ export function ChatPage() {
     }
   }, [currentSessionId, workingDirectory, roleFile]);
 
+  // Wire WebSocket callbacks so the hook can pipe messages into useChatState
+  useEffect(() => {
+    ws.setCallbacks({
+      addMessage,
+      updateLastMessage,
+      setCurrentAssistantMessage,
+      currentAssistantMessage,
+      onSessionId: (sid: string) => {
+        setCurrentSessionId(sid);
+        sessionStatsRef.current = { ...sessionStatsRef.current, sessionId: sid };
+        setSessionStats(sessionStatsRef.current);
+      },
+      onFileDelivery: () => setSidebarRefreshKey((k) => k + 1),
+      onSlashCommands: (cmds: string[]) => {
+        const withNative = cmds.includes("reset") ? cmds : ["reset", ...cmds];
+        setSlashCommands(withNative);
+      },
+      onTurnComplete: () => {
+        resetRequestState();
+      },
+    });
+  }, [addMessage, updateLastMessage, setCurrentAssistantMessage, currentAssistantMessage, ws.setCallbacks, setCurrentSessionId, resetRequestState]);
+
+  // Start/join session once WS is connected and we have roleFile + workingDirectory
+  useEffect(() => {
+    if (!ws.connected || !roleFile || !workingDirectory) return;
+    if (ws.attached) return; // already in a session
+    ws.startSession(roleFile, workingDirectory, activeContext?.content);
+  }, [ws.connected, ws.attached, roleFile, workingDirectory, activeContext?.content, ws.startSession]);
+
   const {
     allowedTools,
     permissionRequest,
-    showPermissionRequest,
     closePermissionRequest,
     allowToolTemporary,
     allowToolPermanent,
     isPermissionMode,
     planModeRequest,
-    showPlanModeRequest,
     closePlanModeRequest,
     updatePermissionMode,
   } = usePermissions({
     onPermissionModeChange: setPermissionMode,
   });
 
-  const handleSessionStats = useCallback(
-    (stats: {
-      model?: string;
-      cost?: number;
-      inputTokens?: number;
-      outputTokens?: number;
-      cacheReadTokens?: number;
-      cacheCreationTokens?: number;
-      turns?: number;
-      durationMs?: number;
-    }) => {
-      const current = sessionStatsRef.current;
-      const updated: SessionStats = {
-        model: stats.model || current.model,
-        inputTokens: stats.inputTokens ?? current.inputTokens,
-        outputTokens: stats.outputTokens ?? current.outputTokens,
-        cacheReadTokens: stats.cacheReadTokens ?? current.cacheReadTokens,
-        cacheCreationTokens:
-          stats.cacheCreationTokens ?? current.cacheCreationTokens,
-        totalCost:
-          stats.cost != null
-            ? current.totalCost + stats.cost
-            : current.totalCost,
-        turns: stats.turns ?? current.turns,
-        durationMs:
-          stats.durationMs != null
-            ? current.durationMs + stats.durationMs
-            : current.durationMs,
-        sessionId: current.sessionId,
-      };
-      sessionStatsRef.current = updated;
-      setSessionStats(updated);
-    },
-    [],
-  );
-
-  const handlePermissionError = useCallback(
-    (toolName: string, patterns: string[], toolUseId: string) => {
-      // Check if this is an ExitPlanMode permission error
-      if (patterns.includes("ExitPlanMode")) {
-        // For ExitPlanMode, show plan permission interface instead of regular permission
-        showPlanModeRequest(""); // Empty plan content since it was already displayed
-      } else {
-        showPermissionRequest(toolName, patterns, toolUseId);
-      }
-    },
-    [showPermissionRequest, showPlanModeRequest],
-  );
-
   const sendMessage = useCallback(
     async (
       messageContent?: string,
-      tools?: string[],
+      _tools?: string[],
       hideUserMessage = false,
-      overridePermissionMode?: PermissionMode,
     ) => {
       let content = messageContent || input.trim();
       if (!content && pendingImages.length === 0) return;
+
+      // /reset — restart session via WebSocket (saves JSONL history)
+      if (content.trim().toLowerCase() === "/reset") {
+        clearInput();
+        setMessages([]);
+        if (roleFile && workingDirectory) {
+          ws.restartSession(roleFile, workingDirectory);
+        }
+        addMessage({
+          type: "system",
+          subtype: "abort",
+          message: "Session reset. Send a message to start a new session.",
+          timestamp: Date.now(),
+        });
+        return;
+      }
 
       // Upload pending files and collect server paths
       const attachmentPaths: string[] = [];
@@ -383,11 +384,9 @@ export function ChatPage() {
       if (!content && attachmentPaths.length === 0) return;
 
       // Prepend context file content on first message of session
-      if (!currentSessionId && activeContext?.content) {
+      if (!ws.sessionId && activeContext?.content) {
         content = `[Session Context: ${activeContext.filename}]\n\n${activeContext.content}\n\n---\n\n${content}`;
       }
-
-      const requestId = generateRequestId();
 
       // Only add user message to chat if not hidden
       if (!hideUserMessage) {
@@ -405,154 +404,38 @@ export function ChatPage() {
       }
 
       if (!messageContent) clearInput();
+
+      // If Claude is currently responding, interrupt first
+      if (isLoading) {
+        ws.interrupt();
+      }
       startRequest();
 
-      try {
-        const response = await fetch(getChatUrl(), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            message: content || "",
-            requestId,
-            ...(currentSessionId ? { sessionId: currentSessionId } : {}),
-            allowedTools: tools || allowedTools,
-            ...(workingDirectory ? { workingDirectory } : {}),
-            ...(attachmentPaths.length > 0
-              ? { attachments: attachmentPaths }
-              : {}),
-            ...(thinkingLevel !== "off"
-              ? { maxThinkingTokens: thinkingLevel === "brief" ? 5000 : 32000 }
-              : {}),
-            permissionMode: overridePermissionMode || permissionMode,
-          } as ChatRequest),
-        });
-
-        if (!response.body) throw new Error("No response body");
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-
-        // Local state for this streaming session — updated synchronously
-        // so the streaming context always reads the latest value, not a
-        // stale React-state closure.
-        let localHasReceivedInit = false;
-        let localCurrentAssistantMessage = currentAssistantMessage;
-        let shouldAbort = false;
-
-        const streamingContext: StreamingContext = {
-          get currentAssistantMessage() {
-            return localCurrentAssistantMessage;
-          },
-          setCurrentAssistantMessage: (msg) => {
-            localCurrentAssistantMessage = msg;
-            setCurrentAssistantMessage(msg);
-          },
-          addMessage,
-          updateLastMessage,
-          onSessionId: (sid: string) => {
-            setCurrentSessionId(sid);
-            sessionStatsRef.current = {
-              ...sessionStatsRef.current,
-              sessionId: sid,
-            };
-            setSessionStats(sessionStatsRef.current);
-          },
-          onSlashCommands: setSlashCommands,
-          onSessionStats: handleSessionStats,
-          shouldShowInitMessage: () => !hasShownInitMessage,
-          onInitMessageShown: () => setHasShownInitMessage(true),
-          get hasReceivedInit() {
-            return localHasReceivedInit;
-          },
-          setHasReceivedInit: (received: boolean) => {
-            localHasReceivedInit = received;
-            setHasReceivedInit(received);
-          },
-          onPermissionError: handlePermissionError,
-          onAbortRequest: async () => {
-            shouldAbort = true;
-            await createAbortHandler(requestId)();
-          },
-          onFileDelivery: () => {
-            setSidebarRefreshKey((k) => k + 1);
-          },
-        };
-
-        // NDJSON line buffer — TCP chunks don't align with JSON line
-        // boundaries, so a single NDJSON line may be split across two
-        // reader.read() calls.  Accumulate partial lines and only
-        // process complete ones (terminated by "\n").
-        let lineBuffer = "";
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done || shouldAbort) break;
-
-          lineBuffer += decoder.decode(value, { stream: true });
-          const parts = lineBuffer.split("\n");
-          // Last element is either "" (line ended with \n) or a partial
-          // line that needs to carry over to the next chunk.
-          lineBuffer = parts.pop() || "";
-
-          for (const line of parts) {
-            if (shouldAbort) break;
-            const trimmed = line.trim();
-            if (trimmed) {
-              processStreamLine(trimmed, streamingContext);
-            }
-          }
-
-          if (shouldAbort) break;
-        }
-
-        // Flush any remaining partial line (shouldn't happen if the
-        // backend always terminates with \n, but defensive).
-        if (lineBuffer.trim()) {
-          processStreamLine(lineBuffer.trim(), streamingContext);
-        }
-      } catch (error) {
-        console.error("Failed to send message:", error);
-        addMessage({
-          type: "chat",
-          role: "assistant",
-          content: "Error: Failed to get response",
-          timestamp: Date.now(),
-        });
-      } finally {
-        resetRequestState();
-      }
+      // Send via WebSocket — responses arrive through the callbacks
+      ws.sendMessage(
+        content,
+        attachmentPaths.length > 0 ? attachmentPaths : undefined,
+      );
     },
     [
       input,
       isLoading,
-      currentSessionId,
-      allowedTools,
-      hasShownInitMessage,
-      currentAssistantMessage,
+      ws,
+      roleFile,
       workingDirectory,
-      permissionMode,
-      generateRequestId,
+      activeContext,
       clearInput,
       startRequest,
       addMessage,
-      updateLastMessage,
-      setCurrentSessionId,
-      setHasShownInitMessage,
-      setHasReceivedInit,
-      setCurrentAssistantMessage,
-      resetRequestState,
-      processStreamLine,
-      handlePermissionError,
-      createAbortHandler,
+      setMessages,
       pendingImages,
-      thinkingLevel,
-      handleSessionStats,
     ],
   );
 
   const handleAbort = useCallback(() => {
-    abortRequest(currentRequestId, isLoading, resetRequestState);
-  }, [abortRequest, currentRequestId, isLoading, resetRequestState]);
+    ws.interrupt();
+    resetRequestState();
+  }, [ws, resetRequestState]);
 
   // Permission request handlers
   const handlePermissionAllow = useCallback(() => {
@@ -567,7 +450,7 @@ export function ChatPage() {
     closePermissionRequest();
 
     if (currentSessionId) {
-      sendMessage("continue", updatedAllowedTools, true);
+      sendMessage("continue", undefined, true);
     }
   }, [
     permissionRequest,
@@ -590,7 +473,7 @@ export function ChatPage() {
     closePermissionRequest();
 
     if (currentSessionId) {
-      sendMessage("continue", updatedAllowedTools, true);
+      sendMessage("continue", undefined, true);
     }
   }, [
     permissionRequest,
@@ -610,7 +493,7 @@ export function ChatPage() {
     updatePermissionMode("acceptEdits");
     closePlanModeRequest();
     if (currentSessionId) {
-      sendMessage("accept", allowedTools, true, "acceptEdits");
+      sendMessage("accept", undefined, true);
     }
   }, [
     updatePermissionMode,
@@ -624,7 +507,7 @@ export function ChatPage() {
     updatePermissionMode("default");
     closePlanModeRequest();
     if (currentSessionId) {
-      sendMessage("accept", allowedTools, true, "default");
+      sendMessage("accept", undefined, true);
     }
   }, [
     updatePermissionMode,
@@ -707,7 +590,7 @@ export function ChatPage() {
   // Handle global keyboard shortcuts
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      if (e.key === KEYBOARD_SHORTCUTS.ABORT && isLoading && currentRequestId) {
+      if (e.key === KEYBOARD_SHORTCUTS.ABORT && isLoading) {
         e.preventDefault();
         handleAbort();
       }
@@ -715,13 +598,14 @@ export function ChatPage() {
 
     document.addEventListener("keydown", handleGlobalKeyDown);
     return () => document.removeEventListener("keydown", handleGlobalKeyDown);
-  }, [isLoading, currentRequestId, handleAbort]);
+  }, [isLoading, handleAbort]);
 
   const isMobile = useIsMobile();
 
   const handleFileSelect = (path: string, name: string) => {
     setEditingFile({ path, name });
     setShowArchViewer(false);
+    setShowSecrets(false);
     // On mobile the panels are mutually exclusive — opening a file should
     // hide the file tree so the editor takes the screen.
     if (isMobile) setShowSidebar(false);
@@ -734,11 +618,13 @@ export function ChatPage() {
     ? "history"
     : showArchViewer
       ? "arch"
-      : editingFile
-        ? "editor"
-        : showSidebar
-          ? "files"
-          : "chat";
+      : showSecrets
+        ? "secrets"
+        : editingFile
+          ? "editor"
+          : showSidebar
+            ? "files"
+            : "chat";
 
   const handleMobileTabSelect = useCallback(
     (tab: MobileTab) => {
@@ -754,6 +640,7 @@ export function ChatPage() {
       if (isHistoryView) navigate({ search: "" });
       setShowSidebar(tab === "files");
       setShowArchViewer(tab === "arch");
+      setShowSecrets(tab === "secrets");
       if (tab !== "editor") setEditingFile(null);
       // Selecting "chat" while a file is open keeps the file in memory but
       // collapses to chat — same as desktop behavior with both flags off.
@@ -845,8 +732,12 @@ export function ChatPage() {
               </button>
               <button
                 onClick={() => {
-                  setShowArchViewer(!showArchViewer);
-                  if (!showArchViewer) setEditingFile(null);
+                  const opening = !showArchViewer;
+                  setShowArchViewer(opening);
+                  if (opening) {
+                    setEditingFile(null);
+                    setShowSecrets(false);
+                  }
                 }}
                 className={`p-2 rounded-lg border transition-all duration-200 ${
                   showArchViewer
@@ -855,7 +746,25 @@ export function ChatPage() {
                 }`}
                 title="Architecture viewer"
               >
-                <span className="text-sm">Arch</span>
+                <CubeTransparentIcon className="w-5 h-5" />
+              </button>
+              <button
+                onClick={() => {
+                  const opening = !showSecrets;
+                  setShowSecrets(opening);
+                  if (opening) {
+                    setShowArchViewer(false);
+                    setEditingFile(null);
+                  }
+                }}
+                className={`p-2 rounded-lg border transition-all duration-200 ${
+                  showSecrets
+                    ? "bg-blue-100 dark:bg-blue-900/30 border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400"
+                    : "bg-white/80 dark:bg-slate-800/80 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800"
+                }`}
+                title="Secrets vault"
+              >
+                <KeyIcon className="w-5 h-5" />
               </button>
               {!isHistoryView && <HistoryButton onClick={handleHistoryClick} />}
             </>
@@ -868,11 +777,11 @@ export function ChatPage() {
           the active MobileTab is rendered, full-width, with the tab bar
           mounted at the bottom of the outer column. */}
       <div className="flex-1 flex overflow-hidden">
-        {/* File Sidebar */}
+        {/* File Sidebar — independent left panel, stays open alongside everything */}
         {showSidebar &&
           workingDirectory &&
           (!isMobile || mobileTab === "files") && (
-            <div className={isMobile ? "flex-1 min-w-0" : "w-56 flex-shrink-0"}>
+            <div className={isMobile ? "flex-1 min-w-0" : "w-56 flex-shrink-0 border-r border-slate-200 dark:border-slate-700"}>
               <FileSidebar
                 key={sidebarRefreshKey}
                 projectPath={workingDirectory}
@@ -885,12 +794,18 @@ export function ChatPage() {
             </div>
           )}
 
-        {/* Middle panel — editor or architecture viewer (gets the most space) */}
+        {/* Right panel slot — ONE of: arch viewer, file editor, or secrets.
+            Arch & editor get flex-1 (wide). Secrets gets w-56 (narrow, same as files).
+            They replace each other — never stack side by side. */}
         {showArchViewer &&
         workingDirectory &&
         (!isMobile || mobileTab === "arch") ? (
           <div className="flex-1 min-w-0 overflow-hidden border-r border-slate-200 dark:border-slate-700">
             <ArchitectureViewer projectPath={workingDirectory} />
+          </div>
+        ) : showSecrets && (!isMobile || mobileTab === "secrets") ? (
+          <div className={isMobile ? "flex-1 min-w-0" : "w-56 flex-shrink-0 border-r border-slate-200 dark:border-slate-700"}>
+            <SecretsPanel />
           </div>
         ) : editingFile && (!isMobile || mobileTab === "editor") ? (
           <div className="flex-1 min-w-0 overflow-hidden border-r border-slate-200 dark:border-slate-700">
@@ -909,7 +824,7 @@ export function ChatPage() {
               ? mobileTab === "chat" || mobileTab === "history"
                 ? "flex-1"
                 : "hidden"
-              : editingFile || showArchViewer
+              : editingFile || showArchViewer || showSecrets
                 ? "w-[450px] flex-shrink-0"
                 : "flex-1"
           } min-w-0 flex flex-col overflow-hidden`}
@@ -965,11 +880,11 @@ export function ChatPage() {
                     setEditingFile({ path, name });
                     setShowArchViewer(false);
                   }}
+                  onSubmitText={(text) => sendMessage(text)}
                 />
                 <ChatInput
                   input={input}
                   isLoading={isLoading}
-                  currentRequestId={currentRequestId}
                   onInputChange={setInput}
                   onSubmit={() => sendMessage()}
                   onAbort={handleAbort}
@@ -985,7 +900,7 @@ export function ChatPage() {
                   // textarea when arch viewer or file editor toggles. Both
                   // collapse the chat panel between w-[450px] and flex-1.
                   focusTrigger={
-                    (showArchViewer ? 1 : 0) + (editingFile ? 2 : 0)
+                    (showArchViewer ? 1 : 0) + (editingFile ? 2 : 0) + (showSecrets ? 4 : 0)
                   }
                   pendingImages={pendingImages}
                   onImageAdd={(files) => {

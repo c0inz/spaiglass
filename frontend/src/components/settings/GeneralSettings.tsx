@@ -362,7 +362,7 @@ export function GeneralSettings() {
                 disabled={busy || !keyInput.trim().startsWith("sk-ant-")}
                 className="px-4 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white rounded disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {busy ? "Saving…" : "Save"}
+                {busy ? "Saving…" : "Save Key"}
               </button>
             </div>
 

@@ -79,6 +79,19 @@ export function initDb(path = "./relay.db"): Database.Database {
     );
 
     CREATE INDEX IF NOT EXISTS idx_vm_audit_connector ON vm_audit_log(connector_id, created_at DESC);
+
+    -- Server-side role labels. Replaces the old localStorage-only approach so
+    -- labels survive across devices and cache clears. One row per
+    -- (connector, project, roleFile) triple. The label column holds the
+    -- user-chosen short name (empty string → deleted / use default).
+    CREATE TABLE IF NOT EXISTS role_labels (
+      connector_id TEXT NOT NULL REFERENCES connectors(id) ON DELETE CASCADE,
+      proj_base TEXT NOT NULL,
+      role_file TEXT NOT NULL,
+      label TEXT NOT NULL DEFAULT '',
+      updated_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (connector_id, proj_base, role_file)
+    );
   `);
 
   return db;
@@ -411,4 +424,44 @@ export function listAuditLog(connectorId: string, limit = 100): AuditLogEntry[] 
        LIMIT ?`,
     )
     .all(connectorId, limit) as AuditLogEntry[];
+}
+
+// --- Role Labels (server-persisted) ---
+
+export interface RoleLabel {
+  connector_id: string;
+  proj_base: string;
+  role_file: string;
+  label: string;
+}
+
+/** Get all custom role labels for a connector. */
+export function getRoleLabels(connectorId: string): RoleLabel[] {
+  return getDb()
+    .prepare("SELECT * FROM role_labels WHERE connector_id = ? AND label != ''")
+    .all(connectorId) as RoleLabel[];
+}
+
+/** Set or clear a single role label. Empty/null label deletes the row. */
+export function setRoleLabel(
+  connectorId: string,
+  projBase: string,
+  roleFile: string,
+  label: string | null,
+): void {
+  const trimmed = (label || "").trim();
+  if (!trimmed) {
+    getDb()
+      .prepare("DELETE FROM role_labels WHERE connector_id = ? AND proj_base = ? AND role_file = ?")
+      .run(connectorId, projBase, roleFile);
+  } else {
+    getDb()
+      .prepare(
+        `INSERT INTO role_labels (connector_id, proj_base, role_file, label, updated_at)
+         VALUES (?, ?, ?, ?, datetime('now'))
+         ON CONFLICT (connector_id, proj_base, role_file)
+         DO UPDATE SET label = excluded.label, updated_at = excluded.updated_at`,
+      )
+      .run(connectorId, projBase, roleFile, trimmed);
+  }
 }
