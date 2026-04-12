@@ -98,8 +98,12 @@ const LOGIN_HTML = `<!DOCTYPE html>
 export function createAuthMiddleware() {
   const authPassword = getEnv("AUTH_PASSWORD");
 
-  // If no AUTH_PASSWORD set, skip auth entirely
+  // If no AUTH_PASSWORD set, skip auth entirely (relay handles OAuth upstream)
   if (!authPassword) {
+    console.warn(
+      "[AUTH] WARNING: AUTH_PASSWORD is not set. All endpoints are unauthenticated. " +
+        "This is only safe when the relay handles authentication upstream.",
+    );
     return createMiddleware(async (_c, next) => {
       await next();
     });

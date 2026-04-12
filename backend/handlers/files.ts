@@ -1,17 +1,27 @@
 import type { Context } from "hono";
 import { readdir, stat, readFile, writeFile, mkdir } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
+import { homedir } from "node:os";
 
 /**
- * Validate that a resolved path is within the allowed project directory.
- * Prevents path traversal attacks. Currently unused in this file (callers
- * resolve paths inline) but kept for future handlers that need it — the
- * underscore prefix tells eslint the unused state is intentional.
+ * Validate that a resolved path is within the user's home directory and
+ * not inside sensitive credential directories. Prevents path traversal
+ * attacks — every file endpoint MUST call this before any I/O.
  */
-function _validatePath(requestedPath: string, projectRoot: string): string {
-  const resolved = resolve(projectRoot, requestedPath);
-  if (!resolved.startsWith(resolve(projectRoot))) {
-    throw new Error("Path traversal not allowed");
+const SENSITIVE_DIRS = [".ssh", ".gnupg", ".aws", ".config/gcloud"];
+
+function validatePath(requestedPath: string): string {
+  const resolved = resolve(requestedPath);
+  const home = homedir();
+  const homePrefix = home.endsWith("/") ? home : home + "/";
+  if (resolved !== home && !resolved.startsWith(homePrefix)) {
+    throw new Error("Access denied: path outside home directory");
+  }
+  const rel = relative(home, resolved);
+  for (const dir of SENSITIVE_DIRS) {
+    if (rel === dir || rel.startsWith(dir + "/")) {
+      throw new Error("Access denied: sensitive directory");
+    }
   }
   return resolved;
 }
@@ -34,7 +44,7 @@ export async function handleFileTreeRequest(c: Context) {
   }
 
   try {
-    const resolved = resolve(dirPath);
+    const resolved = validatePath(dirPath);
     const entries = await readdir(resolved, { withFileTypes: true });
     const tree: TreeEntry[] = [];
 
@@ -58,10 +68,9 @@ export async function handleFileTreeRequest(c: Context) {
 
     return c.json({ entries: tree });
   } catch (err) {
-    return c.json(
-      { error: `Failed to read directory: ${(err as Error).message}` },
-      500,
-    );
+    const msg = (err as Error).message;
+    if (msg.startsWith("Access denied")) return c.json({ error: msg }, 403);
+    return c.json({ error: `Failed to read directory: ${msg}` }, 500);
   }
 }
 
@@ -76,14 +85,13 @@ export async function handleFileReadRequest(c: Context) {
   }
 
   try {
-    const resolved = resolve(filePath);
+    const resolved = validatePath(filePath);
     const content = await readFile(resolved, "utf-8");
     return c.json({ content, path: filePath });
   } catch (err) {
-    return c.json(
-      { error: `Failed to read file: ${(err as Error).message}` },
-      500,
-    );
+    const msg = (err as Error).message;
+    if (msg.startsWith("Access denied")) return c.json({ error: msg }, 403);
+    return c.json({ error: `Failed to read file: ${msg}` }, 500);
   }
 }
 
@@ -99,17 +107,16 @@ export async function handleFileWriteRequest(c: Context) {
   }
 
   try {
-    const resolved = resolve(body.path);
+    const resolved = validatePath(body.path);
     // Ensure parent directory exists
     const parentDir = resolved.substring(0, resolved.lastIndexOf("/"));
     await mkdir(parentDir, { recursive: true });
     await writeFile(resolved, body.content, "utf-8");
     return c.json({ success: true, path: body.path });
   } catch (err) {
-    return c.json(
-      { error: `Failed to write file: ${(err as Error).message}` },
-      500,
-    );
+    const msg = (err as Error).message;
+    if (msg.startsWith("Access denied")) return c.json({ error: msg }, 403);
+    return c.json({ error: `Failed to write file: ${msg}` }, 500);
   }
 }
 
@@ -124,15 +131,14 @@ export async function handleFileSnapshotRequest(c: Context) {
   }
 
   try {
-    const resolved = resolve(dirPath);
+    const resolved = validatePath(dirPath);
     const files: Record<string, number> = {};
     await walkDir(resolved, resolved, files);
     return c.json({ files });
   } catch (err) {
-    return c.json(
-      { error: `Failed to snapshot: ${(err as Error).message}` },
-      500,
-    );
+    const msg = (err as Error).message;
+    if (msg.startsWith("Access denied")) return c.json({ error: msg }, 403);
+    return c.json({ error: `Failed to snapshot: ${msg}` }, 500);
   }
 }
 
@@ -178,7 +184,7 @@ export async function handleFileListRequest(c: Context) {
   const recursive = c.req.query("recursive") === "true";
 
   try {
-    const resolved = resolve(dirPath);
+    const resolved = validatePath(dirPath);
     const files: string[] = [];
 
     if (recursive) {
@@ -194,10 +200,9 @@ export async function handleFileListRequest(c: Context) {
 
     return c.json({ files });
   } catch (err) {
-    return c.json(
-      { error: `Failed to list files: ${(err as Error).message}` },
-      500,
-    );
+    const msg = (err as Error).message;
+    if (msg.startsWith("Access denied")) return c.json({ error: msg }, 403);
+    return c.json({ error: `Failed to list files: ${msg}` }, 500);
   }
 }
 

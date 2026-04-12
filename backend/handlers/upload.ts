@@ -1,6 +1,7 @@
 import { Context } from "hono";
 import { promises as fs } from "node:fs";
-import { join } from "node:path";
+import { join, resolve, relative } from "node:path";
+import { homedir } from "node:os";
 import { logger } from "../utils/logger.ts";
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
@@ -35,8 +36,22 @@ export async function handleUploadRequest(c: Context) {
     );
   }
 
+  // Validate workingDirectory is within home — prevents arbitrary file write
+  const resolvedWd = resolve(workingDirectory as string);
+  const home = homedir();
+  const homePrefix = home.endsWith("/") ? home : home + "/";
+  if (resolvedWd !== home && !resolvedWd.startsWith(homePrefix)) {
+    return c.json({ error: "Access denied: path outside home directory" }, 403);
+  }
+  const rel = relative(home, resolvedWd);
+  for (const dir of [".ssh", ".gnupg", ".aws", ".config/gcloud"]) {
+    if (rel === dir || rel.startsWith(dir + "/")) {
+      return c.json({ error: "Access denied: sensitive directory" }, 403);
+    }
+  }
+
   // Create upload directory
-  const uploadsDir = join(workingDirectory, ".spyglass", "uploads");
+  const uploadsDir = join(resolvedWd, ".spyglass", "uploads");
   await fs.mkdir(uploadsDir, { recursive: true });
 
   // Save with timestamp prefix for uniqueness
