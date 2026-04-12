@@ -28,6 +28,9 @@ interface WSSessionState {
    * connecting directly to a backend without a relay in front).
    */
   role: "owner" | "editor" | "viewer" | null;
+  /** GitHub login of the authenticated user, sent by the relay in the
+   *  `connected` handshake. Null when connecting directly to a backend. */
+  login: string | null;
 }
 
 export function useWebSocketSession(options: WSSessionOptions = {}) {
@@ -50,6 +53,7 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
     slashCommands: [],
     attached: false,
     role: null,
+    login: null,
   });
   // Mirror of state.role kept in a ref so onmessage handlers (which have a
   // stale closure over state) can read the latest role without re-binding.
@@ -143,8 +147,9 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
         // can hide the input bar for viewers.
         const role =
           (msg.role as "owner" | "editor" | "viewer" | undefined) ?? null;
+        const login = (msg.login as string | undefined) ?? null;
         roleRef.current = role;
-        setState((s) => ({ ...s, role }));
+        setState((s) => ({ ...s, role, login }));
         break;
       }
 
@@ -463,6 +468,7 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
       slashCommands: [],
       attached: false,
       role: null,
+      login: null,
     });
   }, []);
 

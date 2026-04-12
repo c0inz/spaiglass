@@ -384,6 +384,8 @@ function parseChoiceBlock(body: string): { prompt: string; options: string[] } {
  * legacy FileDeliveryMessageComponent.
  */
 export interface RenderOptions {
+  /** GitHub login of the authenticated user (e.g. "johntdavenport"). */
+  userLogin?: string | null;
   onOpenFile?: (path: string, filename: string) => void;
   /**
    * Phase 6.4 — invoked when the user submits a reply to an interactive
@@ -450,7 +452,7 @@ function renderChat(message: ChatMessage, opts: RenderOptions): ReactNode {
   const gutterColor = isUser
     ? "border-blue-500/60 dark:border-blue-400/60"
     : "border-emerald-500/60 dark:border-emerald-400/60";
-  const label = isUser ? "user" : "claude";
+  const label = isUser ? (opts.userLogin || "user") : "claude";
 
   // User messages stay as literal preformatted text — they're commands,
   // paths, and questions that should not get accidentally parsed as markdown

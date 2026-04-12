@@ -170,7 +170,7 @@ export function ChatInput({
       }
     }
 
-    if (e.key === KEYBOARD_SHORTCUTS.SUBMIT && !isComposing && !isLoading) {
+    if (e.key === KEYBOARD_SHORTCUTS.SUBMIT && !isComposing) {
       if (enterBehavior === "newline") {
         handleNewlineModeKeyDown(e);
       } else {
@@ -440,7 +440,7 @@ export function ChatInput({
           <button
             type="submit"
             disabled={
-              !input.trim() && !(pendingImages && pendingImages.length > 0) && !isLoading
+              !input.trim() && !(pendingImages && pendingImages.length > 0)
             }
             className="px-3 py-1 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-400 text-white rounded-lg font-medium transition-all duration-200 shadow-sm hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 text-sm leading-tight max-h-[28px] flex items-center"
           >

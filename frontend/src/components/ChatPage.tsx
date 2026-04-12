@@ -875,6 +875,7 @@ export function ChatPage() {
                 <ChatMessages
                   messages={messages}
                   isLoading={isLoading}
+                  userLogin={ws.login}
                   onOpenFile={(path, name) => {
                     setShowSidebar(true);
                     setEditingFile({ path, name });

@@ -10,6 +10,7 @@ import type { InteractiveToolResultStatus } from "../../terminal/interpreter";
 interface ChatMessagesProps {
   messages: AllMessage[];
   isLoading: boolean;
+  userLogin?: string | null;
   onOpenFile?: (path: string, filename: string) => void;
   onToolResult?: (
     requestId: string,
@@ -28,6 +29,7 @@ interface ChatMessagesProps {
 export function ChatMessages({
   messages,
   isLoading,
+  userLogin,
   onOpenFile,
   onToolResult,
   onSubmitText,
@@ -36,6 +38,7 @@ export function ChatMessages({
     <TerminalChat
       messages={messages}
       isLoading={isLoading}
+      userLogin={userLogin}
       onOpenFile={onOpenFile}
       onToolResult={onToolResult}
       onSubmitText={onSubmitText}

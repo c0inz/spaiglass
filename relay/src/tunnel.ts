@@ -455,6 +455,7 @@ export function createBrowserWsHandler(
   connectorId: string,
   userId: string,
   role: ConnectorRole,
+  login?: string,
 ) {
   const cm = getChannelManager();
   const browserId = crypto.randomUUID();
@@ -486,6 +487,7 @@ export function createBrowserWsHandler(
         connectorId,
         browserId,
         role: currentRole,
+        login,
       }));
     },
 

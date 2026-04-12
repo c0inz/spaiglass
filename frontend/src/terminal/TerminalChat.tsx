@@ -25,6 +25,7 @@ import { TermSpinner } from "./components";
 interface TerminalChatProps {
   messages: AllMessage[];
   isLoading: boolean;
+  userLogin?: string | null;
   onOpenFile?: (path: string, filename: string) => void;
   /**
    * Phase 6.4 — invoked when the user replies to an interactive widget.
@@ -54,6 +55,7 @@ const NEAR_BOTTOM_PX = 64;
 export function TerminalChat({
   messages,
   isLoading,
+  userLogin,
   onOpenFile,
   onToolResult,
   onSubmitText,
@@ -92,6 +94,7 @@ export function TerminalChat({
             <MemoMessageRow
               key={`${msg.timestamp}-${idx}`}
               message={msg}
+              userLogin={userLogin}
               onOpenFile={onOpenFile}
               onToolResult={onToolResult}
               onSubmitText={onSubmitText}
@@ -111,6 +114,7 @@ export function TerminalChat({
 
 interface MessageRowProps {
   message: AllMessage;
+  userLogin?: string | null;
   onOpenFile?: (path: string, filename: string) => void;
   onToolResult?: (
     requestId: string,
@@ -123,11 +127,13 @@ interface MessageRowProps {
 
 function MessageRow({
   message,
+  userLogin,
   onOpenFile,
   onToolResult,
   onSubmitText,
 }: MessageRowProps): ReactNode {
   const node = renderTerminalMessage(message, {
+    userLogin,
     onOpenFile,
     onToolResult,
     onSubmitText,

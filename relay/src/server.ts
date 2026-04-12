@@ -1345,6 +1345,7 @@ async function loadRoles(connId, connName, slug) {
       return '<div class="role-row' + (hidden ? ' hidden-role' : '') + '" style="display:' + display + '">' +
         '<a href="' + url + '" target="_blank" class="role-name" style="text-decoration:none;color:#3b82f6;" title="' + (custom ? 'Custom: ' + label + ' (default ' + fallback + ')' : 'Default label') + '">' + label + '</a>' +
         '<button class="btn-ghost edit-pencil" title="Edit short name" onclick="event.stopPropagation();editLabel(' + keyArgs + ',\\'' + fallback + '\\')">&#9998;</button>' +
+        '<a href="' + url + '?new=1" target="_blank" class="btn-ghost" title="New session" style="text-decoration:none;">+</a>' +
         '<span class="role-url">' + url + '</span>' +
         '<button class="btn-ghost" onclick="event.stopPropagation();toggleHide(' + keyArgs + ')">' + (hidden ? 'Show' : 'Hide') + '</button>' +
       '</div>';
@@ -1783,7 +1784,7 @@ app.get("/vm/:slug/api/ws", upgradeWebSocket((c) => {
     };
   }
 
-  const handler = createBrowserWsHandler(connector.id, user.id, role);
+  const handler = createBrowserWsHandler(connector.id, user.id, role, user.github_login);
   return {
     onOpen(event, ws) { handler.onOpen(ws); },
     onMessage(event, ws) { handler.onMessage(ws, event); },
