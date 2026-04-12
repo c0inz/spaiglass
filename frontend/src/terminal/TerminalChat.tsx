@@ -15,16 +15,19 @@
 
 import { memo, useCallback, useEffect, useRef } from "react";
 import type { AllMessage } from "../types";
+import type { DisplayStatus } from "../utils/statusClassifier";
 import type { ReactNode } from "react";
 import {
   renderTerminalMessage,
   type InteractiveToolResultStatus,
 } from "./interpreter";
-import { TermSpinner } from "./components";
+import { StatusLine } from "./StatusLine";
 
 interface TerminalChatProps {
   messages: AllMessage[];
   isLoading: boolean;
+  /** Transient status from tool activity classifier. Replaces the generic spinner. */
+  currentStatus?: DisplayStatus | null;
   userLogin?: string | null;
   onOpenFile?: (path: string, filename: string) => void;
   /**
@@ -55,6 +58,7 @@ const NEAR_BOTTOM_PX = 64;
 export function TerminalChat({
   messages,
   isLoading,
+  currentStatus,
   userLogin,
   onOpenFile,
   onToolResult,
@@ -77,7 +81,7 @@ export function TerminalChat({
   useEffect(() => {
     if (!pinnedRef.current) return;
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, currentStatus]);
 
   return (
     <div
@@ -101,9 +105,7 @@ export function TerminalChat({
             />
           ))}
           {isLoading && (
-            <div className="my-2">
-              <TermSpinner label="thinking" />
-            </div>
+            <StatusLine status={currentStatus ?? { label: "Thinking…", kind: "thinking", priority: 10, stickyMs: 500, dedupeKey: "default" }} />
           )}
           <div ref={endRef} />
         </>

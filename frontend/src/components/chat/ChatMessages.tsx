@@ -4,12 +4,14 @@
  * (ChatPage, DemoPage) keep working without changes.
  */
 import type { AllMessage } from "../../types";
+import type { DisplayStatus } from "../../utils/statusClassifier";
 import { TerminalChat } from "../../terminal/TerminalChat";
 import type { InteractiveToolResultStatus } from "../../terminal/interpreter";
 
 interface ChatMessagesProps {
   messages: AllMessage[];
   isLoading: boolean;
+  currentStatus?: DisplayStatus | null;
   userLogin?: string | null;
   onOpenFile?: (path: string, filename: string) => void;
   onToolResult?: (
@@ -29,6 +31,7 @@ interface ChatMessagesProps {
 export function ChatMessages({
   messages,
   isLoading,
+  currentStatus,
   userLogin,
   onOpenFile,
   onToolResult,
@@ -38,6 +41,7 @@ export function ChatMessages({
     <TerminalChat
       messages={messages}
       isLoading={isLoading}
+      currentStatus={currentStatus}
       userLogin={userLogin}
       onOpenFile={onOpenFile}
       onToolResult={onToolResult}

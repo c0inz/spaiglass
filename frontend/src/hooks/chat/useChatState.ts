@@ -1,5 +1,6 @@
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import type { AllMessage, ChatMessage } from "../../types";
+import type { DisplayStatus } from "../../utils/statusClassifier";
 import { generateId } from "../../utils/id";
 
 interface ChatStateOptions {
@@ -32,6 +33,10 @@ export function useChatState(options: ChatStateOptions = {}) {
   const [hasReceivedInit, setHasReceivedInit] = useState(false);
   const [currentAssistantMessage, setCurrentAssistantMessage] =
     useState<ChatMessage | null>(null);
+  const [currentStatus, setCurrentStatus] = useState<DisplayStatus | null>(null);
+  // Sticky timer: prevent lower-priority status from replacing a high-priority
+  // one before its stickyMs expires.
+  const stickyRef = useRef<{ status: DisplayStatus; expiresAt: number } | null>(null);
 
   // Update messages and sessionId when initial values change
   useEffect(() => {
@@ -66,11 +71,35 @@ export function useChatState(options: ChatStateOptions = {}) {
     return requestId;
   }, []);
 
+  const updateStatus = useCallback((status: DisplayStatus) => {
+    const now = Date.now();
+    const sticky = stickyRef.current;
+
+    // If a higher-priority status is still sticky, don't downgrade
+    if (sticky && sticky.expiresAt > now && status.priority < sticky.status.priority) {
+      return;
+    }
+
+    // Same dedupeKey — don't re-render (avoid flicker)
+    if (sticky && sticky.status.dedupeKey === status.dedupeKey) {
+      return;
+    }
+
+    stickyRef.current = { status, expiresAt: now + status.stickyMs };
+    setCurrentStatus(status);
+  }, []);
+
+  const clearStatus = useCallback(() => {
+    stickyRef.current = null;
+    setCurrentStatus(null);
+  }, []);
+
   const resetRequestState = useCallback(() => {
     setIsLoading(false);
     setCurrentRequestId(null);
     setCurrentAssistantMessage(null);
-  }, []);
+    clearStatus();
+  }, [clearStatus]);
 
   const startRequest = useCallback(() => {
     setIsLoading(true);
@@ -88,6 +117,7 @@ export function useChatState(options: ChatStateOptions = {}) {
     hasShownInitMessage,
     hasReceivedInit,
     currentAssistantMessage,
+    currentStatus,
 
     // State setters
     setMessages,
@@ -102,6 +132,8 @@ export function useChatState(options: ChatStateOptions = {}) {
     // Helper functions
     addMessage,
     updateLastMessage,
+    updateStatus,
+    clearStatus,
     clearInput,
     generateRequestId,
     resetRequestState,

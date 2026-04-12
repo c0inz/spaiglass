@@ -41,17 +41,13 @@ import type {
   FileDeliveryMessage,
   InteractiveMessage,
 } from "../types";
-import {
-  isBashToolUseResult,
-  isEditToolUseResult,
-} from "../utils/contentUtils";
+// contentUtils imports removed — tool results are now transient status lines
 import {
   TermBox,
   TermButton,
   TermChecklist,
   TermChoice,
   TermCodeBlock,
-  TermDiff,
   TermInput,
   TermText,
   TermToolCard,
@@ -511,52 +507,11 @@ function renderTool(_message: ToolMessage): ReactNode {
 // tool_result — the workhorse: bash, edit, read, grep, write, etc.
 // ---------------------------------------------------------------------------
 
-function renderToolResult(message: ToolResultMessage): ReactNode {
-  const tool = message.toolName;
-  const ur = message.toolUseResult;
-
-  // Bash — show command + stdout/stderr split
-  if (tool === "Bash" && isBashToolUseResult(ur)) {
-    const isError = Boolean(ur.stderr?.trim());
-    return (
-      <div className="my-1">
-        <TermToolCard
-          tool="Bash"
-          args={message.summary}
-          status={isError ? "error" : "ok"}
-          output={ur.stdout || ""}
-          errorOutput={ur.stderr || ""}
-        />
-      </div>
-    );
-  }
-
-  // Edit — render as a diff
-  if (tool === "Edit" && isEditToolUseResult(ur)) {
-    const diff = formatStructuredPatch(ur.structuredPatch);
-    return (
-      <div className="my-1">
-        <TermToolCard tool="Edit" args={message.summary} status="ok" />
-        {diff && (
-          <div className="mt-1">
-            <TermDiff diff={diff} />
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // Generic tool result — collapsed card showing summary + content
-  return (
-    <div className="my-1">
-      <TermToolCard
-        tool={tool}
-        args={message.summary}
-        status="ok"
-        output={message.content}
-      />
-    </div>
-  );
+function renderToolResult(_message: ToolResultMessage): ReactNode {
+  // Tool results are transient — during streaming they appear as status line
+  // labels ("Reading source files…", "Executing tests…"), not permanent cards.
+  // In history replay they're also suppressed for a clean conversation view.
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -579,16 +534,11 @@ function renderPlan(message: PlanMessage): ReactNode {
 // thinking
 // ---------------------------------------------------------------------------
 
-function renderThinking(message: ThinkingMessage): ReactNode {
-  return (
-    <div className="my-2">
-      <TermBox border title="Reasoning">
-        <TermText italic dim color="magenta">
-          <pre className="whitespace-pre-wrap font-mono">{message.content}</pre>
-        </TermText>
-      </TermBox>
-    </div>
-  );
+function renderThinking(_message: ThinkingMessage): ReactNode {
+  // Thinking is transient — during streaming it appears as a status line
+  // label ("Analyzing problem…", "Refining plan…"), not a permanent card.
+  // In history replay it's also suppressed for a clean conversation view.
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -778,31 +728,6 @@ function renderSystem(message: SystemMessage): ReactNode {
   }
 
   return null;
-}
-
-// ---------------------------------------------------------------------------
-// helpers
-// ---------------------------------------------------------------------------
-
-interface PatchHunk {
-  oldStart: number;
-  oldLines: number;
-  newStart: number;
-  newLines: number;
-  lines: string[];
-}
-
-function formatStructuredPatch(patch: unknown): string {
-  if (!Array.isArray(patch)) return "";
-  const out: string[] = [];
-  for (const hunk of patch as PatchHunk[]) {
-    if (!hunk || !Array.isArray(hunk.lines)) continue;
-    out.push(
-      `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`,
-    );
-    for (const line of hunk.lines) out.push(line);
-  }
-  return out.join("\n");
 }
 
 // Re-export TermCodeBlock so future callers can use it without re-importing.

@@ -273,6 +273,8 @@ export function ChatPage() {
     setCurrentAssistantMessage,
     addMessage,
     updateLastMessage,
+    updateStatus,
+    currentStatus,
     clearInput,
     resetRequestState,
     startRequest,
@@ -316,8 +318,9 @@ export function ChatPage() {
       onTurnComplete: () => {
         resetRequestState();
       },
+      onStatusUpdate: updateStatus,
     });
-  }, [addMessage, updateLastMessage, setCurrentAssistantMessage, currentAssistantMessage, ws.setCallbacks, setCurrentSessionId, resetRequestState]);
+  }, [addMessage, updateLastMessage, updateStatus, setCurrentAssistantMessage, currentAssistantMessage, ws.setCallbacks, setCurrentSessionId, resetRequestState]);
 
   // Start/join session once WS is connected and we have roleFile + workingDirectory
   useEffect(() => {
@@ -918,6 +921,7 @@ export function ChatPage() {
                 <ChatMessages
                   messages={messages}
                   isLoading={isLoading}
+                  currentStatus={currentStatus}
                   userLogin={ws.login}
                   onOpenFile={(path, name) => {
                     setShowSidebar(true);

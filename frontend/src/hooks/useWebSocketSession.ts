@@ -8,6 +8,7 @@
 
 import { useRef, useCallback, useState, useEffect } from "react";
 import type { AllMessage, ChatMessage, SDKMessage } from "../types";
+import type { DisplayStatus } from "../utils/statusClassifier";
 import { UnifiedMessageProcessor } from "../utils/UnifiedMessageProcessor";
 
 interface WSSessionOptions {
@@ -69,6 +70,7 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
     onFileDelivery?: (path: string, filename: string) => void;
     onSlashCommands?: (commands: string[]) => void;
     onTurnComplete?: () => void;
+    onStatusUpdate?: (status: DisplayStatus) => void;
   } | null>(null);
 
   const setCallbacks = useCallback((cbs: typeof callbacksRef.current) => {
@@ -250,6 +252,7 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
           currentAssistantMessage: cbs.currentAssistantMessage,
           setCurrentAssistantMessage: cbs.setCurrentAssistantMessage,
           onSessionId: cbs.onSessionId,
+          onStatusUpdate: cbs.onStatusUpdate,
           shouldShowInitMessage: () => true,
           onInitMessageShown: () => {},
           hasReceivedInit: false,

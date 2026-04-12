@@ -15,6 +15,8 @@ import {
 } from "./messageConversion";
 import { isThinkingContentItem } from "./messageTypes";
 import { extractToolInfo, generateToolPatterns } from "./toolUtils";
+import type { DisplayStatus } from "./statusClassifier";
+import { classifyToolUse, classifyToolResult, classifyThinking } from "./statusClassifier";
 
 /**
  * Tool cache interface for tracking tool_use information
@@ -66,6 +68,10 @@ export interface ProcessingContext {
     toolUseId: string,
   ) => void;
   onAbortRequest?: () => void;
+
+  // Status classification — called instead of addMessage for transient tool
+  // activity during streaming. The UI shows a single overwriting status line.
+  onStatusUpdate?: (status: DisplayStatus) => void;
 }
 
 /**
@@ -211,7 +217,15 @@ export class UnifiedMessageProcessor {
       return;
     }
 
-    // This is a regular tool result - create a ToolResultMessage
+    // Streaming mode: emit a transient status instead of permanent tool result
+    if (options.isStreaming && context.onStatusUpdate) {
+      const cachedInput = cachedToolInfo?.input || {};
+      const status = classifyToolResult(toolName, cachedInput, contentItem.is_error);
+      context.onStatusUpdate(status);
+      return;
+    }
+
+    // Batch/history mode: create a ToolResultMessage for the messages array
     const toolResultMessage = createToolResultMessage(
       toolName,
       content,
@@ -307,6 +321,11 @@ export class UnifiedMessageProcessor {
         const toolMessage = createToolMessage(normalized, options.timestamp);
         context.addMessage(toolMessage);
       }
+    } else if (options.isStreaming && context.onStatusUpdate) {
+      // Streaming mode: emit a transient status label instead of a permanent
+      // tool message. The UI shows a single-line "Reading source files…" etc.
+      const status = classifyToolUse(normalized.name || "Tool", input);
+      context.onStatusUpdate(status);
     } else {
       const toolMessage = createToolMessage(normalized, options.timestamp);
       context.addMessage(toolMessage);
@@ -400,13 +419,22 @@ export class UnifiedMessageProcessor {
         } else if (item.type === "tool_use") {
           this.handleToolUse(item, localContext, options);
         } else if (isThinkingContentItem(item)) {
-          const thinkingMessage = createThinkingMessage(
-            item.thinking,
-            timestamp,
-          );
-          if (options.isStreaming) {
+          if (options.isStreaming && context.onStatusUpdate) {
+            // Streaming: route thinking through status line instead of
+            // adding a permanent ThinkingMessage
+            const status = classifyThinking(item.thinking?.slice(0, 300));
+            context.onStatusUpdate(status);
+          } else if (options.isStreaming) {
+            const thinkingMessage = createThinkingMessage(
+              item.thinking,
+              timestamp,
+            );
             context.addMessage(thinkingMessage);
           } else {
+            const thinkingMessage = createThinkingMessage(
+              item.thinking,
+              timestamp,
+            );
             thinkingMessages.push(thinkingMessage);
           }
         }
