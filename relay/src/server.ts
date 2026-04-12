@@ -90,7 +90,8 @@ const FAVICON = `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,
 // Four themes (70s-light, 70s-dark, glass, corporate) + phosphor color selector for 70s themes.
 // Persists in localStorage. Goes in <head> to apply before paint (no flash).
 const THEME_HEAD = `
-<link href="https://fonts.googleapis.com/css2?family=VT323&family=IBM+Plex+Mono:wght@400;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=VT323&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link href="https://api.fontshare.com/v2/css?f[]=clash-display@500,600,700&f[]=satoshi@400,500,700&display=swap" rel="stylesheet">
 <script>
 (function() {
   var t = localStorage.getItem('sg_theme') || 'glass';
@@ -112,10 +113,14 @@ const THEME_HEAD = `
   background: #0A0A0F !important;
   background-image: radial-gradient(ellipse at top left, rgba(124,77,255,0.15), transparent 50%), radial-gradient(ellipse at bottom right, rgba(0,188,212,0.12), transparent 50%) !important;
   color: #E0E0F0 !important;
-  font-family: 'Inter', system-ui, sans-serif !important;
+  font-family: 'Satoshi', system-ui, sans-serif !important;
   min-height: 100vh;
 }
-[data-theme="glass"] h1, [data-theme="glass"] h2, [data-theme="glass"] h3 { color: #F0F0FF !important; }
+[data-theme="glass"] h1, [data-theme="glass"] h2, [data-theme="glass"] h3 {
+  color: #F0F0FF !important;
+  font-family: 'Clash Display', system-ui, sans-serif !important;
+  font-weight: 600 !important;
+}
 [data-theme="glass"] h1 { background: linear-gradient(135deg, #00BCD4, #7C4DFF); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
 [data-theme="glass"] p, [data-theme="glass"] li, [data-theme="glass"] .pitch, [data-theme="glass"] .subtitle { color: #C0C0D8 !important; }
 [data-theme="glass"] a { color: #00BCD4 !important; }
@@ -123,37 +128,106 @@ const THEME_HEAD = `
 [data-theme="glass"] .card, [data-theme="glass"] .features, [data-theme="glass"] .info, [data-theme="glass"] .claude-hint {
   background: rgba(255,255,255,0.04) !important;
   border: 1px solid rgba(255,255,255,0.1) !important;
+  border-radius: 14px !important;
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   box-shadow: 0 8px 32px rgba(0,0,0,0.4) !important;
   color: #E0E0F0 !important;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+[data-theme="glass"] .card:hover {
+  border-color: rgba(0,188,212,0.3) !important;
+  box-shadow: 0 12px 40px rgba(0,188,212,0.15) !important;
+  transform: translateY(-2px);
 }
 [data-theme="glass"] .claude-hint strong { color: #00BCD4 !important; }
 [data-theme="glass"] pre, [data-theme="glass"] code, [data-theme="glass"] .copy-box {
   background: rgba(0,0,0,0.5) !important;
   color: #C0FFFF !important;
   border: 1px solid rgba(0,188,212,0.3) !important;
-  font-family: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, monospace !important;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace !important;
 }
 [data-theme="glass"] code.block { display: block; }
 [data-theme="glass"] a.btn, [data-theme="glass"] .btn-primary, [data-theme="glass"] button.btn-primary {
   background: linear-gradient(135deg, #00BCD4, #7C4DFF) !important;
   color: #0A0A0F !important;
   border: none !important;
+  font-family: 'Clash Display', system-ui, sans-serif !important;
   font-weight: 600 !important;
+  font-size: 0.9em !important;
+  padding: 10px 20px !important;
+  border-radius: 10px !important;
   box-shadow: 0 4px 16px rgba(0,188,212,0.4) !important;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+[data-theme="glass"] a.btn:hover, [data-theme="glass"] .btn-primary:hover, [data-theme="glass"] button.btn-primary:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 8px 24px rgba(0,188,212,0.5) !important;
+}
+[data-theme="glass"] .btn, [data-theme="glass"] button.btn {
+  font-family: 'Satoshi', system-ui, sans-serif !important;
+  font-weight: 500 !important;
+  padding: 8px 16px !important;
+  border-radius: 10px !important;
+  font-size: 0.85em !important;
+  background: rgba(255,255,255,0.08) !important;
+  color: #E0E0F0 !important;
+  border: 1px solid rgba(255,255,255,0.15) !important;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+[data-theme="glass"] .btn:hover, [data-theme="glass"] button.btn:hover {
+  background: rgba(255,255,255,0.14) !important;
+  border-color: rgba(0,188,212,0.4) !important;
+  transform: translateY(-1px) !important;
 }
 [data-theme="glass"] .btn-secondary { background: rgba(255,255,255,0.08) !important; color: #E0E0F0 !important; border: 1px solid rgba(255,255,255,0.15) !important; }
-[data-theme="glass"] .btn-danger { background: rgba(239,68,68,0.8) !important; color: #fff !important; }
-[data-theme="glass"] input { background: rgba(0,0,0,0.4) !important; color: #E0E0F0 !important; border: 1px solid rgba(255,255,255,0.15) !important; }
+[data-theme="glass"] .btn-danger {
+  background: rgba(239,68,68,0.2) !important;
+  color: #f87171 !important;
+  border: 1px solid rgba(239,68,68,0.4) !important;
+}
+[data-theme="glass"] .btn-danger:hover {
+  background: rgba(239,68,68,0.7) !important;
+  color: #fff !important;
+  border-color: transparent !important;
+}
+[data-theme="glass"] input {
+  background: rgba(0,0,0,0.4) !important;
+  color: #E0E0F0 !important;
+  border: 1px solid rgba(255,255,255,0.15) !important;
+  border-radius: 10px !important;
+  font-family: 'Satoshi', system-ui, sans-serif !important;
+}
+[data-theme="glass"] input:focus {
+  border-color: rgba(0,188,212,0.5) !important;
+  box-shadow: 0 0 0 3px rgba(0,188,212,0.15) !important;
+  outline: none !important;
+}
+[data-theme="glass"] .modal {
+  background: rgba(15,15,25,0.85) !important;
+  border: 1px solid rgba(255,255,255,0.1) !important;
+  border-radius: 16px !important;
+  backdrop-filter: blur(20px) !important;
+  -webkit-backdrop-filter: blur(20px) !important;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5) !important;
+  color: #E0E0F0 !important;
+}
+[data-theme="glass"] .modal h2 { font-family: 'Clash Display', system-ui, sans-serif !important; color: #F0F0FF !important; }
+[data-theme="glass"] .modal .modal-sub { color: #8a8aa0 !important; }
+[data-theme="glass"] .modal .platform-tab { color: #8a8aa0 !important; font-family: 'Satoshi', system-ui, sans-serif !important; }
+[data-theme="glass"] .modal .platform-tab.active { color: #00BCD4 !important; border-bottom-color: #00BCD4 !important; }
+[data-theme="glass"] .modal .platform-tabs { border-bottom-color: rgba(255,255,255,0.1) !important; }
+[data-theme="glass"] .modal .warn { background: rgba(251,191,36,0.1) !important; border-color: rgba(251,191,36,0.3) !important; color: #fbbf24 !important; }
 [data-theme="glass"] .footer, [data-theme="glass"] .footer a, [data-theme="glass"] .updated, [data-theme="glass"] .note, [data-theme="glass"] .mit { color: #8a8aa0 !important; }
+[data-theme="glass"] .server-row .name { font-family: 'Clash Display', system-ui, sans-serif !important; font-weight: 600 !important; }
 [data-theme="glass"] .server-row .id, [data-theme="glass"] .role-row .role-url, [data-theme="glass"] .show-hidden { color: #8a8aa0 !important; }
 [data-theme="glass"] .role-row:hover { background: rgba(255,255,255,0.05) !important; }
 [data-theme="glass"] .role-divider { border-top-color: rgba(255,255,255,0.08) !important; }
 [data-theme="glass"] .copy-box:hover { background: rgba(0,0,0,0.6) !important; }
-[data-theme="glass"] .copy-btn { background: none !important; border: 1px solid #00BCD4 !important; color: #00BCD4 !important; }
+[data-theme="glass"] .copy-btn { background: none !important; border: 1px solid #00BCD4 !important; color: #00BCD4 !important; border-radius: 6px !important; }
 [data-theme="glass"] .copy-btn.copied { border-color: #22c55e !important; color: #22c55e !important; }
-[data-theme="glass"] .role-row .role-name { color: #00BCD4 !important; }
+[data-theme="glass"] .role-row .role-name { color: #00BCD4 !important; font-family: 'Satoshi', system-ui, sans-serif !important; font-weight: 500 !important; }
+[data-theme="glass"] .brand-name { font-family: 'Clash Display', system-ui, sans-serif !important; }
 
 /* ============ 70s DARK THEME — Terminal.css philosophy: monochrome, bordered, no fills ============
    Inspired by terminalcss.xyz (MIT). Authentic VT100/Apple IIe rules:
@@ -307,9 +381,9 @@ const THEME_HEAD = `
 [data-theme="corporate"] body {
   background: #ffffff !important;
   color: #374151 !important;
-  font-family: 'Helvetica Neue', Arial, sans-serif !important;
+  font-family: 'Satoshi', 'Helvetica Neue', Arial, sans-serif !important;
 }
-[data-theme="corporate"] h1, [data-theme="corporate"] h2, [data-theme="corporate"] h3 { color: #1f2937 !important; font-weight: 600 !important; }
+[data-theme="corporate"] h1, [data-theme="corporate"] h2, [data-theme="corporate"] h3 { color: #1f2937 !important; font-weight: 600 !important; font-family: 'Clash Display', 'Helvetica Neue', sans-serif !important; }
 [data-theme="corporate"] p, [data-theme="corporate"] li { color: #4b5563 !important; }
 [data-theme="corporate"] .tagline { color: #6b7280 !important; font-weight: 400 !important; }
 [data-theme="corporate"] a { color: #1e40af !important; }
@@ -1161,20 +1235,20 @@ ${FAVICON}
 ${THEME_HEAD}
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  body { font-family: system-ui; max-width: 640px; margin: 60px auto; padding: 0 20px; color: #1a1a2e; background: #f0f0f5; }
-  h1 { font-size: 2.2em; margin-bottom: 4px; }
-  .tagline { font-size: 1.3em; color: #3b82f6; font-weight: 600; margin: 0 0 24px; }
-  .pitch { font-size: 1.05em; line-height: 1.6; color: #444; margin-bottom: 24px; }
-  .claude-hint { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 14px 18px; margin-bottom: 24px; font-size: 1em; }
+  body { font-family: 'Satoshi', system-ui, sans-serif; max-width: 640px; margin: 60px auto; padding: 0 20px; color: #1a1a2e; background: #f0f0f5; }
+  h1 { font-family: 'Clash Display', system-ui, sans-serif; font-size: 2.4em; font-weight: 700; margin-bottom: 4px; letter-spacing: -0.5px; }
+  .tagline { font-family: 'Clash Display', system-ui, sans-serif; font-size: 1.3em; color: #3b82f6; font-weight: 500; margin: 0 0 24px; }
+  .pitch { font-size: 1.05em; line-height: 1.7; color: #444; margin-bottom: 24px; }
+  .claude-hint { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 14px; padding: 16px 20px; margin-bottom: 24px; font-size: 1em; }
   .claude-hint strong { color: #1e40af; }
   .claude-hint a { color: #3b82f6; font-weight: 600; }
-  .copy-box { position: relative; background: #1e293b; border-radius: 8px; padding: 14px 48px 14px 16px; margin-bottom: 24px; font-family: ui-monospace, monospace; font-size: 0.9em; color: #e2e8f0; line-height: 1.5; cursor: pointer; }
+  .copy-box { position: relative; background: #1e293b; border-radius: 12px; padding: 16px 48px 16px 18px; margin-bottom: 24px; font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 0.9em; color: #e2e8f0; line-height: 1.5; cursor: pointer; transition: all 0.2s ease; }
   .copy-box:hover { background: #263548; }
-  .copy-btn { position: absolute; top: 50%; right: 12px; transform: translateY(-50%); background: none; border: 1px solid #475569; border-radius: 4px; color: #94a3b8; cursor: pointer; padding: 4px 6px; font-size: 0.85em; line-height: 1; transition: all 0.15s; }
+  .copy-btn { position: absolute; top: 50%; right: 12px; transform: translateY(-50%); background: none; border: 1px solid #475569; border-radius: 6px; color: #94a3b8; cursor: pointer; padding: 4px 8px; font-size: 0.85em; line-height: 1; transition: all 0.15s; }
   .copy-btn:hover { border-color: #94a3b8; color: #e2e8f0; }
   .copy-btn.copied { border-color: #22c55e; color: #22c55e; }
-  a.btn { display: inline-block; padding: 12px 24px; background: #24292e; color: white; text-decoration: none; border-radius: 8px; font-size: 1.1em; }
-  a.btn:hover { background: #444d56; }
+  a.btn { display: inline-block; padding: 14px 28px; background: #24292e; color: white; text-decoration: none; border-radius: 12px; font-family: 'Clash Display', system-ui, sans-serif; font-size: 1.05em; font-weight: 600; transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); }
+  a.btn:hover { background: #444d56; transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.15); }
   .footer { margin-top: 40px; font-size: 0.85em; color: #999; }
   .footer a { color: #999; }
   .mit { margin-top: 16px; font-size: 0.9em; color: #666; }
@@ -1213,66 +1287,73 @@ ${FAVICON}
 ${THEME_HEAD}
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  body { font-family: system-ui; max-width: 900px; margin: 40px auto; padding: 0 20px; color: #1a1a2e; background: #f0f0f5; }
-  h1 { font-size: 1.8em; }
+  body { font-family: 'Satoshi', system-ui, sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; color: #1a1a2e; background: #f0f0f5; }
+  h1 { font-family: 'Clash Display', system-ui, sans-serif; font-size: 1.8em; font-weight: 600; }
+  h2 { font-family: 'Clash Display', system-ui, sans-serif; font-weight: 600; }
   .brand { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; }
   .brand-link { display: flex; align-items: center; gap: 10px; text-decoration: none; color: inherit; }
   .brand-logo { width: 36px; height: 36px; flex-shrink: 0; }
-  .brand-name { font-size: 1.4em; font-weight: 700; letter-spacing: 0.5px; }
+  .brand-name { font-family: 'Clash Display', system-ui, sans-serif; font-size: 1.4em; font-weight: 700; letter-spacing: 0.5px; }
   .user { display: flex; align-items: center; gap: 12px; margin-left: auto; }
   .user img { width: 40px; height: 40px; border-radius: 50%; }
-  .card { background: white; border-radius: 8px; margin: 10px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1); overflow: hidden; }
+  .card { background: white; border-radius: 14px; margin: 10px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.08); overflow: hidden; border: 1px solid rgba(0,0,0,0.06); transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); }
+  .card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.1); transform: translateY(-1px); }
   .online { color: #22c55e; }
   .offline { color: #94a3b8; }
   .dot { font-size: 1.2em; line-height: 1; }
-  button, a.btn { padding: 4px 10px; border: none; border-radius: 4px; cursor: pointer; font-size: 0.8em; text-decoration: none; display: inline-block; line-height: 1.5; }
-  .btn-primary { background: #3b82f6; color: white; }
-  .btn-danger { background: #ef4444; color: white; }
-  .btn-secondary { background: #e2e8f0; color: #475569; }
-  .btn-ghost { background: none; color: #94a3b8; font-size: 0.75em; padding: 2px 6px; }
+  button, a.btn { padding: 8px 16px; border: none; border-radius: 10px; cursor: pointer; font-family: 'Satoshi', system-ui, sans-serif; font-size: 0.85em; font-weight: 500; text-decoration: none; display: inline-block; line-height: 1.5; transition: all 0.2s ease; }
+  button:hover, a.btn:hover { transform: translateY(-1px); }
+  .btn-primary { background: #3b82f6; color: white; font-family: 'Clash Display', system-ui, sans-serif; font-weight: 600; padding: 10px 20px; }
+  .btn-primary:hover { background: #2563eb; box-shadow: 0 4px 12px rgba(59,130,246,0.3); }
+  .btn-danger { background: #fef2f2; color: #ef4444; border: 1px solid rgba(239,68,68,0.2); }
+  .btn-danger:hover { background: #ef4444; color: white; border-color: transparent; }
+  .btn-secondary { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
+  .btn-secondary:hover { background: #e2e8f0; }
+  .btn-ghost { background: none; color: #94a3b8; font-size: 0.78em; padding: 4px 8px; }
   .btn-ghost:hover { color: #475569; }
-  input { padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 0.9em; }
+  input { padding: 10px 14px; border: 1px solid #d1d5db; border-radius: 10px; font-family: 'Satoshi', system-ui, sans-serif; font-size: 0.9em; transition: all 0.2s ease; }
+  input:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); outline: none; }
   #connectors { margin-top: 16px; }
-  pre { background: #1e293b; color: #e2e8f0; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 0.85em; }
+  pre { background: #1e293b; color: #e2e8f0; padding: 16px; border-radius: 12px; overflow-x: auto; font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 0.85em; }
 
   /* Server row — single thin line */
-  .server-row { display: flex; align-items: center; gap: 10px; padding: 10px 14px; font-size: 0.85em; flex-wrap: nowrap; }
-  .server-row .name { font-weight: 600; white-space: nowrap; }
-  .server-row .id { color: #94a3b8; font-size: 0.8em; font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
+  .server-row { display: flex; align-items: center; gap: 10px; padding: 12px 16px; font-size: 0.85em; flex-wrap: nowrap; }
+  .server-row .name { font-family: 'Clash Display', system-ui, sans-serif; font-weight: 600; white-space: nowrap; }
+  .server-row .id { color: #94a3b8; font-size: 0.8em; font-family: 'IBM Plex Mono', monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
   .server-row .spacer { flex: 1; }
-  .server-row .actions { display: flex; gap: 4px; align-items: center; flex-shrink: 0; }
+  .server-row .actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
 
   /* Role grid */
   .role-divider { border-top: 1px solid #f0f0f5; }
-  .role-grid { padding: 0 14px 8px; }
-  .role-row { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 4px; cursor: pointer; font-size: 0.82em; transition: background 0.15s; }
+  .role-grid { padding: 0 16px 10px; }
+  .role-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 0.82em; transition: background 0.15s; }
   .role-row:hover { background: #f8fafc; }
   .role-row .role-name { font-weight: 500; color: #3b82f6; min-width: 80px; white-space: nowrap; }
-  .role-row .role-url { color: #94a3b8; font-family: monospace; font-size: 0.9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .role-row .role-url { color: #94a3b8; font-family: 'IBM Plex Mono', monospace; font-size: 0.9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
   .role-row.hidden-role { opacity: 0.4; }
-  .no-roles { padding: 8px 14px; color: #94a3b8; font-size: 0.82em; font-style: italic; }
+  .no-roles { padding: 8px 16px; color: #94a3b8; font-size: 0.82em; font-style: italic; }
 
   /* Hidden roles checkbox */
   .show-hidden { font-size: 0.75em; color: #94a3b8; cursor: pointer; display: flex; align-items: center; gap: 3px; white-space: nowrap; }
   .show-hidden input { width: 12px; height: 12px; margin: 0; }
 
   /* Add-VM modal */
-  .modal-backdrop { display: none; position: fixed; inset: 0; background: rgba(15,23,42,0.55); z-index: 9998; }
+  .modal-backdrop { display: none; position: fixed; inset: 0; background: rgba(15,23,42,0.55); z-index: 9998; backdrop-filter: blur(4px); }
   .modal-backdrop.show { display: flex; align-items: center; justify-content: center; }
-  .modal { background: white; border-radius: 10px; padding: 22px 24px; max-width: 640px; width: calc(100% - 32px); box-shadow: 0 20px 50px rgba(0,0,0,0.3); }
-  .modal h2 { margin: 0 0 4px; font-size: 1.25em; }
+  .modal { background: white; border-radius: 16px; padding: 24px 28px; max-width: 640px; width: calc(100% - 32px); box-shadow: 0 20px 50px rgba(0,0,0,0.2); }
+  .modal h2 { margin: 0 0 4px; font-family: 'Clash Display', system-ui, sans-serif; font-size: 1.25em; font-weight: 600; }
   .modal .modal-sub { color: #64748b; font-size: 0.88em; margin-bottom: 16px; }
   .modal .platform-tabs { display: flex; gap: 6px; margin-bottom: 12px; border-bottom: 1px solid #e2e8f0; }
-  .modal .platform-tab { padding: 8px 14px; background: none; border: none; font-size: 0.85em; color: #64748b; cursor: pointer; border-bottom: 2px solid transparent; }
+  .modal .platform-tab { padding: 8px 14px; background: none; border: none; font-family: 'Satoshi', system-ui, sans-serif; font-size: 0.85em; color: #64748b; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.15s; }
   .modal .platform-tab.active { color: #1a1a2e; border-bottom-color: #3b82f6; font-weight: 600; }
   .modal .platform-pane { display: none; }
   .modal .platform-pane.active { display: block; }
-  .modal pre.cmd { background: #1e293b; color: #e2e8f0; padding: 14px; border-radius: 6px; overflow-x: auto; font-size: 0.78em; line-height: 1.5; white-space: pre-wrap; word-break: break-all; user-select: all; margin: 0; }
+  .modal pre.cmd { background: #1e293b; color: #e2e8f0; padding: 14px; border-radius: 10px; overflow-x: auto; font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 0.78em; line-height: 1.5; white-space: pre-wrap; word-break: break-all; user-select: all; margin: 0; }
   .modal .pane-hint { font-size: 0.78em; color: #64748b; margin: 6px 0 10px; }
   .modal .modal-actions { display: flex; gap: 8px; align-items: center; margin-top: 14px; }
   .modal .modal-actions .spacer { flex: 1; }
   .modal .copy-status { font-size: 0.78em; color: #22c55e; min-height: 1em; }
-  .modal .warn { background: #fef3c7; border: 1px solid #fde68a; color: #78350f; font-size: 0.82em; padding: 8px 12px; border-radius: 6px; margin-top: 10px; }
+  .modal .warn { background: #fef3c7; border: 1px solid #fde68a; color: #78350f; font-size: 0.82em; padding: 8px 12px; border-radius: 10px; margin-top: 10px; }
 </style>
 </head><body>
 ${THEME_TOGGLE_HTML}
