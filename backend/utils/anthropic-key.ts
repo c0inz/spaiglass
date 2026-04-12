@@ -2,7 +2,7 @@
  * Phase 4: Bring Your Own Anthropic Key.
  *
  * Helpers for reading and persisting an `ANTHROPIC_API_KEY` on the host so
- * users can run SpAIglass without a Claude Max subscription.
+ * users can run Spaiglass without a Claude Max subscription.
  *
  * The key is stored in the host's .env file (the same one the installer
  * writes) and mirrored to process.env so the next Claude SDK spawn picks

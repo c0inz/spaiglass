@@ -1,5 +1,5 @@
 /**
- * useWebSocketSession — Persistent WebSocket connection to SpAIglass backend.
+ * useWebSocketSession — Persistent WebSocket connection to Spaiglass backend.
  *
  * Replaces the fetch-per-message model with a single persistent connection.
  * Messages are sent via ws.send(), responses arrive via ws.onmessage.

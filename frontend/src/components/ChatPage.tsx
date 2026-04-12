@@ -787,7 +787,7 @@ export function ChatPage() {
           <div className="min-w-0 flex-1">
             <div className="flex items-center min-w-0">
               <span className="text-slate-800 dark:text-slate-100 text-lg sm:text-2xl font-bold tracking-tight px-1 -mx-1 flex-shrink-0">
-                SpAIglass
+                Spaiglass
               </span>
               {workingDirectory && (
                 <span

@@ -1,5 +1,5 @@
 /**
- * SpAIglass Relay Connector Client
+ * Spaiglass Relay Connector Client
  *
  * Runs on the VM alongside the backend. Connects outbound to the relay
  * and bridges WebSocket traffic between remote browsers and the local
@@ -367,7 +367,7 @@ export function startConnector(): void {
     RELAY_URL.replace(/^https:/, "wss:").replace(/^http:/, "ws:") +
     "/connector";
 
-  log("SpAIglass Relay Connector Client");
+  log("Spaiglass Relay Connector Client");
   log(`Relay: ${RELAY_URL}`);
   log(`Local backend: ${LOCAL_WS}`);
   log(`Connector ID: ${CONNECTOR_ID || "(from token)"}`);

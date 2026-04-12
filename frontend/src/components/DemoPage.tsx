@@ -360,7 +360,7 @@ export function DemoPage() {
         <div className="flex items-center justify-between mb-4 sm:mb-8 flex-shrink-0">
           <div>
             <h1 className="text-slate-800 dark:text-slate-100 text-lg sm:text-3xl font-bold tracking-tight">
-              SpAIglass
+              Spaiglass
               {isDemo && (
                 <span className="ml-3 text-lg font-normal text-slate-600 dark:text-slate-400">
                   (Demo)

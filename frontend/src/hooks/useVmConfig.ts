@@ -16,7 +16,7 @@ export function useVmConfig() {
           setConfig(data);
           // Don't overwrite relay-set title (contains compact project:role name)
           if (!(window as Window & { __SG_BASE?: string }).__SG_BASE) {
-            document.title = `SpAIglass — ${data.role}`;
+            document.title = `Spaiglass — ${data.role}`;
           }
         }
       })

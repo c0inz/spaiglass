@@ -111,7 +111,7 @@ export function connectorRoutes(): Hono<RelayEnv> {
 
     const publicUrl = c.env.PUBLIC_URL;
     const envContent = [
-      `# SpAIglass VM Connector Configuration`,
+      `# Spaiglass VM Connector Configuration`,
       `# Generated for: ${connector.name}`,
       `# Relay: ${publicUrl}`,
       `# Source: https://github.com/c0inz/spaiglass (MIT License)`,
@@ -146,7 +146,7 @@ export function connectorRoutes(): Hono<RelayEnv> {
       `CONNECTOR_TOKEN=${connector.token}`,
       `CONNECTOR_ID=${connector.id}`,
       ``,
-      `# SpAIglass backend settings`,
+      `# Spaiglass backend settings`,
       `PORT=8080`,
       `HOST=0.0.0.0`,
       ``,

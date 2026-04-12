@@ -1,7 +1,7 @@
 /**
- * SGCleanRelay — Stateless routing proxy for spAiglass VM fleet.
+ * SGCleanRelay — Stateless routing proxy for Spaiglass VM fleet.
  *
- * Routes browser WebSocket connections to private spAiglass VMs.
+ * Routes browser WebSocket connections to private Spaiglass VMs.
  * GitHub OAuth for identity. No secrets, files, or conversations stored.
  */
 
@@ -616,8 +616,8 @@ app.get("/releases/spaiglass-host-:target{.+\\.tar\\.gz}", (c) => {
 // Both /setup (HTML) and /api/setup (JSON) render from this.
 function getSetupData() {
   return {
-    project: "spAiglass",
-    description: "Browser-based multi-VM interface for Claude Code. spAiglass is a stateless relay that routes browser WebSocket connections to Claude Code running on your own machines.",
+    project: "Spaiglass",
+    description: "Browser-based multi-VM interface for Claude Code. Spaiglass is a stateless relay that routes browser WebSocket connections to Claude Code running on your own machines.",
     license: "MIT",
     source: "https://github.com/c0inz/spaiglass",
     relay: PUBLIC_URL,
@@ -632,7 +632,7 @@ function getSetupData() {
     steps: [
       {
         title: "Authenticate",
-        description: "Exchange a GitHub PAT for a spAiglass agent key. The PAT proves your GitHub identity. The agent key is used for all subsequent API calls.",
+        description: "Exchange a GitHub PAT for a Spaiglass agent key. The PAT proves your GitHub identity. The agent key is used for all subsequent API calls.",
         endpoint: `POST ${PUBLIC_URL}/api/auth/token-exchange`,
         body: '{ "github_pat": "ghp_YOUR_TOKEN", "key_name": "my-agent" }',
         note: "Save the agent_key — it is shown only once. If you already have an agent key, skip this step. If using the browser dashboard, sign in with GitHub instead.",
@@ -758,7 +758,7 @@ app.get("/setup", (c) => {
   `).join("");
 
   return c.html(`<!DOCTYPE html>
-<html><head><title>Setup — spAiglass</title>
+<html><head><title>Setup — Spaiglass</title>
 ${FAVICON}
 ${THEME_HEAD}
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -788,7 +788,7 @@ ${THEME_TOGGLE_HTML}
   <a href="/">&larr; Home</a>
   <a href="https://github.com/c0inz/spaiglass">GitHub</a>
 </div>
-<h1>spAiglass Setup Guide</h1>
+<h1>Spaiglass Setup Guide</h1>
 <p class="subtitle">${data.description}</p>
 
 <div class="features">
@@ -853,7 +853,7 @@ app.get("/api/setup", (c) => {
 // Terms of Service
 app.get("/terms", (c) => {
   return c.html(`<!DOCTYPE html>
-<html><head><title>Terms of Service - spAiglass</title>
+<html><head><title>Terms of Service - Spaiglass</title>
 ${FAVICON}
 ${THEME_HEAD}
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -870,7 +870,7 @@ ${THEME_TOGGLE_HTML}
 <p class="updated">Last updated: April 9, 2026</p>
 
 <h2>1. Service Description</h2>
-<p>spAiglass ("the Service") is a browser-based interface that routes connections to your virtual machines through a relay server. The Service is operated by ReadyStack.dev.</p>
+<p>Spaiglass ("the Service") is a browser-based interface that routes connections to your virtual machines through a relay server. The Service is operated by ReadyStack.dev.</p>
 
 <h2>2. Eligibility</h2>
 <p>You must have a valid GitHub account to use the Service. By signing in, you agree to these terms.</p>
@@ -897,19 +897,19 @@ ${THEME_TOGGLE_HTML}
 <p>We may suspend or terminate your access at any time for violation of these terms. You may stop using the Service at any time.</p>
 
 <h2>8. Open Source</h2>
-<p>spAiglass is open source software released under the <a href="https://github.com/c0inz/spaiglass/blob/main/LICENSE">MIT License</a>. The complete source code is available at <a href="https://github.com/c0inz/spaiglass">github.com/c0inz/spaiglass</a>.</p>
+<p>Spaiglass is open source software released under the <a href="https://github.com/c0inz/spaiglass/blob/main/LICENSE">MIT License</a>. The complete source code is available at <a href="https://github.com/c0inz/spaiglass">github.com/c0inz/spaiglass</a>.</p>
 
 <h2>9. Changes</h2>
 <p>We may update these terms. Continued use after changes constitutes acceptance.</p>
 
-<p><a href="/">&larr; Back to spAiglass</a></p>
+<p><a href="/">&larr; Back to Spaiglass</a></p>
 </body></html>`);
 });
 
 // Privacy Policy
 app.get("/privacy", (c) => {
   return c.html(`<!DOCTYPE html>
-<html><head><title>Privacy Policy - spAiglass</title>
+<html><head><title>Privacy Policy - Spaiglass</title>
 ${FAVICON}
 ${THEME_HEAD}
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -955,12 +955,12 @@ ${THEME_TOGGLE_HTML}
 <p>We use GitHub OAuth for authentication. GitHub's privacy policy applies to data they collect during the sign-in process. We use Cloudflare for DNS and Caddy for TLS — standard infrastructure that does not process your VM traffic.</p>
 
 <h2>7. Open Source</h2>
-<p>spAiglass is open source under the <a href="https://github.com/c0inz/spaiglass/blob/main/LICENSE">MIT License</a>. You can audit the complete relay source code at <a href="https://github.com/c0inz/spaiglass/tree/main/relay/src">github.com/c0inz/spaiglass</a> to verify exactly what data is collected and how it flows.</p>
+<p>Spaiglass is open source under the <a href="https://github.com/c0inz/spaiglass/blob/main/LICENSE">MIT License</a>. You can audit the complete relay source code at <a href="https://github.com/c0inz/spaiglass/tree/main/relay/src">github.com/c0inz/spaiglass</a> to verify exactly what data is collected and how it flows.</p>
 
 <h2>8. Changes</h2>
 <p>We may update this policy. Material changes will be noted on this page with an updated date.</p>
 
-<p><a href="/">&larr; Back to spAiglass</a></p>
+<p><a href="/">&larr; Back to Spaiglass</a></p>
 </body></html>`);
 });
 
@@ -980,7 +980,7 @@ function renderFleetRelay(c: Context<RelayEnv>) {
   const user = c.get("user");
   if (!user) {
     return c.html(`<!DOCTYPE html>
-<html><head><title>spAiglass</title>
+<html><head><title>Spaiglass</title>
 ${FAVICON}
 ${THEME_HEAD}
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -1005,7 +1005,7 @@ ${THEME_HEAD}
 </style>
 </head><body>
 ${THEME_TOGGLE_HTML}
-<h1>spAiglass</h1>
+<h1>Spaiglass</h1>
 <p class="tagline">Claude chat--markdown access--one interface--ANYWHERE</p>
 <p class="pitch">Browser-based interface for Claude Code across your machines. See your project files, edit markdown, run tools, and chat with Claude — from any device, anywhere. Open source. Fully auditable. Your code never leaves your machine.</p>
 <p class="pitch" style="font-size: 0.95em; color: #475569;">Runs anywhere the Claude Code CLI runs: <strong>Linux</strong>, <strong>macOS</strong> (Intel + Apple Silicon), and <strong>Windows&nbsp;10/11</strong>. One dashboard, mixed fleet, one-line installer per platform.</p>
@@ -1032,7 +1032,7 @@ function copyPrompt(el) {
   }
 
   return c.html(`<!DOCTYPE html>
-<html><head><title>spAiglass Fleet</title>
+<html><head><title>Spaiglass Fleet</title>
 ${FAVICON}
 ${THEME_HEAD}
 <meta name="viewport" content="width=device-width, initial-scale=1">

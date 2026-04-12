@@ -46,7 +46,7 @@ describe("App Routing", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("SpAIglass")).toBeInTheDocument();
+      expect(screen.getByText("Spaiglass")).toBeInTheDocument();
       expect(screen.getAllByText("/test-path").length).toBeGreaterThan(0);
     });
   });

@@ -28,7 +28,7 @@ vi.mock("../utils/logger", () => ({
 
 const mockQuery = vi.mocked(query);
 
-// SpAIglass intentionally hardcodes `permissionMode: "bypassPermissions"` and
+// Spaiglass intentionally hardcodes `permissionMode: "bypassPermissions"` and
 // `allowDangerouslySkipPermissions: true` in `handlers/chat.ts` so fleet
 // agents can run autonomously without per-request permission prompts. The
 // upstream test suite below verifies that a per-request `permissionMode`

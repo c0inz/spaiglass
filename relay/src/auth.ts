@@ -131,7 +131,7 @@ export function authRoutes(): Hono<RelayEnv> {
       headers: {
         Authorization: `Bearer ${body.github_pat}`,
         Accept: "application/vnd.github.v3+json",
-        "User-Agent": "SpAIglass-Relay",
+        "User-Agent": "Spaiglass-Relay",
       },
     });
 
