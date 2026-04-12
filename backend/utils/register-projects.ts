@@ -88,7 +88,9 @@ export function registerProjects(): void {
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const projDir = join(projectsRoot, entry.name);
-    if (!existsSync(join(projDir, "agents"))) continue;
+    // Check native .claude/agents/ first, then legacy agents/
+    if (!existsSync(join(projDir, ".claude", "agents")) &&
+        !existsSync(join(projDir, "agents"))) continue;
 
     if (!claudeJson.projects[projDir]) {
       claudeJson.projects[projDir] = defaultProject();

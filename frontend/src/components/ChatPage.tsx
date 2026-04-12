@@ -144,14 +144,20 @@ export function ChatPage() {
   const isHistoryView = currentView === "history";
   const isLoadedConversation = !!sessionId && !isHistoryView;
 
-  // Load role context file if specified in URL
+  // Load role context file if specified in URL.
+  // Try .claude/agents/ (native Claude Code convention) first, then agents/ (legacy).
   useEffect(() => {
     if (roleFile && workingDirectory && !activeContext) {
-      const rolePath = `${workingDirectory}/agents/${roleFile}`;
-      fetch(`/api/files/read?path=${encodeURIComponent(rolePath)}`)
-        .then((res) => (res.ok ? res.json() : null))
-        .then((data) => {
-          if (data) {
+      const nativePath = `${workingDirectory}/.claude/agents/${roleFile}`;
+      const legacyPath = `${workingDirectory}/agents/${roleFile}`;
+
+      const tryLoadRole = async () => {
+        for (const rolePath of [nativePath, legacyPath]) {
+          try {
+            const res = await fetch(`/api/files/read?path=${encodeURIComponent(rolePath)}`);
+            if (!res.ok) continue;
+            const data = await res.json();
+            if (!data) continue;
             const name = roleFile.replace(/\.md$/, "").replace(/[-_]/g, " ");
             setActiveContext({
               name,
@@ -164,9 +170,13 @@ export function ChatPage() {
               { path: rolePath, name: roleFile, touchedAt: Date.now() },
             ]);
             setContextChecked(true);
+            return;
+          } catch {
+            // Try next path
           }
-        })
-        .catch(() => {});
+        }
+      };
+      tryLoadRole();
     }
   }, [roleFile, workingDirectory]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -339,8 +349,10 @@ export function ChatPage() {
       let content = messageContent || input.trim();
       if (!content && pendingImages.length === 0) return;
 
+      const trimmedLower = content.trim().toLowerCase();
+
       // /reset — restart session via WebSocket (saves JSONL history)
-      if (content.trim().toLowerCase() === "/reset") {
+      if (trimmedLower === "/reset") {
         clearInput();
         setMessages([]);
         if (roleFile && workingDirectory) {
@@ -352,6 +364,36 @@ export function ChatPage() {
           message: "Session reset. Send a message to start a new session.",
           timestamp: Date.now(),
         });
+        return;
+      }
+
+      // /stop — interrupt Claude immediately
+      if (trimmedLower === "/stop") {
+        clearInput();
+        ws.interrupt();
+        resetRequestState();
+        addMessage({
+          type: "system",
+          subtype: "abort",
+          message: "Interrupted.",
+          timestamp: Date.now(),
+        });
+        return;
+      }
+
+      // /btw — send a side-message without interrupting; Claude reads it
+      // from the queue when it next checks for input
+      if (trimmedLower.startsWith("/btw ") || trimmedLower === "/btw") {
+        const btw = content.trim().slice(4).trim();
+        if (!btw) return;
+        clearInput();
+        addMessage({
+          type: "chat",
+          role: "user",
+          content: `[btw] ${btw}`,
+          timestamp: Date.now(),
+        });
+        ws.sendMessage(btw);
         return;
       }
 
@@ -405,11 +447,11 @@ export function ChatPage() {
 
       if (!messageContent) clearInput();
 
-      // If Claude is currently responding, interrupt first
-      if (isLoading) {
-        ws.interrupt();
+      // No interrupt — the message is queued on the backend and Claude
+      // will read it when it next checks its input queue.
+      if (!isLoading) {
+        startRequest();
       }
-      startRequest();
 
       // Send via WebSocket — responses arrive through the callbacks
       ws.sendMessage(
@@ -790,6 +832,7 @@ export function ChatPage() {
                 contextFilesList={contextFilesList}
                 sessionStats={sessionStats}
                 slashCommands={slashCommands}
+                activeRole={roleFile || undefined}
               />
             </div>
           )}
@@ -964,7 +1007,7 @@ export function ChatPage() {
       )}
 
       {/* Settings Modal */}
-      <SettingsModal isOpen={isSettingsOpen} onClose={handleSettingsClose} />
+      <SettingsModal isOpen={isSettingsOpen} onClose={handleSettingsClose} projectPath={workingDirectory || undefined} />
 
       {/* Context Picker Dialog */}
       {showContextPicker && workingDirectory && (

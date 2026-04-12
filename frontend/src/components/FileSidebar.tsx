@@ -29,6 +29,7 @@ interface FileSidebarProps {
   contextFilesList?: ContextFileEntry[];
   sessionStats?: SessionStats;
   slashCommands?: string[];
+  activeRole?: string;
 }
 
 function TreeNode({
@@ -143,6 +144,7 @@ export function FileSidebar({
   contextFilesList,
   sessionStats,
   slashCommands,
+  activeRole,
 }: FileSidebarProps) {
   const [tree, setTree] = useState<TreeEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -240,6 +242,8 @@ export function FileSidebar({
               }
             }
             slashCommands={slashCommands || []}
+            projectPath={projectPath}
+            activeRole={activeRole}
           />
         ) : activeTab === "tree" ? (
           loading && tree.length === 0 ? (

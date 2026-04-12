@@ -16,7 +16,8 @@ interface ProjectInfo {
 
 /**
  * GET /api/discover?projectsDir=<path>
- * Scans projectsDir for subdirectories containing agents/*.md files.
+ * Scans projectsDir for subdirectories containing .claude/agents/*.md files.
+ * Falls back to agents/ for backward compatibility.
  * Returns projects with roles and unassigned projects.
  */
 export async function handleDiscoverRequest(c: Context) {
@@ -35,27 +36,36 @@ export async function handleDiscoverRequest(c: Context) {
       if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
 
       const projectPath = join(resolved, entry.name);
-      const agentsDir = join(projectPath, "agents");
+      // Check .claude/agents/ first (native), then agents/ (legacy)
+      const agentsDirs = [
+        join(projectPath, ".claude", "agents"),
+        join(projectPath, "agents"),
+      ];
 
-      try {
-        const agentFiles = await readdir(agentsDir, { withFileTypes: true });
-        const roles: RoleInfo[] = [];
-        for (const af of agentFiles) {
-          if (!af.isDirectory() && af.name.endsWith(".md")) {
-            roles.push({
-              name: af.name.replace(/\.md$/, "").replace(/[-_]/g, " "),
-              filename: af.name,
-              path: join(agentsDir, af.name),
-            });
+      const roles: RoleInfo[] = [];
+      const seen = new Set<string>();
+
+      for (const agentsDir of agentsDirs) {
+        try {
+          const agentFiles = await readdir(agentsDir, { withFileTypes: true });
+          for (const af of agentFiles) {
+            if (!af.isDirectory() && af.name.endsWith(".md") && !seen.has(af.name)) {
+              seen.add(af.name);
+              roles.push({
+                name: af.name.replace(/\.md$/, "").replace(/[-_]/g, " "),
+                filename: af.name,
+                path: join(agentsDir, af.name),
+              });
+            }
           }
+        } catch {
+          // Directory doesn't exist — try next
         }
-        if (roles.length > 0) {
-          projects.push({ name: entry.name, path: projectPath, roles });
-        } else {
-          unassigned.push({ name: entry.name, path: projectPath });
-        }
-      } catch {
-        // No agents/ directory — unassigned project
+      }
+
+      if (roles.length > 0) {
+        projects.push({ name: entry.name, path: projectPath, roles });
+      } else {
         unassigned.push({ name: entry.name, path: projectPath });
       }
     }

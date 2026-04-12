@@ -682,13 +682,133 @@ function getSetupData() {
       },
       {
         title: "Add a role to a project",
-        description: "Roles define what Claude does in a project. Create a markdown file in the project's agents/ directory. The role name in the URL comes from the filename.",
+        description: "Roles are the most important part of SpAIglass. A role file defines who Claude is, what plugins and tools it has, and how it should behave. SpAIglass uses Claude Code's native <code>.claude/agents/</code> directory — the same convention the CLI uses with <code>claude --agent &lt;name&gt;</code>. Each <code>.md</code> file becomes a selectable role in the SpAIglass dashboard. SpAIglass extends the native convention with per-role plugin isolation via <code>CLAUDE_CONFIG_DIR</code>, so different roles on the same project can have completely different plugin sets without conflicting.",
         commands: [
-          "mkdir -p ~/projects/myproject/agents",
-          'echo "You are a DevOps engineer..." > ~/projects/myproject/agents/developer.md',
+          "mkdir -p ~/projects/myproject/.claude/agents",
+          "# Create the role file (see schema and checklist below)",
+          "nano ~/projects/myproject/.claude/agents/developer.md",
         ],
         example: `${PUBLIC_URL}/vm/octocat.dev-server/myproject-developer/`,
-        note: "Each .md file in agents/ becomes a selectable role. The role appears on the dashboard automatically. The project must be registered in ~/.claude.json to appear in the API.",
+        note: "SpAIglass also checks the legacy agents/ directory for backward compatibility. If the same filename exists in both .claude/agents/ and agents/, the .claude/agents/ version takes precedence.",
+        roleFrontmatterSchema: {
+          description: "Role files use YAML frontmatter (between --- delimiters) to configure plugins, tools, MCP servers, and model settings. The markdown body below the frontmatter is injected into Claude's system prompt.",
+          fields: [
+            { name: "plugins", type: "object", description: "Enable/disable plugins for this role: <code>\"plugin-name@marketplace\": true/false</code>. SpAIglass writes these to an isolated settings.json via CLAUDE_CONFIG_DIR so roles don't conflict." },
+            { name: "mcpServers", type: "object", description: "MCP tool servers to register for this role's sessions. Same format as Claude Code's mcpServers config." },
+            { name: "tools", type: "string[]", description: "Allowlist of tools this role can use (e.g., Read, Write, Bash, mcp__github__*)." },
+            { name: "disallowedTools", type: "string[]", description: "Tools to block for this role, even in bypass mode." },
+            { name: "model", type: "string", description: "Claude model override (e.g., claude-opus-4-6, claude-sonnet-4-6)." },
+            { name: "permissionMode", type: "string", description: "Permission mode override (bypassPermissions is the default in SpAIglass)." },
+            { name: "maxTurns", type: "number", description: "Max conversation turns before the session stops." },
+            { name: "effort", type: "string", description: "Thinking effort level (low, medium, high)." },
+          ],
+          example: `---
+plugins:
+  superpowers@claude-plugins-official: true
+  code-review@claude-plugins-official: true
+  frontend-design@claude-plugins-official: false
+mcpServers:
+  github:
+    command: npx
+    args:
+      - -y
+      - "@anthropic-ai/mcp-server-github"
+tools:
+  - Read
+  - Write
+  - Edit
+  - Bash
+  - mcp__github__*
+model: claude-opus-4-6
+---
+# MyProject — Backend Developer
+
+You are the lead backend engineer...`,
+        },
+        roleConfigDir: {
+          title: "Per-role plugin isolation (CLAUDE_CONFIG_DIR)",
+          description: "SpAIglass creates a separate config directory for each role at <code>.claude/agent-configs/&lt;role&gt;/</code>. When a session starts, SpAIglass sets <code>CLAUDE_CONFIG_DIR</code> to this directory and writes the role's <code>enabledPlugins</code> from the frontmatter into its <code>settings.json</code>. This means a developer role and a QA role on the same project can have completely different plugins active without clobbering each other — even if sessions run concurrently. Auth credentials are symlinked from the real <code>~/.claude/</code> so sessions authenticate normally.",
+        },
+        roleChecklist: [
+          { section: "Identity (put first)", description: "Who is Claude in this role? \"You are the lead backend engineer for ProjectX.\" One strong sentence at the very top. Models attend most to the beginning and end of instructions — put identity and hard rules at those positions." },
+          { section: "Project location", description: "Where is the code? ~/projects/myproject/ — Claude needs this to find files without asking." },
+          { section: "Architecture / tech stack", description: "What's the stack? What are the key directories? Use tables — a table of 10 directories with one-line descriptions beats two paragraphs of prose. Only list things Claude can't figure out by reading the code." },
+          { section: "How things connect", description: "How do the pieces connect? How do messages flow? How is it deployed? Write this like a day-one briefing for a new developer, not a reference manual." },
+          { section: "Verification commands", description: "How does Claude check its own work? Provide the exact commands: build, test, lint, deploy-check. This is the single highest-leverage section — without it, you become the only feedback loop." },
+          { section: "Authority & access", description: "What can Claude do? sudo, git push, SSH to other machines, credentials, databases. If Claude doesn't know it has access, it won't use it. List credential file paths explicitly." },
+          { section: "Conventions", description: "Commit message style, branch strategy, test expectations, naming conventions. Only include rules that differ from defaults — don't tell Claude to \"write clean code.\"" },
+          { section: "Compaction instructions", description: "What must be preserved when Claude's context window compresses during long sessions? \"Always preserve: modified file list, pending deploys, current task, verification commands.\" Without this, long sessions lose critical state." },
+          { section: "Hard rules (put last)", description: "What must Claude NEVER do? Use absolute language (NEVER, MUST NOT) and explain WHY for each rule. \"Never force-push to main — other sessions depend on linear history.\" Rules with rationale are followed more reliably than bare commands." },
+        ],
+        roleAntiPatterns: [
+          "Flattery (\"you are an EXTREMELY TALENTED genius engineer\") — does nothing measurable, wastes tokens",
+          "Step-by-step scripts — contradicts autonomous agent behavior. State what \"done\" looks like, not how to get there",
+          "Knowledge dumps — don't paste API docs or file-by-file descriptions. Link to them or let Claude read the code",
+          "Linter rules — use actual linters and hooks for formatting, not prose instructions Claude might forget",
+          "Repeating what Claude already knows — standard language conventions, obvious best practices, \"write tests\"",
+          "Over 200 lines — bloated role files cause Claude to skim or ignore your actual instructions",
+        ],
+        roleExample: `---
+plugins:
+  superpowers@claude-plugins-official: true
+  code-review@claude-plugins-official: true
+model: claude-opus-4-6
+---
+IMPORTANT: You are the lead backend engineer for MyProject, a SaaS API platform. You are a senior engineer with root access. Execute, don't narrate.
+
+## Who you are
+- You own the backend: API, database, deployment pipeline
+- The human is technical and direct — report results, not intentions
+- When something breaks, diagnose the root cause. Don't retry blindly
+
+## Project
+~/projects/myproject/ — GitHub: github.com/acme/myproject (main)
+
+## Architecture
+| Layer | Stack |
+|-------|-------|
+| API | Node.js 20, Express, TypeScript |
+| Database | PostgreSQL 16 on db.internal:5432 |
+| Cache | Redis on cache.internal:6379 |
+| Deployment | Docker Compose via \`./scripts/deploy.sh\` |
+
+## Key directories
+| Path | What's there |
+|------|-------------|
+| src/routes/ | API route handlers |
+| src/models/ | Database models (Drizzle ORM) |
+| src/middleware/ | Auth, rate limiting, logging |
+| tests/ | Vitest test suite |
+| scripts/ | Deploy, migrate, seed scripts |
+
+## Verification — check your work
+| What | Command |
+|------|---------|
+| Types compile | \`npx tsc --noEmit\` |
+| Tests pass | \`npm test\` |
+| Lint clean | \`npm run lint\` |
+| DB migrations | \`npm run migrate:status\` |
+
+ALWAYS run the relevant checks before declaring done.
+
+## Access & credentials
+- \`~/credentials/db.json\` — PostgreSQL connection string
+- \`~/credentials/github.json\` — PAT (git push works via credential helper)
+- SSH to db.internal and cache.internal via ~/.ssh/config
+- Passwordless sudo on this machine
+
+## Conventions
+- Commit messages: imperative mood ("Add user endpoint", not "Added")
+- PRs target main, squash-merge only
+- Migrations in src/migrations/ — never edit a shipped migration
+
+## When context compacts
+Preserve: list of modified files, pending deploys, current task, test results.
+
+## IMPORTANT — Hard rules
+- NEVER commit anything from ~/credentials/. Why: live tokens would be exposed in git history.
+- NEVER force-push to main. Why: CI and other developers depend on linear history.
+- NEVER drop a production table without explicit instruction. Why: data loss is irreversible.`,
       },
       {
         title: "Add architecture.json (optional)",
@@ -720,7 +840,7 @@ function getSetupData() {
       "Project file browser — see and edit your files while you chat",
       "Markdown editor — Monaco-powered, syntax highlighted, Ctrl+S to save",
       "Six themes including 70s amber/green CRT phosphor + corporate plain",
-      "Role-based sessions — define agent roles per project via agents/*.md files",
+      "Role-based sessions — define agent roles per project via .claude/agents/*.md files — per-role plugin isolation via CLAUDE_CONFIG_DIR",
       "Architecture viewer — ASCII diagrams from architecture.json",
       "Multi-VM fleet management — one dashboard for all your machines, across Linux/macOS/Windows",
       "Frontend served by the relay — your VMs only ship the backend; UI updates ship without VM redeploys",
@@ -743,7 +863,58 @@ function getSetupData() {
 // Setup page — HTML for browsers
 app.get("/setup", (c) => {
   const data = getSetupData();
-  const stepsHtml = data.steps.map((s, i) => `
+  const stepsHtml = data.steps.map((s, i) => {
+    const roleFrontmatterHtml = s.roleFrontmatterSchema ? `
+      <h4 style="margin: 16px 0 8px; font-size: 1em;">Frontmatter schema (YAML between --- delimiters):</h4>
+      <p style="font-size: 0.9em; color: #475569; margin: 4px 0 8px;">${s.roleFrontmatterSchema.description}</p>
+      <table style="width: 100%; border-collapse: collapse; font-size: 0.9em; margin: 8px 0 12px;">
+        <thead><tr style="border-bottom: 2px solid #e2e8f0; text-align: left;">
+          <th style="padding: 6px 12px; width: 20%;">Field</th>
+          <th style="padding: 6px 12px; width: 15%;">Type</th>
+          <th style="padding: 6px 12px;">Description</th>
+        </tr></thead>
+        <tbody>${s.roleFrontmatterSchema.fields.map((f: {name: string; type: string; description: string}) => `
+          <tr style="border-bottom: 1px solid #f1f5f9;">
+            <td style="padding: 6px 12px; font-family: monospace; font-weight: 600; vertical-align: top;">${f.name}</td>
+            <td style="padding: 6px 12px; font-family: monospace; font-size: 0.85em; color: #64748b; vertical-align: top;">${f.type}</td>
+            <td style="padding: 6px 12px; color: #475569;">${f.description}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table>
+      <details style="margin: 8px 0 16px;">
+        <summary style="cursor: pointer; font-weight: 600; color: #3b82f6; font-size: 0.9em;">Frontmatter example</summary>
+        <pre style="margin-top: 8px;">${s.roleFrontmatterSchema.example}</pre>
+      </details>` : "";
+    const roleConfigDirHtml = s.roleConfigDir ? `
+      <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 12px 16px; margin: 12px 0;">
+        <strong>${s.roleConfigDir.title}</strong>
+        <p style="margin: 8px 0 0; font-size: 0.9em; color: #1e40af;">${s.roleConfigDir.description}</p>
+      </div>` : "";
+    const roleChecklistHtml = s.roleChecklist ? `
+      <h4 style="margin: 16px 0 8px; font-size: 1em;">What to include in a role file:</h4>
+      <table style="width: 100%; border-collapse: collapse; font-size: 0.9em; margin: 8px 0 16px;">
+        <thead><tr style="border-bottom: 2px solid #e2e8f0; text-align: left;">
+          <th style="padding: 6px 12px; width: 25%;">Section</th>
+          <th style="padding: 6px 12px;">Why it matters</th>
+        </tr></thead>
+        <tbody>${s.roleChecklist.map((r: {section: string; description: string}) => `
+          <tr style="border-bottom: 1px solid #f1f5f9;">
+            <td style="padding: 6px 12px; font-weight: 600; vertical-align: top;">${r.section}</td>
+            <td style="padding: 6px 12px; color: #475569;">${r.description}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table>` : "";
+    const roleAntiPatternsHtml = s.roleAntiPatterns ? `
+      <h4 style="margin: 16px 0 8px; font-size: 1em; color: #dc2626;">Common mistakes that make agents worse:</h4>
+      <ul style="margin: 4px 0 16px; padding-left: 20px; font-size: 0.9em; color: #475569; line-height: 1.7;">
+        ${s.roleAntiPatterns.map((p: string) => `<li>${p}</li>`).join("")}
+      </ul>` : "";
+    const roleExampleHtml = s.roleExample ? `
+      <details style="margin: 12px 0;">
+        <summary style="cursor: pointer; font-weight: 600; color: #3b82f6; font-size: 0.95em;">Example role file (click to expand)</summary>
+        <pre style="margin-top: 8px;">${s.roleExample}</pre>
+      </details>` : "";
+    return `
     <div class="card">
       <h3>${i + 1}. ${s.title}</h3>
       <p>${s.description}</p>
@@ -753,9 +924,14 @@ app.get("/setup", (c) => {
       ${s.commands ? `<pre>${s.commands.join("\n")}</pre>` : ""}
       ${s.url ? `<code class="block">${s.url}</code>` : ""}
       ${s.example ? (s.example.includes("\n") ? `<p>Example:</p><pre>${s.example}</pre>` : `<p>Example: <code>${s.example}</code></p>`) : ""}
+      ${roleFrontmatterHtml}
+      ${roleConfigDirHtml}
+      ${roleChecklistHtml}
+      ${roleAntiPatternsHtml}
+      ${roleExampleHtml}
       ${s.note ? `<p class="note">${s.note}</p>` : ""}
-    </div>
-  `).join("");
+    </div>`;
+  }).join("");
 
   return c.html(`<!DOCTYPE html>
 <html><head><title>Setup — SpAIglass</title>
@@ -807,7 +983,7 @@ ${THEME_TOGGLE_HTML}
     <li><strong>Project file browser</strong> — see and edit your files while you chat</li>
     <li><strong>Markdown editor</strong> — Monaco-powered, syntax highlighted, Ctrl+S to save</li>
     <li><strong>Six themes</strong> including 70s amber/green CRT phosphor and corporate plain</li>
-    <li><strong>Role-based sessions</strong> — define agent roles per project via agents/*.md files</li>
+    <li><strong>Role-based sessions</strong> — define agent roles per project via .claude/agents/*.md files — per-role plugin isolation via CLAUDE_CONFIG_DIR</li>
     <li><strong>Architecture viewer</strong> — ASCII diagrams from architecture.json</li>
     <li><strong>Multi-VM fleet management</strong> — one dashboard for all your machines, across Linux/macOS/Windows</li>
     <li><strong>Frontend served by the relay</strong> — your VMs ship only the backend, so UI updates roll out without redeploying every VM</li>
@@ -1395,7 +1571,7 @@ function updateVersionBanner(connectors) {
     banner.style.display = 'none';
     return;
   }
-  var names = stale.map(function(c) { return c.name; }).join(', ');
+  var names = stale.map(function(c) { return c.displayName || c.name; }).join(', ');
   document.getElementById('versionBannerText').innerHTML =
     '<strong>' + stale.length + ' of ' + connectors.filter(function(c){return c.online;}).length +
     ' online VM(s) running an out-of-date SpAIglass</strong> &nbsp; ' +
@@ -1435,7 +1611,7 @@ async function loadConnectors() {
   // when something the user can see (id/name/online/hidden/version/role/section) has changed.
   var fp = data.map(function(c) {
     var hasHidden = hiddenRoles.some(function(h) { return h.startsWith(c.id + ':'); });
-    return c.id + '|' + c.name + '|' + (c.online ? '1' : '0') + '|' + (hasHidden ? '1' : '0') + '|' + (c.spaiglassVersion || '') + '|' + c.role;
+    return c.id + '|' + c.name + '|' + (c.displayName || '') + '|' + (c.online ? '1' : '0') + '|' + (hasHidden ? '1' : '0') + '|' + (c.spaiglassVersion || '') + '|' + c.role;
   }).join(';');
   if (fp === connectorsFingerprint) {
     // Nothing structural changed — just refresh role grids in place for online VMs.
@@ -1465,16 +1641,22 @@ async function loadConnectors() {
       rolePill = '<span style="font-size:0.72em; padding: 2px 8px; border-radius: 10px; background: ' + rbg + '; color: ' + rfg + '; text-transform: uppercase; letter-spacing: 0.04em;">' + c.role + '</span>';
     }
     var ownerLabel = c.role !== 'owner' ? '<span style="font-size:0.78em; color:#64748b;">' + c.ownerLogin + '</span>' : '';
+    var displayLabel = c.displayName || c.name;
+    var slugLabel = (c.displayName && c.displayName !== c.name)
+      ? '<span style="font-size:0.72em; color:#94a3b8; margin-left:6px; font-family:ui-monospace,monospace;">' + c.name + '</span>'
+      : '';
     var actions = '';
     if (c.role === 'owner') {
       actions =
+        '<button class="btn" onclick="renameConnector(\\'' + c.id + '\\', \\'' + displayLabel.replace(/'/g, "\\\\'") + '\\')">Rename</button> ' +
         '<button class="btn" onclick="manageCollaborators(\\'' + c.id + '\\', \\'' + c.name + '\\')">Manage</button> ' +
         '<button class="btn btn-danger" onclick="deleteConnector(\\'' + c.id + '\\')">Delete</button>';
     }
     return '<div class="card">' +
       '<div class="server-row">' +
         '<span class="dot ' + (c.online ? 'online' : 'offline') + '">&bull;</span>' +
-        '<span class="name">' + c.name + '</span>' +
+        '<span class="name">' + displayLabel + '</span>' +
+        slugLabel +
         ownerLabel +
         '<span class="id">' + c.id.slice(0, 8) + '</span>' +
         verPill +
@@ -1566,6 +1748,18 @@ function closeAddVmModal() {
 async function deleteConnector(id) {
   if (!confirm('Delete this connector?')) return;
   await fetch('/api/connectors/' + id, { method: 'DELETE' });
+  loadConnectors();
+}
+
+async function renameConnector(id, currentName) {
+  var newName = prompt('Display name (leave empty to reset to default):', currentName);
+  if (newName === null) return; // cancelled
+  await fetch('/api/connectors/' + id, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ displayName: newName.trim() || null }),
+  });
+  connectorsFingerprint = ''; // force re-render
   loadConnectors();
 }
 
@@ -2123,7 +2317,7 @@ app.all("/vm/:slug/*", async (c) => {
 ${FAVICON}
 <style>body{font-family:system-ui;max-width:600px;margin:80px auto;padding:0 20px;color:#1a1a2e;background:#f0f0f5;}</style>
 </head><body><h1>VM offline</h1>
-<p>${connector.name} is not connected to the relay.</p>
+<p>${connector.display_name || connector.name} is not connected to the relay.</p>
 <p>Start the connector on the VM to bring it online.</p>
 <p><a href="/fleetrelay">Back to fleet relay</a></p></body></html>`, 503);
   }
@@ -2139,7 +2333,7 @@ ${FAVICON}
   // requests (and anything else the helper can't satisfy) fall through to the
   // tunneled flow below.
   if (c.req.method === "GET" || c.req.method === "HEAD") {
-    const localResp = tryServeFromRelayFrontend(c, slug, vmPath, connector.name);
+    const localResp = tryServeFromRelayFrontend(c, slug, vmPath, connector.display_name || connector.name);
     if (localResp) return localResp;
   }
 
@@ -2214,7 +2408,7 @@ ${FAVICON}
       } else if (project) {
         tabTitle = serverAbbreviate(project, 8);
       } else {
-        tabTitle = connector.name;
+        tabTitle = connector.display_name || connector.name;
       }
 
       // Rewrite <title>

@@ -14,6 +14,8 @@ import {
   addCollaborator,
   removeCollaborator,
   updateCollaboratorRole,
+  updateConnectorDisplayName,
+  connectorDisplayName,
   findUserByLogin,
   appendAuditLog,
   listAuditLog,
@@ -42,18 +44,18 @@ export function connectorRoutes(): Hono<RelayEnv> {
     const owned = connectors.map((conn) => ({
       id: conn.id,
       name: conn.name,
+      displayName: connectorDisplayName(conn),
       role: "owner" as const,
       online: cm.isOnline(conn.id),
       lastSeen: conn.last_seen,
       createdAt: conn.created_at,
-      // SpAIglass install version reported by the VM on its WS auth handshake.
-      // Null when offline. Dashboard compares against LATEST_SPAIGLASS_VERSION.
       spaiglassVersion: cm.getVersion(conn.id),
     }));
 
     const sharedOut = shared.map((conn) => ({
       id: conn.id,
       name: conn.name,
+      displayName: connectorDisplayName(conn),
       role: conn.role,
       ownerLogin: conn.owner_login,
       online: cm.isOnline(conn.id),
@@ -82,6 +84,7 @@ export function connectorRoutes(): Hono<RelayEnv> {
     return c.json({
       id: connector.id,
       name: connector.name,
+      displayName: connectorDisplayName(connector),
       token: connector.token,
       createdAt: connector.created_at,
       url: `${publicUrl}/vm/${user.github_login}.${connector.name}/`,
@@ -99,6 +102,29 @@ export function connectorRoutes(): Hono<RelayEnv> {
     // Disconnect if online
     getChannelManager().disconnect(id);
     return c.json({ ok: true });
+  });
+
+  // Update connector display name. Owner only.
+  app.patch("/api/connectors/:id", async (c) => {
+    const user = c.get("user")!;
+    const id = c.req.param("id");
+    const body = await c.req.json<{ displayName?: string | null }>();
+
+    if (!("displayName" in body)) {
+      return c.json({ error: "displayName field required" }, 400);
+    }
+
+    const displayName = body.displayName?.trim() || null;
+    if (displayName && displayName.length > 100) {
+      return c.json({ error: "Display name max 100 chars" }, 400);
+    }
+
+    const updated = updateConnectorDisplayName(id, user.id, displayName);
+    if (!updated) {
+      return c.json({ error: "Connector not found" }, 404);
+    }
+
+    return c.json({ ok: true, displayName: displayName || undefined });
   });
 
   // Download .env config for a connector

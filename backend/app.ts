@@ -42,6 +42,12 @@ import {
   handlePutSecret,
   handleDeleteSecret,
 } from "./handlers/secrets.ts";
+import {
+  handleGetPlugins,
+  handleGetRoles,
+  handleCreateRole,
+  handleUpdateRole,
+} from "./handlers/roles.ts";
 import { createAuthMiddleware } from "./middleware/auth.ts";
 import { readBinaryFile } from "./utils/fs.ts";
 
@@ -135,6 +141,12 @@ export function createApp(
   app.get("/api/secrets", (c) => handleListSecrets(c));
   app.put("/api/secrets/:name", (c) => handlePutSecret(c));
   app.delete("/api/secrets/:name", (c) => handleDeleteSecret(c));
+
+  // Plugins & roles
+  app.get("/api/plugins", (c) => handleGetPlugins(c));
+  app.get("/api/roles", (c) => handleGetRoles(c));
+  app.post("/api/roles", (c) => handleCreateRole(c));
+  app.put("/api/roles/:name", (c) => handleUpdateRole(c));
 
   // Static file serving (assets only — SPA fallback added separately via finalizeSpa)
   const serveStatic = runtime.createStaticFileMiddleware({

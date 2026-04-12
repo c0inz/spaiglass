@@ -409,7 +409,9 @@ export function ChatInput({
           onCompositionStart={handleCompositionStart}
           onCompositionEnd={handleCompositionEnd}
           placeholder={
-            isLoading ? "Processing..." : "Type message..."
+            isLoading
+              ? "Queue a message, /btw, or /stop..."
+              : "Type message..."
           }
           rows={1}
           className={`w-full pl-3 pr-16 py-1.5 bg-white/80 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 backdrop-blur-sm shadow-sm text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 resize-none overflow-hidden min-h-[36px] max-h-[${UI_CONSTANTS.TEXTAREA_MAX_HEIGHT}px] leading-tight`}
@@ -444,13 +446,7 @@ export function ChatInput({
             }
             className="px-3 py-1 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-400 text-white rounded-lg font-medium transition-all duration-200 shadow-sm hover:shadow-md disabled:cursor-not-allowed disabled:opacity-50 text-sm leading-tight max-h-[28px] flex items-center"
           >
-            {isLoading
-              ? input.trim()
-                ? "Send"
-                : "..."
-              : permissionMode === "plan"
-                ? "Plan"
-                : "Send"}
+            {permissionMode === "plan" ? "Plan" : "Send"}
           </button>
         </div>
       </form>

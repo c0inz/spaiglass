@@ -35,6 +35,11 @@ import {
 import { logger } from "../utils/logger.ts";
 import { getClaudeSpawnEnv } from "../utils/anthropic-key.ts";
 import {
+  parseAgentFile,
+  prepareRoleConfigDir,
+  buildRoleEnv,
+} from "../utils/agent-config.ts";
+import {
   createInteractiveToolsServer,
   INTERACTIVE_TOOLS_SYSTEM_PROMPT,
   type PendingToolBroker,
@@ -197,40 +202,61 @@ export class SessionManager {
   private async startSession(
     session: Session,
     workingDirectory: string,
-    _contextContent?: string,
+    contextContent?: string,
   ): Promise<void> {
     try {
       logger.app.info("Starting warm session for {sessionId}...", {
         sessionId: session.id,
       });
 
-      // Phase 4: if the user supplied an Anthropic API key via .env or the
-      // settings UI, inject it into the SDK's `env` option so the spawned
-      // Claude CLI uses it instead of the subscription auth path. Returns
-      // undefined when no key is set, so default behaviour is unchanged.
-      const spawnEnv = getClaudeSpawnEnv();
+      // Parse agent frontmatter if contextContent was provided.
+      // The frontmatter may declare plugins, mcpServers, tools, model, etc.
+      const parsed = contextContent
+        ? parseAgentFile(contextContent)
+        : { frontmatter: {}, body: contextContent || "" };
+      const fm = parsed.frontmatter;
+      const promptBody = parsed.body;
 
-      // Phase 6.4: build the per-session interactive-tools broker. Each
-      // tool handler closes over `session` so a tool call from session A
-      // only ever prompts session A's consumers. The broker is in-process —
-      // no subprocess, no IPC, just a function call from the SDK into our
-      // Map<requestId, Promise>.
+      // Per-role CLAUDE_CONFIG_DIR: each role gets an isolated config
+      // directory so plugins, settings, and auth are scoped to the role.
+      // This is how SpAIglass supports multi-role on the same project
+      // without roles clobbering each other's settings.
+      const roleName = session.roleFile.replace(/\.md$/, "");
+      let spawnEnv = getClaudeSpawnEnv() || {};
+      if (fm.plugins || Object.keys(fm).length > 0) {
+        const configDir = prepareRoleConfigDir(workingDirectory, roleName, fm);
+        spawnEnv = buildRoleEnv(configDir, spawnEnv);
+      }
+
+      // Phase 6.4: build the per-session interactive-tools broker.
       const broker = this.makeBroker(session);
       const interactiveServer = createInteractiveToolsServer(broker);
 
-      // Use startup() for reliable initialization — let SDK use its own bundled CLI
+      // Merge MCP servers from frontmatter with the interactive tools server
+      const mcpServers = {
+        spaiglass: interactiveServer,
+        ...(fm.mcpServers || {}),
+      } as Record<string, import("@anthropic-ai/claude-agent-sdk").McpServerConfig>;
+
+      // Use startup() for reliable initialization
       const warmSession = await startup({
         options: {
           cwd: workingDirectory,
-          permissionMode: "bypassPermissions" as const,
+          permissionMode: (fm.permissionMode as "bypassPermissions" | undefined) || "bypassPermissions" as const,
           allowDangerouslySkipPermissions: true,
-          mcpServers: { spaiglass: interactiveServer },
+          mcpServers,
+          ...(fm.tools ? { allowedTools: fm.tools } : {}),
+          ...(fm.disallowedTools ? { disallowedTools: fm.disallowedTools } : {}),
+          ...(fm.model ? { model: fm.model } : {}),
+          ...(fm.maxTurns ? { maxTurns: fm.maxTurns } : {}),
           systemPrompt: {
             type: "preset" as const,
             preset: "claude_code" as const,
-            append: INTERACTIVE_TOOLS_SYSTEM_PROMPT,
+            append: [promptBody, INTERACTIVE_TOOLS_SYSTEM_PROMPT]
+              .filter(Boolean)
+              .join("\n\n"),
           },
-          ...(spawnEnv ? { env: spawnEnv } : {}),
+          ...(Object.keys(spawnEnv).length > 0 ? { env: spawnEnv } : {}),
           stderr: (data: string) => {
             logger.app.error("CLI stderr: {data}", { data: data.trim() });
           },

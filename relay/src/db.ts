@@ -28,6 +28,7 @@ export function initDb(path = "./relay.db"): Database.Database {
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
+      display_name TEXT,
       token TEXT UNIQUE NOT NULL,
       vm_host TEXT,
       vm_port INTEGER DEFAULT 8080,
@@ -93,6 +94,13 @@ export function initDb(path = "./relay.db"): Database.Database {
       PRIMARY KEY (connector_id, proj_base, role_file)
     );
   `);
+
+  // Migrations — add columns that didn't exist in earlier schema versions.
+  try {
+    db.exec("ALTER TABLE connectors ADD COLUMN display_name TEXT");
+  } catch {
+    // Column already exists — ignore.
+  }
 
   return db;
 }
@@ -169,7 +177,10 @@ export function cleanExpiredSessions(): number {
 export interface Connector {
   id: string;
   user_id: string;
+  /** Immutable slug name — used for URL routing and directory lookups. */
   name: string;
+  /** User-editable display name — shown on fleet dashboard and browser tabs. */
+  display_name: string | null;
   token: string;
   vm_host: string | null;
   vm_port: number;
@@ -177,12 +188,25 @@ export interface Connector {
   created_at: string;
 }
 
+/** Returns display_name if set, otherwise falls back to name. */
+export function connectorDisplayName(c: { name: string; display_name: string | null }): string {
+  return c.display_name || c.name;
+}
+
 export function createConnector(userId: string, name: string): Connector {
   const id = randomUUID();
   const token = randomUUID();
   getDb().prepare("INSERT INTO connectors (id, user_id, name, token) VALUES (?, ?, ?, ?)")
     .run(id, userId, name, token);
-  return { id, user_id: userId, name, token, vm_host: null, vm_port: 8080, last_seen: null, created_at: new Date().toISOString() };
+  return { id, user_id: userId, name, display_name: null, token, vm_host: null, vm_port: 8080, last_seen: null, created_at: new Date().toISOString() };
+}
+
+/** Update the user-editable display name. Null clears it (falls back to name). */
+export function updateConnectorDisplayName(id: string, userId: string, displayName: string | null): boolean {
+  const result = getDb()
+    .prepare("UPDATE connectors SET display_name = ? WHERE id = ? AND user_id = ?")
+    .run(displayName?.trim() || null, id, userId);
+  return result.changes > 0;
 }
 
 export function getConnectorsByUser(userId: string): Connector[] {
