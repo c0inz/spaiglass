@@ -1,55 +1,32 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <defs>
-    <linearGradient id="brass" x1="0.2" y1="0" x2="0.8" y2="1">
-      <stop offset="0%" stop-color="#c49a3c"/>
-      <stop offset="50%" stop-color="#a07828"/>
-      <stop offset="100%" stop-color="#7a5c1c"/>
-    </linearGradient>
-    <linearGradient id="brassRing" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#dab45c"/>
-      <stop offset="30%" stop-color="#c49a3c"/>
-      <stop offset="70%" stop-color="#8a6a24"/>
-      <stop offset="100%" stop-color="#6b5020"/>
-    </linearGradient>
-    <radialGradient id="lens" cx="0.4" cy="0.35" r="0.55">
-      <stop offset="0%" stop-color="#5a9ee0"/>
-      <stop offset="40%" stop-color="#2563a0"/>
-      <stop offset="80%" stop-color="#132d4f"/>
-      <stop offset="100%" stop-color="#0a1622"/>
-    </radialGradient>
-    <radialGradient id="innerShadow" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="70%" stop-color="transparent"/>
-      <stop offset="100%" stop-color="rgba(0,0,0,0.3)"/>
-    </radialGradient>
-  </defs>
+  <rect width="64" height="64" rx="12" fill="#131318"/>
 
-  <!-- Tube stub — coming from upper-left corner, short and secondary -->
-  <polygon points="4,2 10,0 28,18 24,22" fill="url(#brass)"/>
-  <polygon points="4,2 10,0 28,18 26,18" fill="#dab45c" opacity="0.3"/>
-  <!-- Brass band on tube -->
-  <line x1="14" y1="6" x2="11" y2="9" stroke="#dab45c" stroke-width="1.2" stroke-linecap="round"/>
+  <g fill="#ffffff">
+    <!-- Outer eye (pointed almond, ~2:1 aspect ratio) -->
+    <path fill-rule="evenodd" d="
+      M 2,32
+      C 7,15 20,12 32,12 C 44,12 57,15 62,32
+      C 57,49 44,52 32,52 C 20,52 7,49 2,32 Z
+      M 9,32
+      C 13,21 22,17 32,17 C 42,17 51,21 55,32
+      C 51,43 42,47 32,47 C 22,47 13,43 9,32 Z
+    "/>
 
-  <!-- Outer brass housing ring — ridged look -->
-  <circle cx="34" cy="34" r="27" fill="url(#brassRing)" stroke="#6b5020" stroke-width="0.8"/>
-  <!-- Ridge lines on housing (concentric ring grooves) -->
-  <circle cx="34" cy="34" r="25.5" fill="none" stroke="#8a6a24" stroke-width="0.4" opacity="0.6"/>
-  <circle cx="34" cy="34" r="24" fill="none" stroke="#dab45c" stroke-width="0.3" opacity="0.5"/>
-  <circle cx="34" cy="34" r="22.5" fill="none" stroke="#8a6a24" stroke-width="0.4" opacity="0.6"/>
-  <!-- Inner gold rim highlight -->
-  <circle cx="34" cy="34" r="21.5" fill="none" stroke="#e8c86c" stroke-width="0.8"/>
+    <!-- Crescent bridge — left inner eyelid flows into iris -->
+    <path d="
+      M 21.5,26.5
+      C 16,28 9,30 9,32
+      C 9,34 16,36 21.5,37.5
+      A 11,11 0 0,0 21.5,26.5 Z
+    "/>
 
-  <!-- Deep blue lens -->
-  <circle cx="34" cy="34" r="20" fill="url(#lens)"/>
-  <!-- Inner shadow around lens edge -->
-  <circle cx="34" cy="34" r="20" fill="url(#innerShadow)"/>
+    <!-- Iris ring -->
+    <path fill-rule="evenodd" d="
+      M 20,32 A 11,11 0 1,1 42,32 A 11,11 0 1,1 20,32 Z
+      M 24,32 A 7,7 0 1,0 38,32 A 7,7 0 1,0 24,32 Z
+    "/>
 
-  <!-- Lens reflection — soft highlight upper-left -->
-  <ellipse cx="28" cy="28" rx="8" ry="7" fill="white" opacity="0.1"/>
-  <!-- Bright reflection spot -->
-  <ellipse cx="26" cy="25" rx="3.5" ry="2.8" fill="white" opacity="0.25"/>
-  <!-- Small sharp catchlight -->
-  <circle cx="24.5" cy="23.5" r="1.5" fill="white" opacity="0.4"/>
-
-  <!-- Bottom reflection hint (like in the photo) -->
-  <ellipse cx="38" cy="46" rx="5" ry="2" fill="white" opacity="0.06"/>
+    <!-- Pupil — pac-man, notch facing upper-left -->
+    <path d="M 31,32 L 27,28 A 5,5 0 1,1 26,33 Z"/>
+  </g>
 </svg>

@@ -83,8 +83,8 @@ function serverCompactName(proj: string, role: string): string {
 
 // --- Shared HTML helpers ---
 
-// Inline SVG favicon — brass spyglass lens, looking down the barrel
-const FAVICON = `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="b" x1=".2" y1="0" x2=".8" y2="1"><stop offset="0%" stop-color="#c49a3c"/><stop offset="50%" stop-color="#a07828"/><stop offset="100%" stop-color="#7a5c1c"/></linearGradient><linearGradient id="r" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#dab45c"/><stop offset="30%" stop-color="#c49a3c"/><stop offset="70%" stop-color="#8a6a24"/><stop offset="100%" stop-color="#6b5020"/></linearGradient><radialGradient id="l" cx=".4" cy=".35" r=".55"><stop offset="0%" stop-color="#5a9ee0"/><stop offset="40%" stop-color="#2563a0"/><stop offset="80%" stop-color="#132d4f"/><stop offset="100%" stop-color="#0a1622"/></radialGradient><radialGradient id="s" cx=".5" cy=".5" r=".5"><stop offset="70%" stop-color="transparent"/><stop offset="100%" stop-color="rgba(0,0,0,.3)"/></radialGradient></defs><polygon points="4,2 10,0 28,18 24,22" fill="url(#b)"/><polygon points="4,2 10,0 28,18 26,18" fill="#dab45c" opacity=".3"/><line x1="14" y1="6" x2="11" y2="9" stroke="#dab45c" stroke-width="1.2" stroke-linecap="round"/><circle cx="34" cy="34" r="27" fill="url(#r)" stroke="#6b5020" stroke-width=".8"/><circle cx="34" cy="34" r="25.5" fill="none" stroke="#8a6a24" stroke-width=".4" opacity=".6"/><circle cx="34" cy="34" r="24" fill="none" stroke="#dab45c" stroke-width=".3" opacity=".5"/><circle cx="34" cy="34" r="22.5" fill="none" stroke="#8a6a24" stroke-width=".4" opacity=".6"/><circle cx="34" cy="34" r="21.5" fill="none" stroke="#e8c86c" stroke-width=".8"/><circle cx="34" cy="34" r="20" fill="url(#l)"/><circle cx="34" cy="34" r="20" fill="url(#s)"/><ellipse cx="28" cy="28" rx="8" ry="7" fill="white" opacity=".1"/><ellipse cx="26" cy="25" rx="3.5" ry="2.8" fill="white" opacity=".25"/><circle cx="24.5" cy="23.5" r="1.5" fill="white" opacity=".4"/></svg>')}" />`;
+// Inline SVG favicon — SpAIglass eye icon
+const FAVICON = `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="#131318"/><g fill="#fff"><path fill-rule="evenodd" d="M2,32C7,15 20,12 32,12C44,12 57,15 62,32C57,49 44,52 32,52C20,52 7,49 2,32ZM9,32C13,21 22,17 32,17C42,17 51,21 55,32C51,43 42,47 32,47C22,47 13,43 9,32Z"/><path d="M21.5,26.5C16,28 9,30 9,32C9,34 16,36 21.5,37.5A11,11 0 0,0 21.5,26.5Z"/><path fill-rule="evenodd" d="M20,32A11,11 0 1,1 42,32A11,11 0 1,1 20,32ZM24,32A7,7 0 1,0 38,32A7,7 0 1,0 24,32Z"/><path d="M31,32L27,28A5,5 0 1,1 26,33Z"/></g></svg>')}" />`;
 
 // --- Theme system ---
 // Four themes (70s-light, 70s-dark, glass, corporate) + phosphor color selector for 70s themes.
@@ -1360,16 +1360,12 @@ ${THEME_TOGGLE_HTML}
 <div class="brand">
   <a href="/" class="brand-link">
     <svg class="brand-logo" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <defs>
-        <linearGradient id="hb" x1=".2" y1="0" x2=".8" y2="1"><stop offset="0%" stop-color="#c49a3c"/><stop offset="50%" stop-color="#a07828"/><stop offset="100%" stop-color="#7a5c1c"/></linearGradient>
-        <linearGradient id="hr" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#dab45c"/><stop offset="30%" stop-color="#c49a3c"/><stop offset="70%" stop-color="#8a6a24"/><stop offset="100%" stop-color="#6b5020"/></linearGradient>
-        <radialGradient id="hl" cx=".4" cy=".35" r=".55"><stop offset="0%" stop-color="#5a9ee0"/><stop offset="40%" stop-color="#2563a0"/><stop offset="80%" stop-color="#132d4f"/><stop offset="100%" stop-color="#0a1622"/></radialGradient>
-      </defs>
-      <polygon points="4,2 10,0 28,18 24,22" fill="url(#hb)"/>
-      <circle cx="34" cy="34" r="27" fill="url(#hr)" stroke="#6b5020" stroke-width=".8"/>
-      <circle cx="34" cy="34" r="21.5" fill="none" stroke="#e8c86c" stroke-width=".8"/>
-      <circle cx="34" cy="34" r="20" fill="url(#hl)"/>
-      <ellipse cx="26" cy="25" rx="3.5" ry="2.8" fill="white" opacity=".25"/>
+      <g fill="currentColor">
+        <path fill-rule="evenodd" d="M2,32C7,15 20,12 32,12C44,12 57,15 62,32C57,49 44,52 32,52C20,52 7,49 2,32ZM9,32C13,21 22,17 32,17C42,17 51,21 55,32C51,43 42,47 32,47C22,47 13,43 9,32Z"/>
+        <path d="M21.5,26.5C16,28 9,30 9,32C9,34 16,36 21.5,37.5A11,11 0 0,0 21.5,26.5Z"/>
+        <path fill-rule="evenodd" d="M20,32A11,11 0 1,1 42,32A11,11 0 1,1 20,32ZM24,32A7,7 0 1,0 38,32A7,7 0 1,0 24,32Z"/>
+        <path d="M31,32L27,28A5,5 0 1,1 26,33Z"/>
+      </g>
     </svg>
     <span class="brand-name">SpAIglass</span>
   </a>
