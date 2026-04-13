@@ -304,6 +304,7 @@ export function ChatPage() {
     setCurrentAssistantMessage,
     addMessage,
     updateLastMessage,
+    markInteractiveAnswered,
     updateStatus,
     currentStatus,
     clearInput,
@@ -966,6 +967,13 @@ export function ChatPage() {
                     setShowSidebar(true);
                     setEditingFile({ path, name });
                     setShowArchViewer(false);
+                  }}
+                  onToolResult={(requestId, status, data, reason) => {
+                    // Tell the backend what the user picked, then immediately
+                    // disable the widget so a replay/reconnect can't let them
+                    // answer the same prompt twice.
+                    ws.sendToolResult(requestId, status, data, reason);
+                    markInteractiveAnswered(requestId);
                   }}
                   onSubmitText={(text) => sendMessage(text)}
                 />

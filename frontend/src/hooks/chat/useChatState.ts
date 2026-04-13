@@ -76,6 +76,20 @@ export function useChatState(options: ChatStateOptions = {}) {
     );
   }, []);
 
+  // Flip the matching InteractiveMessage.answered to true after the user
+  // submits a reply. Without this, a buffer-replay or reconnect would let
+  // the user answer the same prompt twice, and the widget would keep
+  // looking active even after the backend has already resolved the request.
+  const markInteractiveAnswered = useCallback((requestId: string) => {
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.type === "interactive" && msg.requestId === requestId
+          ? { ...msg, answered: true }
+          : msg,
+      ),
+    );
+  }, []);
+
   const clearInput = useCallback(() => {
     setInput("");
   }, []);
@@ -147,6 +161,7 @@ export function useChatState(options: ChatStateOptions = {}) {
     // Helper functions
     addMessage,
     updateLastMessage,
+    markInteractiveAnswered,
     updateStatus,
     clearStatus,
     clearInput,

@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { render } from "@testing-library/react";
+import { render, fireEvent } from "@testing-library/react";
 import { renderTerminalMessage } from "./interpreter";
 import type {
   ChatMessage,
@@ -46,13 +46,14 @@ describe("renderTerminalMessage", () => {
     expect(container.textContent).toContain("claude@spaiglass");
   });
 
-  it("renders a Bash tool_result with stdout", () => {
+  it("renders a Bash tool_result with stdout (collapsed card expands on click)", () => {
     const msg: ToolResultMessage = {
       type: "tool_result",
       toolName: "Bash",
       content: "ls output",
       summary: "ls -la",
       timestamp: 1,
+      input: { command: "ls -la" },
       toolUseResult: {
         stdout: "file1\nfile2",
         stderr: "",
@@ -60,18 +61,25 @@ describe("renderTerminalMessage", () => {
         isImage: false,
       },
     };
-    const { container } = rendered(renderTerminalMessage(msg));
+    const { container, getByRole } = rendered(renderTerminalMessage(msg));
+    // Collapsed state: the header shows tool name + args summary but not body.
     expect(container.textContent).toContain("Bash");
+    expect(container.textContent).toContain("ls -la");
+    expect(container.textContent).not.toContain("file1");
+    // Click the header to expand.
+    fireEvent.click(getByRole("button", { expanded: false }));
     expect(container.textContent).toContain("file1");
+    expect(container.textContent).toContain("file2");
   });
 
-  it("renders an Edit tool_result with a structured patch", () => {
+  it("renders an Edit tool_result with a structured patch (expands to show diff)", () => {
     const msg: ToolResultMessage = {
       type: "tool_result",
       toolName: "Edit",
       content: "edited",
       summary: "src/foo.ts",
       timestamp: 1,
+      input: { file_path: "src/foo.ts" },
       toolUseResult: {
         filePath: "src/foo.ts",
         oldString: "old",
@@ -90,8 +98,9 @@ describe("renderTerminalMessage", () => {
         replaceAll: false,
       },
     };
-    const { container } = rendered(renderTerminalMessage(msg));
+    const { container, getByRole } = rendered(renderTerminalMessage(msg));
     expect(container.textContent).toContain("Edit");
+    fireEvent.click(getByRole("button", { expanded: false }));
     expect(container.textContent).toContain("+new");
     expect(container.textContent).toContain("-old");
   });

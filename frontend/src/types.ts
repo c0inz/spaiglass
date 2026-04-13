@@ -72,6 +72,12 @@ export type ToolResultMessage = {
   summary: string;
   timestamp: number;
   toolUseResult?: unknown; // Contains structured data like structuredPatch, stdout, stderr etc.
+  /** Cached tool_use input (args the tool was called with). Lets the terminal
+   *  renderer show a collapsed card with args + output without having to
+   *  correlate back to a separate tool_use message. */
+  input?: Record<string, unknown>;
+  /** Whether the tool reported an error (SDK tool_result.is_error). */
+  isError?: boolean;
 };
 
 // Plan approval dialog state

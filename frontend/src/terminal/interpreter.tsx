@@ -12,7 +12,7 @@
  * visual fidelity behind ?renderer=terminal.
  */
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -41,7 +41,10 @@ import type {
   FileDeliveryMessage,
   InteractiveMessage,
 } from "../types";
-// contentUtils imports removed — tool results are now transient status lines
+import {
+  isBashToolUseResult,
+  isEditToolUseResult,
+} from "../utils/contentUtils";
 import {
   TermBox,
   TermButton,
@@ -413,7 +416,7 @@ export function renderTerminalMessage(
     case "tool":
       return renderTool(message as ToolMessage);
     case "tool_result":
-      return renderToolResult(message as ToolResultMessage);
+      return <ToolResultCard message={message as ToolResultMessage} />;
     case "plan":
       return renderPlan(message as PlanMessage);
     case "thinking":
@@ -508,11 +511,63 @@ function renderTool(_message: ToolMessage): ReactNode {
 // tool_result — the workhorse: bash, edit, read, grep, write, etc.
 // ---------------------------------------------------------------------------
 
-function renderToolResult(_message: ToolResultMessage): ReactNode {
-  // Tool results are transient — during streaming they appear as status line
-  // labels ("Reading source files…", "Executing tests…"), not permanent cards.
-  // In history replay they're also suppressed for a clean conversation view.
-  return null;
+/**
+ * Extract a human-friendly output/errorOutput pair from a tool result.
+ * Prefers structured data from toolUseResult when available:
+ *   - Bash → stdout / stderr
+ *   - Edit → structuredPatch lines joined as an unstyled unified diff
+ *   - otherwise → the raw content string, routed to error lane when is_error
+ *
+ * Phase B's frame protocol will deliver these as first-class fields so this
+ * extraction shim goes away.
+ */
+function extractToolOutput(message: ToolResultMessage): {
+  output?: string;
+  errorOutput?: string;
+} {
+  const tur = message.toolUseResult;
+  if (isBashToolUseResult(tur)) {
+    return {
+      output: tur.stdout || undefined,
+      errorOutput: tur.stderr || undefined,
+    };
+  }
+  if (isEditToolUseResult(tur)) {
+    const patchLines: string[] = [];
+    for (const hunk of tur.structuredPatch) patchLines.push(...hunk.lines);
+    return { output: patchLines.join("\n") || undefined };
+  }
+  const content = message.content ?? "";
+  if (message.isError === true) return { errorOutput: content || undefined };
+  return { output: content || undefined };
+}
+
+/**
+ * Collapsed tool card for scrollback. The transient status line
+ * ("Reading source files…") still shows during streaming; this is the
+ * persistent record that lets the user look back at what actually ran.
+ *
+ * Collapsed by default: tool name + args summary + ok/error glyph. Click
+ * to expand and see the body (stdout, stderr, or edit patch). TodoWrite
+ * and ExitPlanMode have their own renderers and never reach this path.
+ */
+function ToolResultCard({ message }: { message: ToolResultMessage }): ReactNode {
+  const [collapsed, setCollapsed] = useState(true);
+  const { output, errorOutput } = extractToolOutput(message);
+  const isError = message.isError === true;
+  return (
+    <div className="my-1">
+      <TermToolCard
+        tool={message.toolName}
+        args={message.input}
+        status={isError ? "error" : "ok"}
+        output={output}
+        errorOutput={errorOutput}
+        collapsed={collapsed}
+        onToggle={() => setCollapsed((c) => !c)}
+      />
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -559,31 +614,83 @@ function renderTodo(message: TodoMessage): ReactNode {
 // ---------------------------------------------------------------------------
 
 /**
- * Generate a compact unified diff from old/new strings.
- * Shows all removed lines (-) followed by all added lines (+).
- * For large diffs, truncates to first/last N context lines with an ellipsis.
+ * Real line diff via LCS. Emits unified-diff style rows:
+ *   " ctx"  unchanged
+ *   "-old"  removed
+ *   "+new"  added
+ * Long runs of unchanged context are collapsed to N lines around each
+ * change with a "... K unchanged ..." marker, so a small edit in a big
+ * file produces a focused hunk view instead of a screen of context.
  */
-function makeSimpleDiff(oldStr: string, newStr: string): string {
-  const oldLines = oldStr.split("\n");
-  const newLines = newStr.split("\n");
-  const output: string[] = [];
+const DIFF_CONTEXT = 2;
 
-  for (const line of oldLines) {
-    output.push(`-${line}`);
-  }
-  for (const line of newLines) {
-    output.push(`+${line}`);
+function lineDiff(oldStr: string, newStr: string): string {
+  const a = oldStr.split("\n");
+  const b = newStr.split("\n");
+  const m = a.length;
+  const n = b.length;
+
+  // LCS DP table: dp[i][j] = LCS length of a[i..m) vs b[j..n). Built
+  // bottom-up so the walk-forward phase can choose greedily.
+  const dp: number[][] = Array.from({ length: m + 1 }, () =>
+    new Array(n + 1).fill(0),
+  );
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      dp[i][j] =
+        a[i] === b[j]
+          ? dp[i + 1][j + 1] + 1
+          : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
   }
 
-  // If total > 20 lines, show first 5 and last 5 with ellipsis
-  if (output.length > 20) {
-    const head = output.slice(0, 5);
-    const tail = output.slice(-5);
-    const skipped = output.length - 10;
-    return [...head, ` ... ${skipped} more lines ...`, ...tail].join("\n");
+  const rows: string[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < m && j < n) {
+    if (a[i] === b[j]) {
+      rows.push(` ${a[i]}`);
+      i++;
+      j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      rows.push(`-${a[i]}`);
+      i++;
+    } else {
+      rows.push(`+${b[j]}`);
+      j++;
+    }
+  }
+  while (i < m) rows.push(`-${a[i++]}`);
+  while (j < n) rows.push(`+${b[j++]}`);
+
+  // Collapse long unchanged runs. Two-pass: build a "keep" bitmap marking
+  // every change line plus `DIFF_CONTEXT` neighbours, then emit, inserting
+  // "... K unchanged ..." wherever we skip a dropped run.
+  const keep = new Array<boolean>(rows.length).fill(false);
+  for (let k = 0; k < rows.length; k++) {
+    if (rows[k][0] !== " ") {
+      const lo = Math.max(0, k - DIFF_CONTEXT);
+      const hi = Math.min(rows.length - 1, k + DIFF_CONTEXT);
+      for (let x = lo; x <= hi; x++) keep[x] = true;
+    }
   }
 
-  return output.join("\n");
+  const out: string[] = [];
+  let skipped = 0;
+  for (let k = 0; k < rows.length; k++) {
+    if (keep[k]) {
+      if (skipped > 0) {
+        out.push(`   ... ${skipped} unchanged ...`);
+        skipped = 0;
+      }
+      out.push(rows[k]);
+    } else {
+      skipped++;
+    }
+  }
+  if (skipped > 0) out.push(`   ... ${skipped} unchanged ...`);
+
+  return out.join("\n");
 }
 
 function renderFileDelivery(
@@ -608,7 +715,7 @@ function renderFileDelivery(
       {hasDiff && (
         <div className="mt-1 ml-3">
           <TermDiff
-            diff={makeSimpleDiff(message.oldString!, message.newString!)}
+            diff={lineDiff(message.oldString!, message.newString!)}
             filename={message.filename}
           />
         </div>

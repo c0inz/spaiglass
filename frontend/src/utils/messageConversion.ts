@@ -91,6 +91,8 @@ export function createToolResultMessage(
   content: string,
   timestamp?: number,
   toolUseResult?: unknown,
+  input?: Record<string, unknown>,
+  isError?: boolean,
 ): ToolResultMessage {
   const summary = generateSummary(content);
 
@@ -101,6 +103,8 @@ export function createToolResultMessage(
     summary,
     timestamp: timestamp ?? Date.now(),
     toolUseResult,
+    input,
+    isError,
   };
 }
 

@@ -217,20 +217,25 @@ export class UnifiedMessageProcessor {
       return;
     }
 
-    // Streaming mode: emit a transient status instead of permanent tool result
+    const cachedInput = cachedToolInfo?.input || {};
+
+    // Streaming mode: emit the transient status line for live feedback
+    // ("Reading source files…") AND add a persistent tool_result message to
+    // scrollback so the user can see what ran and expand the output later.
     if (options.isStreaming && context.onStatusUpdate) {
-      const cachedInput = cachedToolInfo?.input || {};
       const status = classifyToolResult(toolName, cachedInput, contentItem.is_error);
       context.onStatusUpdate(status);
-      return;
     }
 
-    // Batch/history mode: create a ToolResultMessage for the messages array
+    // Create the persistent ToolResultMessage for scrollback. Used by both
+    // streaming (alongside the status line above) and batch/history modes.
     const toolResultMessage = createToolResultMessage(
       toolName,
       content,
       options.timestamp,
       toolUseResult,
+      cachedInput,
+      contentItem.is_error === true,
     );
     context.addMessage(toolResultMessage);
   }
