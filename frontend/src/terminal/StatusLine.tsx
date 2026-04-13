@@ -59,7 +59,7 @@ export const StatusLine = memo(function StatusLine({ status }: StatusLineProps) 
     if (!status) return;
     const id = setInterval(
       () => setFrame((f) => (f + 1) % SPINNER_FRAMES.length),
-      80,
+      200,
     );
     return () => clearInterval(id);
   }, [status]);

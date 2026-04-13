@@ -170,7 +170,7 @@ export function TermSpinner({ label, color = "cyan" }: TermSpinnerProps) {
   useEffect(() => {
     const id = setInterval(
       () => setFrame((f) => (f + 1) % SPINNER_FRAMES.length),
-      80,
+      200,
     );
     return () => clearInterval(id);
   }, []);

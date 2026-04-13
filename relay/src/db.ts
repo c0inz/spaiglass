@@ -230,6 +230,10 @@ export function getConnectorByToken(token: string): Connector | undefined {
   return getDb().prepare("SELECT * FROM connectors WHERE token = ?").get(token) as Connector | undefined;
 }
 
+export function getConnectorByName(name: string): Connector | undefined {
+  return getDb().prepare("SELECT * FROM connectors WHERE LOWER(name) = LOWER(?)").get(name) as Connector | undefined;
+}
+
 export function getConnectorBySlug(githubLogin: string, vmName: string): Connector | undefined {
   return getDb().prepare(`
     SELECT c.* FROM connectors c

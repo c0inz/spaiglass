@@ -19,6 +19,7 @@ import {
   cleanExpiredSessions,
   getUserBySessionToken,
   getConnectorById,
+  getConnectorByName,
   getConnectorBySlug,
   getConnectorsByUser,
   getSharedConnectorsForUser,
@@ -2213,7 +2214,7 @@ app.get(
   })),
 );
 
-// Resolve VM slug (githubLogin.vmName) or raw connector ID to a connector
+// Resolve VM slug (githubLogin.vmName), connector name, or raw connector ID to a connector
 function resolveVmSlug(slug: string): ReturnType<typeof getConnectorById> {
   // Try slug format: githubLogin.vmName
   const dotIndex = slug.indexOf(".");
@@ -2222,6 +2223,9 @@ function resolveVmSlug(slug: string): ReturnType<typeof getConnectorById> {
     const name = slug.slice(dotIndex + 1);
     return getConnectorBySlug(login, name);
   }
+  // Try by connector name (case-insensitive)
+  const byName = getConnectorByName(slug);
+  if (byName) return byName;
   // Fallback: raw connector ID (for backwards compat)
   return getConnectorById(slug);
 }
