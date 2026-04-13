@@ -1,15 +1,24 @@
 /**
  * useWebSocketSession — Persistent WebSocket connection to SpAIglass backend.
  *
- * Replaces the fetch-per-message model with a single persistent connection.
- * Messages are sent via ws.send(), responses arrive via ws.onmessage.
- * The UnifiedMessageProcessor handles rendering — same pipeline as before.
+ * Phase B: consumes the terminal frame protocol (shared/frames.ts) directly.
+ * Non-frame protocol messages (connected, session_ack, resume_*) are still
+ * handled as before; typed frames are dispatched through an inline adapter
+ * that converts each frame into the legacy AllMessage shape so the existing
+ * terminal renderer keeps working. Step 8 will replace the adapter with a
+ * frame-native interpreter; Step 9 will delete AllMessage altogether.
  */
 
 import { useRef, useCallback, useState, useEffect } from "react";
-import type { AllMessage, ChatMessage, SDKMessage } from "../types";
-import type { DisplayStatus } from "../utils/statusClassifier";
-import { UnifiedMessageProcessor } from "../utils/UnifiedMessageProcessor";
+import type { AllMessage, ChatMessage } from "../types";
+import type { Frame } from "../../../shared/frames";
+import {
+  classifyToolUse,
+  classifyToolResult,
+  classifyThinking,
+  type DisplayStatus,
+} from "../utils/statusClassifier";
+import { createToolResultMessage } from "../utils/messageConversion";
 
 interface WSSessionOptions {
   /** Base URL for the WebSocket connection (default: auto from window.location) */
@@ -34,10 +43,22 @@ interface WSSessionState {
   login: string | null;
 }
 
+/**
+ * Per-hook cache mapping toolCallId -> {tool, input} captured from
+ * tool_call_start. Used by tool_call_end to rebuild the legacy
+ * ToolResultMessage (the backend no longer echoes tool name in the end
+ * frame). This mirrors the old UnifiedMessageProcessor.toolUseCache but
+ * lives on the frontend only to service the adapter path.
+ */
+interface ToolCallCacheEntry {
+  tool: string;
+  input: Record<string, unknown>;
+}
+
 export function useWebSocketSession(options: WSSessionOptions = {}) {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const processorRef = useRef(new UnifiedMessageProcessor());
+  const toolCallCacheRef = useRef<Map<string, ToolCallCacheEntry>>(new Map());
   // --- Phase 1: replay-on-reconnect state ---
   // Highest cursor we've seen on any incoming frame. Sent back as `lastCursor`
   // when we reconnect, so the backend knows what to replay.
@@ -133,15 +154,30 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
 
   /**
    * Process a message from the server.
+   *
+   * Two classes of inbound traffic:
+   *
+   *   1. Non-frame protocol messages (connected/viewer_blocked/session_ack/
+   *      resume_*) — these are the relay + session manager handshake; they
+   *      carry no `seq` and fall into the switch below.
+   *   2. Typed terminal frames — every frame carries `seq`, we track the
+   *      highest one we've seen for resume, and dispatch via handleFrame
+   *      which translates it into legacy AllMessage callbacks.
+   *
+   * Anything with a numeric `seq` is treated as a frame; anything else is
+   * a protocol message. This keeps the two streams cleanly separated.
    */
   const handleServerMessage = useCallback((msg: Record<string, unknown>) => {
     const cbs = callbacksRef.current;
     if (!cbs) return;
 
-    // Phase 1: track the highest cursor we've seen on any frame.
-    // The backend stamps `cursor` on every broadcast frame.
-    if (typeof msg.cursor === "number" && msg.cursor > lastCursorRef.current) {
-      lastCursorRef.current = msg.cursor;
+    // Frame path: everything with a `seq` field is a terminal frame.
+    if (typeof msg.seq === "number") {
+      if (msg.seq > lastCursorRef.current) {
+        lastCursorRef.current = msg.seq;
+      }
+      handleFrame(msg as unknown as Frame, cbs);
+      return;
     }
 
     switch (msg.type) {
@@ -234,95 +270,10 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
         });
         break;
 
-      case "session_info": {
-        const commands = (msg.slashCommands as string[]) || [];
-        setState((s) => ({
-          ...s,
-          sessionId: (msg.sessionId as string) || s.sessionId,
-          slashCommands: commands,
-        }));
-        cbs.onSlashCommands?.(commands);
-        break;
-      }
-
-      case "sdk_message": {
-        const sdkMessage = msg.data as SDKMessage;
-        const processingContext = {
-          addMessage: cbs.addMessage,
-          updateLastMessage: cbs.updateLastMessage,
-          currentAssistantMessage: cbs.currentAssistantMessage,
-          setCurrentAssistantMessage: cbs.setCurrentAssistantMessage,
-          onSessionId: cbs.onSessionId,
-          onStatusUpdate: cbs.onStatusUpdate,
-          shouldShowInitMessage: () => true,
-          onInitMessageShown: () => {},
-          hasReceivedInit: false,
-          setHasReceivedInit: () => {},
-        };
-        processorRef.current.processMessage(sdkMessage, processingContext, {
-          isStreaming: true,
-        });
-        // Signal turn completion when we receive a result message
-        if (sdkMessage.type === "result") {
-          cbs.onTurnComplete?.();
-        }
-        break;
-      }
-
-      case "file_delivery": {
-        const data = msg.data as {
-          path: string;
-          filename: string;
-          action: string;
-          oldString?: string;
-          newString?: string;
-        };
-        cbs.addMessage({
-          type: "file_delivery",
-          path: data.path,
-          filename: data.filename,
-          action: data.action as "write" | "edit",
-          timestamp: Date.now(),
-          oldString: data.oldString,
-          newString: data.newString,
-        });
-        cbs.onFileDelivery?.(data.path, data.filename);
-        break;
-      }
-
-      // Phase 6.4 — interactive widget frames from the backend MCP tools.
-      // The backend's `interactive-tools.ts` broadcasts one of these three
-      // shapes when Claude calls the matching MCP tool. The frontend renders
-      // the widget via the terminal interpreter; the user's reply is sent
-      // back via `sendToolResult` as a `tool_result` frame keyed by
-      // `original_request_id`.
-      case "prompt_secret":
-      case "tool_permission":
-      case "request_choice": {
-        const requestId =
-          (msg.request_id as string | undefined) ??
-          (msg.requestId as string | undefined);
-        if (!requestId) break;
-        cbs.addMessage({
-          type: "interactive",
-          kind: msg.type as
-            | "prompt_secret"
-            | "tool_permission"
-            | "request_choice",
-          requestId,
-          prompt: msg.prompt as string | undefined,
-          secret: msg.secret as boolean | undefined,
-          placeholder: (msg.placeholder as string | null | undefined) ?? null,
-          action: msg.action as string | undefined,
-          details: (msg.details as string | null | undefined) ?? null,
-          choices: (msg.choices as string[] | undefined) ?? undefined,
-          answered: false,
-          timestamp: Date.now(),
-        });
-        break;
-      }
-
       case "error":
+        // Protocol-level error from the WS handler (invalid JSON, missing
+        // roleFile, etc.). Session-internal errors come through as ErrorFrame
+        // via the frame path above. Both land on the same scrollback row.
         cbs.addMessage({
           type: "error",
           subtype: "stream_error",
@@ -330,23 +281,236 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
           timestamp: Date.now(),
         });
         break;
-
-      case "session_ended":
-        cbs.addMessage({
-          type: "system",
-          subtype: "abort",
-          message: `Session ended: ${msg.reason || "unknown"}`,
-          timestamp: Date.now(),
-        });
-        // The backend session is gone — drop attached/sessionId so ChatPage's
-        // auto-start effect (gated on !ws.attached) can spawn a fresh one.
-        // Also zero the cursor since the old session's buffer no longer exists.
-        lastCursorRef.current = 0;
-        lastSessionParamsRef.current = null;
-        setState((s) => ({ ...s, attached: false, sessionId: null }));
-        break;
     }
   }, []);
+
+  /**
+   * Dispatch a typed terminal frame into the legacy AllMessage callbacks.
+   *
+   * This is the Phase B adapter: it bridges frame events onto the existing
+   * ChatPage renderer without rewriting every component. Step 8 replaces
+   * this with a frame-native row interpreter.
+   */
+  const handleFrame = useCallback(
+    (frame: Frame, cbs: NonNullable<typeof callbacksRef.current>) => {
+      switch (frame.type) {
+        case "session_init": {
+          setState((s) => ({
+            ...s,
+            sessionId: frame.sessionId || s.sessionId,
+            slashCommands: frame.slashCommands,
+          }));
+          if (frame.sessionId) cbs.onSessionId?.(frame.sessionId);
+          cbs.onSlashCommands?.(frame.slashCommands);
+          break;
+        }
+
+        case "session_meta": {
+          // Maps to the SDK `result` message — signals end of a turn. The
+          // legacy pipeline called onTurnComplete here (re-enables input,
+          // refreshes stats) and cleared currentAssistantMessage so the
+          // next turn opens a fresh bubble.
+          cbs.onTurnComplete?.();
+          cbs.setCurrentAssistantMessage(null);
+          break;
+        }
+
+        case "session_end": {
+          const suffix = frame.message ? ` — ${frame.message}` : "";
+          cbs.addMessage({
+            type: "system",
+            subtype: "abort",
+            message: `Session ended: ${frame.reason}${suffix}`,
+            timestamp: frame.ts,
+          });
+          lastCursorRef.current = 0;
+          lastSessionParamsRef.current = null;
+          setState((s) => ({ ...s, attached: false, sessionId: null }));
+          break;
+        }
+
+        case "user_message":
+          // The UI adds user messages locally when the user presses enter;
+          // the echoed frame would be a duplicate. Swallow it.
+          break;
+
+        case "assistant_message": {
+          // Assistant frames arrive fully-formed (no deltas in v1). Walk
+          // the content blocks, streaming text into the currentAssistant
+          // bubble and routing thinking blocks through the status line.
+          // tool_use blocks are already covered by tool_call_start frames
+          // and are not rendered from here.
+          let assistantText = "";
+          for (const block of frame.content) {
+            if (block.type === "text") {
+              assistantText += block.text;
+            } else if (block.type === "thinking") {
+              if (cbs.onStatusUpdate) {
+                cbs.onStatusUpdate(
+                  classifyThinking(block.text.slice(0, 300)),
+                );
+              } else {
+                cbs.addMessage({
+                  type: "thinking",
+                  content: block.text,
+                  timestamp: frame.ts,
+                });
+              }
+            }
+          }
+          if (assistantText) {
+            const existing = cbs.currentAssistantMessage;
+            if (!existing) {
+              const msg: ChatMessage = {
+                type: "chat",
+                role: "assistant",
+                content: assistantText,
+                timestamp: frame.ts,
+              };
+              cbs.setCurrentAssistantMessage(msg);
+              cbs.addMessage(msg);
+            } else {
+              const newContent = (existing.content || "") + assistantText;
+              cbs.setCurrentAssistantMessage({
+                ...existing,
+                content: newContent,
+              });
+              cbs.updateLastMessage(newContent);
+            }
+          }
+          break;
+        }
+
+        case "assistant_message_delta":
+          // Not yet emitted by the backend — Step 8 will wire block-level
+          // streaming updates. Safe to ignore today.
+          break;
+
+        case "tool_call_start": {
+          // Cache for correlating the matching tool_call_end. Plan/Todo
+          // tools are rendered via their specialized frames; skip the
+          // status-line + cache side-effects for them so we don't show a
+          // redundant spinner + tool result pair.
+          const toolCallId = frame.toolCallId;
+          const tool = frame.tool;
+          const input: Record<string, unknown> =
+            frame.input &&
+            typeof frame.input === "object" &&
+            !Array.isArray(frame.input)
+              ? (frame.input as Record<string, unknown>)
+              : {};
+          toolCallCacheRef.current.set(toolCallId, { tool, input });
+
+          if (tool === "ExitPlanMode" || tool === "TodoWrite") break;
+
+          if (cbs.onStatusUpdate) {
+            cbs.onStatusUpdate(classifyToolUse(tool, input));
+          }
+          break;
+        }
+
+        case "tool_call_update":
+          // Reserved for stdout/stderr streaming on long-running tools.
+          // Not currently emitted — Step 8 will wire incremental output
+          // into the tool card.
+          break;
+
+        case "tool_call_end": {
+          const cached = toolCallCacheRef.current.get(frame.toolCallId);
+          toolCallCacheRef.current.delete(frame.toolCallId);
+          if (!cached) break;
+          // TodoWrite has no scrollback result — the specialized todo
+          // frame already rendered its UI.
+          if (cached.tool === "TodoWrite") break;
+
+          const output = frame.output ?? frame.errorOutput ?? "";
+          const isError = frame.status === "error";
+
+          if (cbs.onStatusUpdate) {
+            cbs.onStatusUpdate(
+              classifyToolResult(cached.tool, cached.input, isError),
+            );
+          }
+
+          cbs.addMessage(
+            createToolResultMessage(
+              cached.tool,
+              output,
+              frame.ts,
+              frame.structured,
+              cached.input,
+              isError,
+            ),
+          );
+          break;
+        }
+
+        case "interactive_prompt":
+          cbs.addMessage({
+            type: "interactive",
+            kind: frame.kind,
+            requestId: frame.requestId,
+            prompt: frame.prompt,
+            secret: frame.secret,
+            placeholder: frame.placeholder ?? null,
+            action: frame.action,
+            details: frame.details ?? null,
+            choices: frame.choices,
+            answered: false,
+            timestamp: frame.ts,
+          });
+          break;
+
+        case "interactive_resolved":
+          // TermInteractive flips `answered` locally on submit, so the
+          // common case already self-heals. Step 8 will wire this frame
+          // through addMessage so replay after reconnect shows the
+          // resolved state for widgets that were answered on a different
+          // tab. Safe to ignore today.
+          break;
+
+        case "file_delivery":
+          cbs.addMessage({
+            type: "file_delivery",
+            path: frame.path,
+            filename: frame.filename,
+            action: frame.action,
+            timestamp: frame.ts,
+            oldString: frame.oldString,
+            newString: frame.newString,
+          });
+          cbs.onFileDelivery?.(frame.path, frame.filename);
+          break;
+
+        case "plan":
+          cbs.addMessage({
+            type: "plan",
+            plan: frame.plan,
+            toolUseId: frame.toolCallId,
+            timestamp: frame.ts,
+          });
+          break;
+
+        case "todo":
+          cbs.addMessage({
+            type: "todo",
+            todos: frame.todos,
+            timestamp: frame.ts,
+          });
+          break;
+
+        case "error":
+          cbs.addMessage({
+            type: "error",
+            subtype: "stream_error",
+            message: frame.message,
+            timestamp: frame.ts,
+          });
+          break;
+      }
+    },
+    [],
+  );
 
   /**
    * Start or join a session for a role.

@@ -32,6 +32,8 @@ import {
   framesAfter,
   type BufferState,
 } from "./buffer.ts";
+import { FrameEmitter, type EmitContext } from "./frame-emitter.ts";
+import type { Frame, InteractivePromptFrame } from "../../shared/frames.ts";
 import { logger } from "../utils/logger.ts";
 import { getClaudeSpawnEnv } from "../utils/anthropic-key.ts";
 import { parseAgentFile } from "../utils/agent-config.ts";
@@ -104,6 +106,8 @@ interface Session {
   nextCursor: number; // monotonic, never reused, never resets
   // --- Phase 6.4: pending interactive tool calls ---
   pendingToolRequests: Map<string, PendingToolEntry>;
+  // --- Phase B: terminal frame protocol emitter ---
+  emitter: FrameEmitter;
 }
 
 export class SessionManager {
@@ -207,6 +211,7 @@ export class SessionManager {
       buffer: { frames: [], bufferedBytes: 0 },
       nextCursor: 1, // 1-based; clients use lastCursor=0 to mean "send everything"
       pendingToolRequests: new Map(),
+      emitter: new FrameEmitter(),
     };
 
     this.sessions.set(key, session);
@@ -318,13 +323,17 @@ export class SessionManager {
         }
       }
 
-      // Consume SDK messages and broadcast
+      // Consume SDK messages, translate to terminal frames via FrameEmitter,
+      // and broadcast.
       for await (const sdkMessage of q) {
         if (!session.running) break;
 
         session.lastActivity = Date.now();
 
-        // Capture session ID from init
+        // Capture session ID from init and emit a SessionInitFrame. We
+        // build this directly via emitSessionInitFromManager rather than
+        // emitFromSdkMessage so we can fill in fields the SDK message
+        // does not carry (roleFile, workingDirectory).
         if (
           sdkMessage.type === "system" &&
           "subtype" in sdkMessage &&
@@ -335,23 +344,53 @@ export class SessionManager {
             session.slashCommands =
               (sdkMessage as { slash_commands: string[] }).slash_commands || [];
           }
-
-          // Send session info to all consumers
-          this.broadcast(session, {
-            type: "session_info",
-            sessionId: session.id,
-            claudeSessionId: session.sessionId,
-            slashCommands: session.slashCommands,
-          });
+          const initCtx = this.emitContext(session);
+          const initFrame = session.emitter.emitSessionInitFromManager(
+            {
+              sessionId: session.sessionId ?? session.id,
+              model:
+                "model" in sdkMessage && typeof sdkMessage.model === "string"
+                  ? sdkMessage.model
+                  : "",
+              permissionMode:
+                "permission_mode" in sdkMessage &&
+                typeof sdkMessage.permission_mode === "string"
+                  ? (sdkMessage.permission_mode as
+                      | "default"
+                      | "acceptEdits"
+                      | "bypassPermissions"
+                      | "plan")
+                  : "default",
+              roleFile: session.roleFile,
+              workingDirectory: session.workingDirectory,
+              slashCommands: session.slashCommands,
+            },
+            initCtx,
+          );
+          this.broadcastFrame(session, initFrame);
+          // Don't fall through to emitFromSdkMessage for init — we
+          // already produced the init frame above, and emitFromSdkMessage
+          // would produce a duplicate.
+          continue;
         }
 
-        // Broadcast SDK message
-        this.broadcast(session, {
-          type: "sdk_message",
-          data: sdkMessage,
-        });
+        // All other SDK messages go through emitFromSdkMessage.
+        const ctx = this.emitContext(session);
+        const frames = session.emitter.emitFromSdkMessage(
+          sdkMessage as unknown as Parameters<
+            FrameEmitter["emitFromSdkMessage"]
+          >[0],
+          ctx,
+        );
+        for (const frame of frames) {
+          this.broadcastFrame(session, frame);
+        }
 
-        // File delivery detection
+        // File delivery detection — a side-channel frame used by the
+        // file panel and the relay's delivery queue. This is in addition
+        // to the frame stream above (the tool_call_start inside the
+        // assistant message carries the same data, but the file panel
+        // listens for this dedicated frame type).
         if (sdkMessage.type === "assistant" && sdkMessage.message?.content) {
           const content = sdkMessage.message.content;
           if (Array.isArray(content)) {
@@ -363,24 +402,27 @@ export class SessionManager {
                 const input = item.input as Record<string, unknown>;
                 const filePath = (input.file_path as string) || "";
                 if (filePath) {
-                  const deliveryData: Record<string, unknown> = {
-                    path: filePath,
-                    filename: basename(filePath),
-                    action: item.name === "Write" ? "write" : "edit",
-                  };
-                  // Include diff data for Edit operations
-                  if (item.name === "Edit") {
-                    if (typeof input.old_string === "string") {
-                      deliveryData.oldString = input.old_string;
-                    }
-                    if (typeof input.new_string === "string") {
-                      deliveryData.newString = input.new_string;
-                    }
-                  }
-                  this.broadcast(session, {
-                    type: "file_delivery",
-                    data: deliveryData,
-                  });
+                  const fdCtx = this.emitContext(session);
+                  const fdFrame = session.emitter.emitFileDelivery(
+                    {
+                      path: filePath,
+                      filename: basename(filePath),
+                      action: item.name === "Write" ? "write" : "edit",
+                      oldString:
+                        item.name === "Edit" &&
+                        typeof input.old_string === "string"
+                          ? input.old_string
+                          : undefined,
+                      newString:
+                        item.name === "Edit" &&
+                        typeof input.new_string === "string"
+                          ? input.new_string
+                          : undefined,
+                      toolCallId: (item as { id?: string }).id,
+                    },
+                    fdCtx,
+                  );
+                  this.broadcastFrame(session, fdFrame);
                 }
               }
             }
@@ -394,19 +436,39 @@ export class SessionManager {
         msg,
       });
 
-      this.broadcast(session, {
-        type: "error",
-        message: msg,
-      });
+      const errCtx = this.emitContext(session);
+      const errFrame = session.emitter.emitError(
+        "session_error",
+        msg,
+        undefined,
+        errCtx,
+      );
+      this.broadcastFrame(session, errFrame);
     } finally {
       session.running = false;
-      this.broadcast(session, {
-        type: "session_ended",
-        reason: "cli_exited",
-      });
+      const endCtx = this.emitContext(session);
+      const endFrame = session.emitter.emitSessionEnd(
+        "error",
+        "cli_exited",
+        endCtx,
+      );
+      this.broadcastFrame(session, endFrame);
 
       logger.app.info("Session {sessionId} ended", { sessionId: session.id });
     }
+  }
+
+  /**
+   * Build an EmitContext bound to this session. The context's nextSeq
+   * reads and increments the session cursor; every frame produced gets
+   * stamped with the next cursor value. ts is snapshotted at call time.
+   */
+  private emitContext(session: Session): EmitContext {
+    const ts = Date.now();
+    return {
+      nextSeq: () => session.nextCursor++,
+      ts,
+    };
   }
 
   /**
@@ -668,6 +730,11 @@ export class SessionManager {
     }
     session.pendingToolRequests.clear();
 
+    // Clear the emitter's tool_use_id cache so stale ids cannot leak into
+    // a replacement session. (Not strictly necessary since we discard the
+    // whole Session object, but matches the explicit lifecycle in tests.)
+    session.emitter.reset();
+
     this.sessions.delete(key);
 
     logger.app.info("Session {sessionId} destroyed", { sessionId: session.id });
@@ -689,7 +756,7 @@ export class SessionManager {
    */
   private makeBroker(session: Session): PendingToolBroker {
     return {
-      request: (frame, requestId, timeoutMs) => {
+      request: (rawFrame, requestId, timeoutMs) => {
         return new Promise<ToolReply>((resolve) => {
           // If the session has already gone away by the time the SDK
           // dispatches the call, fail fast instead of installing an entry
@@ -708,14 +775,75 @@ export class SessionManager {
 
           session.pendingToolRequests.set(requestId, { resolve, timer });
 
-          // Broadcast the prompt frame to all consumers via the same
-          // pipeline as SDK frames, so it lands in the replay buffer too.
-          // If a browser reconnects mid-prompt, replay will redeliver the
-          // widget and the user can still answer.
-          this.broadcast(session, frame);
+          // Phase B: translate the MCP tool's raw frame shape into an
+          // InteractivePromptFrame. The MCP handlers emit objects shaped
+          // like { type: "prompt_secret"|"tool_permission"|"request_choice",
+          // request_id, ... }; here we map them onto the unified
+          // InteractivePromptFrame with a `kind` discriminator.
+          const kind = this.normalizeInteractiveKind(rawFrame);
+          if (!kind) {
+            // Unknown interactive shape — fail the request rather than
+            // broadcasting a malformed frame.
+            session.pendingToolRequests.delete(requestId);
+            clearTimeout(timer);
+            resolve({ status: "rejected", reason: "unknown_interactive_kind" });
+            return;
+          }
+          const ctx = this.emitContext(session);
+          const promptFrame = session.emitter.emitInteractivePrompt(
+            {
+              requestId,
+              kind,
+              prompt:
+                typeof rawFrame.prompt === "string"
+                  ? rawFrame.prompt
+                  : undefined,
+              secret:
+                typeof rawFrame.secret === "boolean"
+                  ? rawFrame.secret
+                  : undefined,
+              placeholder:
+                typeof rawFrame.placeholder === "string"
+                  ? rawFrame.placeholder
+                  : null,
+              action:
+                typeof rawFrame.action === "string"
+                  ? rawFrame.action
+                  : undefined,
+              details:
+                typeof rawFrame.details === "string"
+                  ? rawFrame.details
+                  : null,
+              choices: Array.isArray(rawFrame.choices)
+                ? (rawFrame.choices as string[])
+                : undefined,
+            },
+            ctx,
+          );
+          this.broadcastFrame(session, promptFrame);
         });
       },
     };
+  }
+
+  /**
+   * Map the MCP tool's raw frame type to the InteractivePromptFrame kind.
+   * Returns null for unrecognized shapes so the caller can reject the
+   * request rather than sending garbage to the frontend.
+   */
+  private normalizeInteractiveKind(
+    rawFrame: Record<string, unknown>,
+  ): InteractivePromptFrame["kind"] | null {
+    switch (rawFrame.type) {
+      case "prompt_secret":
+        return "prompt_secret";
+      case "tool_permission":
+        return "tool_permission";
+      case "request_choice":
+        return "request_choice";
+      default:
+        return null;
+    }
   }
 
   /**
@@ -759,6 +887,13 @@ export class SessionManager {
       // Malformed status — treat as a rejection so the model gets a
       // sensible result rather than the call hanging.
       entry.resolve({ status: "rejected", reason: "malformed_tool_result" });
+      // Emit a resolution frame so the frontend can mark the widget
+      // answered (matches Phase A's `answered` bit).
+      const ctx = this.emitContext(session);
+      this.broadcastFrame(
+        session,
+        session.emitter.emitInteractiveResolved(requestId, "rejected", ctx),
+      );
       return;
     }
 
@@ -767,6 +902,14 @@ export class SessionManager {
       data: frame.data,
       reason: typeof frame.reason === "string" ? frame.reason : undefined,
     });
+
+    // Emit the resolution frame so every attached consumer updates its
+    // widget state (and replay after reconnect sees the resolved state).
+    const ctx = this.emitContext(session);
+    this.broadcastFrame(
+      session,
+      session.emitter.emitInteractiveResolved(requestId, status, ctx),
+    );
   }
 
   /**
@@ -797,25 +940,20 @@ export class SessionManager {
   }
 
   /**
-   * Broadcast a frame to all live consumers AND record it in the session's
-   * ring buffer for replay on reconnect.
+   * Broadcast a terminal protocol frame to all live consumers AND record
+   * it in the session's ring buffer for replay on reconnect.
    *
-   * The frame object is mutated to include a monotonically increasing `cursor`
-   * field before being serialized. Consumers track the highest cursor seen and
-   * pass it back as `lastCursor` on reconnect to receive missed frames.
-   *
-   * Cap enforcement: drops oldest frames when either RING_BUFFER_MAX_FRAMES
-   * or RING_BUFFER_MAX_BYTES is exceeded. Cursor numbers are never reused —
-   * a stale `lastCursor` that has fallen out of the buffer triggers
-   * `resume_lost` instead of replay.
+   * The frame already has its `seq` stamped by the FrameEmitter's
+   * EmitContext; we use that value as the ring buffer cursor so the
+   * resume/replay protocol is unchanged. The wire format sends the frame
+   * as-is with its `seq` field — clients track the highest seq seen and
+   * pass it back on resume as `lastCursor`.
    */
-  private broadcast(session: Session, frame: Record<string, unknown>): void {
-    const cursor = session.nextCursor++;
-    frame.cursor = cursor;
+  private broadcastFrame(session: Session, frame: Frame): void {
     const data = JSON.stringify(frame);
     const bytes = Buffer.byteLength(data, "utf8");
 
-    pushFrame(session.buffer, { cursor, data, bytes });
+    pushFrame(session.buffer, { cursor: frame.seq, data, bytes });
 
     // Send to live consumers
     for (const consumer of session.consumers.values()) {
