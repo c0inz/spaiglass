@@ -349,7 +349,7 @@ async function handleMessage(
   }
 
   if (!state.workingDirectory) {
-    throw new Error("No active working directory â€” send session_start first");
+    throw new Error("No active working directory — send session_start first");
   }
 
   const content = (msg.content as string) || "";

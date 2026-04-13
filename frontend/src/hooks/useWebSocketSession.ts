@@ -338,6 +338,12 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
           message: `Session ended: ${msg.reason || "unknown"}`,
           timestamp: Date.now(),
         });
+        // The backend session is gone — drop attached/sessionId so ChatPage's
+        // auto-start effect (gated on !ws.attached) can spawn a fresh one.
+        // Also zero the cursor since the old session's buffer no longer exists.
+        lastCursorRef.current = 0;
+        lastSessionParamsRef.current = null;
+        setState((s) => ({ ...s, attached: false, sessionId: null }));
         break;
     }
   }, []);
