@@ -69,8 +69,12 @@ export function createWSHandler(sessionManager: SessionManager) {
             break;
 
           case "interrupt":
-            if (state.roleFile) {
-              await sessionManager.interrupt(state.userId, state.roleFile);
+            if (state.roleFile && state.workingDirectory) {
+              await sessionManager.interrupt(
+                state.userId,
+                state.workingDirectory,
+                state.roleFile,
+              );
             }
             break;
 
@@ -79,9 +83,10 @@ export function createWSHandler(sessionManager: SessionManager) {
             // Routed by SessionManager to the matching pending request via
             // its original_request_id; the SDK tool handler resolves and
             // returns the value to Claude as the tool result.
-            if (state.roleFile) {
+            if (state.roleFile && state.workingDirectory) {
               sessionManager.handleToolResult(
                 state.userId,
+                state.workingDirectory,
                 state.roleFile,
                 msg,
               );
@@ -104,9 +109,10 @@ export function createWSHandler(sessionManager: SessionManager) {
 
     onClose(ws: WSContext) {
       const state = wsStateMap.get(ws);
-      if (state && state.roleFile) {
+      if (state && state.roleFile && state.workingDirectory) {
         sessionManager.removeConsumer(
           state.userId,
+          state.workingDirectory,
           state.roleFile,
           state.consumerId,
         );
@@ -120,9 +126,10 @@ export function createWSHandler(sessionManager: SessionManager) {
     onError(ws: WSContext, error: Event) {
       logger.app.error("WebSocket error: {error}", { error });
       const state = wsStateMap.get(ws);
-      if (state && state.roleFile) {
+      if (state && state.roleFile && state.workingDirectory) {
         sessionManager.removeConsumer(
           state.userId,
+          state.workingDirectory,
           state.roleFile,
           state.consumerId,
         );
@@ -178,8 +185,8 @@ async function handleSessionStart(
 
   const info = await sessionManager.getOrCreateSession(
     state.userId,
-    roleFile,
     workingDirectory,
+    roleFile,
     consumer,
     contextContent,
   );
@@ -235,8 +242,8 @@ async function handleSessionRestart(
 
   const info = await sessionManager.restartSession(
     state.userId,
-    roleFile,
     workingDirectory,
+    roleFile,
     consumer,
   );
 
@@ -306,6 +313,7 @@ async function handleResume(
 
   const result = sessionManager.resumeFromCursor(
     state.userId,
+    workingDirectory,
     roleFile,
     consumer,
     lastCursor,
@@ -340,11 +348,16 @@ async function handleMessage(
     throw new Error("No active session — send session_start first");
   }
 
+  if (!state.workingDirectory) {
+    throw new Error("No active working directory â€” send session_start first");
+  }
+
   const content = (msg.content as string) || "";
   const attachments = (msg.attachments as string[]) || undefined;
 
   await sessionManager.sendMessage(
     state.userId,
+    state.workingDirectory,
     state.roleFile,
     content,
     attachments,

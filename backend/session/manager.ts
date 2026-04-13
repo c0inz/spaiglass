@@ -1,7 +1,7 @@
 /**
  * SessionManager — Manages persistent Claude CLI sessions.
  *
- * Each session is keyed by (userId, roleFile) and holds:
+ * Each session is keyed by (userId, workingDirectory, roleFile) and holds:
  * - A warm SDK session (via startup()) with an AsyncQueue feeding messages
  * - A set of WebSocket consumers (multiple devices, Telegram model)
  * - Session metadata
@@ -77,6 +77,7 @@ export interface SessionConsumer {
 export interface SessionInfo {
   id: string;
   userId: string;
+  workingDirectory: string;
   roleFile: string;
   slashCommands: string[];
   createdAt: number;
@@ -87,6 +88,7 @@ export interface SessionInfo {
 interface Session {
   id: string;
   userId: string;
+  workingDirectory: string;
   roleFile: string;
   sessionId: string | null; // Claude session ID (set after init)
   query: Query | null;
@@ -115,30 +117,40 @@ export class SessionManager {
     this.maxSessions = maxSessions;
   }
 
-  private sessionKey(userId: string, roleFile: string): string {
-    return `${userId}:${roleFile}`;
+  private sessionKey(
+    userId: string,
+    workingDirectory: string,
+    roleFile: string,
+  ): string {
+    return `${userId}:${workingDirectory}:${roleFile}`;
   }
 
   /**
-   * Get or create a session for a (userId, roleFile) pair.
+   * Get or create a session for a (userId, workingDirectory, roleFile) tuple.
    * If a session exists and is alive, returns it (Telegram model).
    * Attaches the consumer to receive messages.
    */
   async getOrCreateSession(
     userId: string,
-    roleFile: string,
     workingDirectory: string,
+    roleFile: string,
     consumer: SessionConsumer,
     contextContent?: string,
   ): Promise<SessionInfo> {
-    const key = this.sessionKey(userId, roleFile);
+    const key = this.sessionKey(userId, workingDirectory, roleFile);
 
     // Mutex: if another call is already creating this session, wait for it
     const pending = this.sessionLocks.get(key);
     if (pending) {
       await pending;
       // After the lock resolves, the session exists — re-enter to attach consumer
-      return this.getOrCreateSession(userId, roleFile, workingDirectory, consumer, contextContent);
+      return this.getOrCreateSession(
+        userId,
+        workingDirectory,
+        roleFile,
+        consumer,
+        contextContent,
+      );
     }
 
     let session = this.sessions.get(key);
@@ -181,6 +193,7 @@ export class SessionManager {
     session = {
       id: randomUUID(),
       userId,
+      workingDirectory,
       roleFile,
       sessionId: null,
       query: null,
@@ -207,11 +220,15 @@ export class SessionManager {
     this.sessionLocks.delete(key);
     releaseLock(info);
 
-    logger.app.info("New session {sessionId} for {userId}/{roleFile}", {
+    logger.app.info(
+      "New session {sessionId} for {userId}/{workingDirectory}/{roleFile}",
+      {
       sessionId: session.id,
       userId,
+      workingDirectory,
       roleFile,
-    });
+      },
+    );
 
     return info;
   }
@@ -397,11 +414,12 @@ export class SessionManager {
    */
   async sendMessage(
     userId: string,
+    workingDirectory: string,
     roleFile: string,
     content: string,
     attachments?: string[],
   ): Promise<void> {
-    const key = this.sessionKey(userId, roleFile);
+    const key = this.sessionKey(userId, workingDirectory, roleFile);
     const session = this.sessions.get(key);
     if (!session || !session.running) {
       throw new Error("No active session");
@@ -481,8 +499,12 @@ export class SessionManager {
   /**
    * Interrupt the current response.
    */
-  async interrupt(userId: string, roleFile: string): Promise<void> {
-    const key = this.sessionKey(userId, roleFile);
+  async interrupt(
+    userId: string,
+    workingDirectory: string,
+    roleFile: string,
+  ): Promise<void> {
+    const key = this.sessionKey(userId, workingDirectory, roleFile);
     const session = this.sessions.get(key);
     if (!session?.query || !session.running) return;
 
@@ -511,11 +533,12 @@ export class SessionManager {
    */
   resumeFromCursor(
     userId: string,
+    workingDirectory: string,
     roleFile: string,
     consumer: SessionConsumer,
     lastCursor: number,
   ): { resumed: true; replayedFrames: number } | { resumed: false } {
-    const key = this.sessionKey(userId, roleFile);
+    const key = this.sessionKey(userId, workingDirectory, roleFile);
     const session = this.sessions.get(key);
 
     if (!session) {
@@ -573,8 +596,13 @@ export class SessionManager {
   /**
    * Remove a consumer from a session.
    */
-  removeConsumer(userId: string, roleFile: string, consumerId: string): void {
-    const key = this.sessionKey(userId, roleFile);
+  removeConsumer(
+    userId: string,
+    workingDirectory: string,
+    roleFile: string,
+    consumerId: string,
+  ): void {
+    const key = this.sessionKey(userId, workingDirectory, roleFile);
     const session = this.sessions.get(key);
     if (!session) return;
 
@@ -597,17 +625,17 @@ export class SessionManager {
    */
   async restartSession(
     userId: string,
-    roleFile: string,
     workingDirectory: string,
+    roleFile: string,
     consumer: SessionConsumer,
     contextContent?: string,
   ): Promise<SessionInfo> {
-    const key = this.sessionKey(userId, roleFile);
+    const key = this.sessionKey(userId, workingDirectory, roleFile);
     this.destroySession(key);
     return this.getOrCreateSession(
       userId,
-      roleFile,
       workingDirectory,
+      roleFile,
       consumer,
       contextContent,
     );
@@ -705,10 +733,11 @@ export class SessionManager {
    */
   handleToolResult(
     userId: string,
+    workingDirectory: string,
     roleFile: string,
     frame: Record<string, unknown>,
   ): void {
-    const key = this.sessionKey(userId, roleFile);
+    const key = this.sessionKey(userId, workingDirectory, roleFile);
     const session = this.sessions.get(key);
     if (!session) return;
 
@@ -802,6 +831,7 @@ export class SessionManager {
     return {
       id: session.id,
       userId: session.userId,
+      workingDirectory: session.workingDirectory,
       roleFile: session.roleFile,
       slashCommands: session.slashCommands,
       createdAt: session.createdAt,
