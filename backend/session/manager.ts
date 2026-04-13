@@ -346,13 +346,23 @@ export class SessionManager {
                 const input = item.input as Record<string, unknown>;
                 const filePath = (input.file_path as string) || "";
                 if (filePath) {
+                  const deliveryData: Record<string, unknown> = {
+                    path: filePath,
+                    filename: basename(filePath),
+                    action: item.name === "Write" ? "write" : "edit",
+                  };
+                  // Include diff data for Edit operations
+                  if (item.name === "Edit") {
+                    if (typeof input.old_string === "string") {
+                      deliveryData.oldString = input.old_string;
+                    }
+                    if (typeof input.new_string === "string") {
+                      deliveryData.newString = input.new_string;
+                    }
+                  }
                   this.broadcast(session, {
                     type: "file_delivery",
-                    data: {
-                      path: filePath,
-                      filename: basename(filePath),
-                      action: item.name === "Write" ? "write" : "edit",
-                    },
+                    data: deliveryData,
                   });
                 }
               }

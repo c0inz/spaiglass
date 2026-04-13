@@ -8,6 +8,10 @@ export interface FileDelivery {
   path: string;
   filename: string;
   action: "write" | "edit";
+  /** For Edit actions: the old text being replaced */
+  oldString?: string;
+  /** For Edit actions: the new text replacing old */
+  newString?: string;
 }
 
 export interface ChatRequest {

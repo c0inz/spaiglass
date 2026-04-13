@@ -93,6 +93,15 @@ export function initDb(path = "./relay.db"): Database.Database {
       updated_at TEXT DEFAULT (datetime('now')),
       PRIMARY KEY (connector_id, proj_base, role_file)
     );
+
+    -- User preferences (key-value per user). Used for last_agent_url, etc.
+    CREATE TABLE IF NOT EXISTS user_preferences (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      key TEXT NOT NULL,
+      value TEXT NOT NULL,
+      updated_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (user_id, key)
+    );
   `);
 
   // Migrations — add columns that didn't exist in earlier schema versions.
@@ -488,4 +497,28 @@ export function setRoleLabel(
       )
       .run(connectorId, projBase, roleFile, trimmed);
   }
+}
+
+// --- User preferences ---
+
+export function getUserPreference(userId: string, key: string): string | null {
+  const row = getDb()
+    .prepare("SELECT value FROM user_preferences WHERE user_id = ? AND key = ?")
+    .get(userId, key) as { value: string } | undefined;
+  return row?.value ?? null;
+}
+
+export function setUserPreference(
+  userId: string,
+  key: string,
+  value: string,
+): void {
+  getDb()
+    .prepare(
+      `INSERT INTO user_preferences (user_id, key, value, updated_at)
+       VALUES (?, ?, ?, datetime('now'))
+       ON CONFLICT (user_id, key)
+       DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+    )
+    .run(userId, key, value);
 }

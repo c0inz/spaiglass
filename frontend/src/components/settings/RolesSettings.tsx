@@ -16,9 +16,10 @@ interface RoleInfo {
 
 interface RolesSettingsProps {
   projectPath?: string;
+  onRoleCreated?: () => void;
 }
 
-export function RolesSettings({ projectPath }: RolesSettingsProps) {
+export function RolesSettings({ projectPath, onRoleCreated }: RolesSettingsProps) {
   const [roles, setRoles] = useState<RoleInfo[]>([]);
   const [globalPlugins, setGlobalPlugins] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
@@ -132,6 +133,7 @@ export function RolesSettings({ projectPath }: RolesSettingsProps) {
       setNewDescription("");
       setNewPlugins({});
       setShowNewRole(false);
+      onRoleCreated?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create role");
     } finally {

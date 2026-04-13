@@ -4,7 +4,14 @@
 
 import { Hono } from "hono";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
-import { createSession, deleteSession, upsertUser } from "./db.ts";
+import {
+  createSession,
+  deleteSession,
+  upsertUser,
+  getUserPreference,
+  getConnectorsByUser,
+  getConnectorAccess,
+} from "./db.ts";
 import type { RelayEnv } from "./types.ts";
 
 const SESSION_COOKIE = "sg_session";
@@ -101,12 +108,28 @@ export function authRoutes(): Hono<RelayEnv> {
       path: "/",
     });
 
-    // Redirect to saved post-login URL or fleet relay
+    // Redirect to saved post-login URL, or last-used agent, or first available agent
     const postLoginRedirect = getCookie(c, "oauth_redirect");
     deleteCookie(c, "oauth_redirect");
-    // Only allow relative paths to prevent open redirect
-    const target = postLoginRedirect?.startsWith("/") ? postLoginRedirect : "/fleetrelay";
-    return c.redirect(target);
+    if (postLoginRedirect?.startsWith("/")) {
+      return c.redirect(postLoginRedirect);
+    }
+
+    // Try last-used agent URL
+    const lastAgent = getUserPreference(user.id, "last_agent_url");
+    if (lastAgent?.startsWith("/")) {
+      return c.redirect(lastAgent);
+    }
+
+    // Fallback: redirect to first owned connector's root (fleet relay will
+    // resolve to the first available role)
+    const connectors = getConnectorsByUser(user.id);
+    if (connectors.length > 0) {
+      return c.redirect(`/vm/${connectors[0].name}/`);
+    }
+
+    // No connectors at all — land on fleet relay setup page
+    return c.redirect("/fleetrelay");
   });
 
   // Logout

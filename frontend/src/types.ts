@@ -117,6 +117,10 @@ export interface FileDeliveryMessage {
   filename: string;
   action: "write" | "edit";
   timestamp: number;
+  /** For Edit: old text being replaced */
+  oldString?: string;
+  /** For Edit: new text replacing old */
+  newString?: string;
 }
 
 /**

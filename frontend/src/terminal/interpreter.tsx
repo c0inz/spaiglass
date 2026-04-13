@@ -48,6 +48,7 @@ import {
   TermChecklist,
   TermChoice,
   TermCodeBlock,
+  TermDiff,
   TermInput,
   TermText,
   TermToolCard,
@@ -557,6 +558,34 @@ function renderTodo(message: TodoMessage): ReactNode {
 // file_delivery
 // ---------------------------------------------------------------------------
 
+/**
+ * Generate a compact unified diff from old/new strings.
+ * Shows all removed lines (-) followed by all added lines (+).
+ * For large diffs, truncates to first/last N context lines with an ellipsis.
+ */
+function makeSimpleDiff(oldStr: string, newStr: string): string {
+  const oldLines = oldStr.split("\n");
+  const newLines = newStr.split("\n");
+  const output: string[] = [];
+
+  for (const line of oldLines) {
+    output.push(`-${line}`);
+  }
+  for (const line of newLines) {
+    output.push(`+${line}`);
+  }
+
+  // If total > 20 lines, show first 5 and last 5 with ellipsis
+  if (output.length > 20) {
+    const head = output.slice(0, 5);
+    const tail = output.slice(-5);
+    const skipped = output.length - 10;
+    return [...head, ` ... ${skipped} more lines ...`, ...tail].join("\n");
+  }
+
+  return output.join("\n");
+}
+
 function renderFileDelivery(
   message: FileDeliveryMessage,
   opts: RenderOptions,
@@ -564,6 +593,11 @@ function renderFileDelivery(
   const handleOpen = opts.onOpenFile
     ? () => opts.onOpenFile?.(message.path, message.filename)
     : undefined;
+
+  // Generate diff for Edit operations with old/new data
+  const hasDiff =
+    message.action === "edit" && message.oldString != null && message.newString != null;
+
   return (
     <div className="my-1">
       <TermToolCard
@@ -571,6 +605,14 @@ function renderFileDelivery(
         args={message.path}
         status="ok"
       />
+      {hasDiff && (
+        <div className="mt-1 ml-3">
+          <TermDiff
+            diff={makeSimpleDiff(message.oldString!, message.newString!)}
+            filename={message.filename}
+          />
+        </div>
+      )}
       {handleOpen && (
         <div className="mt-1 ml-3">
           <button

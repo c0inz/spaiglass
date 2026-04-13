@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useState, useRef } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { ChevronLeftIcon, FolderIcon, KeyIcon, CubeTransparentIcon } from "@heroicons/react/24/outline";
+import { ChevronLeftIcon, FolderIcon, CubeTransparentIcon } from "@heroicons/react/24/outline";
 import type {
   ChatMessage,
   ProjectInfo,
@@ -24,7 +24,8 @@ import { NewSessionDialog } from "./NewSessionDialog";
 import { StaleContextBanner } from "./StaleContextBanner";
 import { ArchitectureViewer } from "./ArchitectureViewer";
 import { MobileTabBar, type MobileTab } from "./MobileTabBar";
-import { SecretsPanel } from "./SecretsPanel";
+import { AgentSwitcher, AgentPickerFullPage } from "./AgentSwitcher";
+import { useFleetAgents } from "../hooks/useFleetAgents";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { useFilePolling } from "../hooks/useFilePolling";
 import { getProjectsUrl } from "../config/api";
@@ -62,7 +63,7 @@ export function ChatPage() {
   const [staleFiles, setStaleFiles] = useState<string[]>([]);
   const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0);
   const [showArchViewer, setShowArchViewer] = useState(false);
-  const [showSecrets, setShowSecrets] = useState(false);
+  const [showAgents, setShowAgents] = useState(false);
   const [pendingImages, setPendingImages] = useState<
     { file: File; preview: string }[]
   >([]);
@@ -87,6 +88,9 @@ export function ChatPage() {
   // useVmConfig() side-effects (logging, telemetry) are still useful even
   // though no consumer reads its return value here. Call it for the effect.
   void useVmConfig();
+
+  // Fleet agent switcher — fetches connectors + roles from relay
+  const fleet = useFleetAgents();
 
   // Extract working directory: prefer relay-resolved context, fall back to URL
   const workingDirectory = (() => {
@@ -179,6 +183,26 @@ export function ChatPage() {
       tryLoadRole();
     }
   }, [roleFile, workingDirectory]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Compute current agent URL from relay context for the agent switcher
+  const currentAgentUrl = (() => {
+    const sg = (window as Window & { __SG?: { slug?: string; segment?: string; project?: string; role?: string } }).__SG;
+    if (!sg?.slug || !sg?.segment) return undefined;
+    return `/vm/${sg.slug}/${sg.segment}/`;
+  })();
+
+  // Record this agent as recently used
+  useEffect(() => {
+    const sg = (window as Window & { __SG?: { slug?: string; segment?: string; project?: string; role?: string } }).__SG;
+    if (!sg?.slug || !sg?.segment || !sg?.project) return;
+    fleet.recordAgent({
+      url: `/vm/${sg.slug}/${sg.segment}/`,
+      label: `${sg.project}-${sg.role || "default"}`,
+      connectorName: sg.slug,
+      project: sg.project,
+      role: sg.role || "default",
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Show context picker for new sessions — skip if role is already set via URL
   useEffect(() => {
@@ -658,7 +682,6 @@ export function ChatPage() {
   const handleFileSelect = (path: string, name: string) => {
     setEditingFile({ path, name });
     setShowArchViewer(false);
-    setShowSecrets(false);
     // On mobile the panels are mutually exclusive — opening a file should
     // hide the file tree so the editor takes the screen.
     if (isMobile) setShowSidebar(false);
@@ -669,10 +692,10 @@ export function ChatPage() {
   // them onto a tab enum.
   const mobileTab: MobileTab = isHistoryView
     ? "history"
-    : showArchViewer
-      ? "arch"
-      : showSecrets
-        ? "secrets"
+    : showAgents
+      ? "agents"
+      : showArchViewer
+        ? "arch"
         : editingFile
           ? "editor"
           : showSidebar
@@ -693,7 +716,7 @@ export function ChatPage() {
       if (isHistoryView) navigate({ search: "" });
       setShowSidebar(tab === "files");
       setShowArchViewer(tab === "arch");
-      setShowSecrets(tab === "secrets");
+      setShowAgents(tab === "agents");
       if (tab !== "editor") setEditingFile(null);
       // Selecting "chat" while a file is open keeps the file in memory but
       // collapses to chat — same as desktop behavior with both flags off.
@@ -742,11 +765,11 @@ export function ChatPage() {
                   / {activeContext.name}
                 </span>
               )}
-              {(isHistoryView || sessionId) && (
+              {isHistoryView && (
                 <>
                   <span className="text-slate-400 mx-2 flex-shrink-0">›</span>
                   <span className="text-slate-800 dark:text-slate-100 text-lg font-bold flex-shrink-0">
-                    {isHistoryView ? "History" : "Conversation"}
+                    History
                   </span>
                 </>
               )}
@@ -767,6 +790,17 @@ export function ChatPage() {
             )}
           </div>
         </div>
+        {/* Agent switcher — middle section (desktop only) */}
+        {!isMobile && fleet.isRelay && (
+          <AgentSwitcher
+            recentAgents={fleet.recentAgents}
+            roles={fleet.roles}
+            connectors={fleet.connectors}
+            loading={fleet.loading}
+            isRelay={fleet.isRelay}
+            currentUrl={currentAgentUrl}
+          />
+        )}
         <div className="flex items-center gap-3">
           {/* Folder/Arch/History buttons live in the bottom MobileTabBar on
               mobile, so the header right cluster collapses to just Settings. */}
@@ -789,7 +823,6 @@ export function ChatPage() {
                   setShowArchViewer(opening);
                   if (opening) {
                     setEditingFile(null);
-                    setShowSecrets(false);
                   }
                 }}
                 className={`p-2 rounded-lg border transition-all duration-200 ${
@@ -800,24 +833,6 @@ export function ChatPage() {
                 title="Architecture viewer"
               >
                 <CubeTransparentIcon className="w-5 h-5" />
-              </button>
-              <button
-                onClick={() => {
-                  const opening = !showSecrets;
-                  setShowSecrets(opening);
-                  if (opening) {
-                    setShowArchViewer(false);
-                    setEditingFile(null);
-                  }
-                }}
-                className={`p-2 rounded-lg border transition-all duration-200 ${
-                  showSecrets
-                    ? "bg-blue-100 dark:bg-blue-900/30 border-blue-300 dark:border-blue-700 text-blue-600 dark:text-blue-400"
-                    : "bg-white/80 dark:bg-slate-800/80 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800"
-                }`}
-                title="Secrets vault"
-              >
-                <KeyIcon className="w-5 h-5" />
               </button>
               {!isHistoryView && <HistoryButton onClick={handleHistoryClick} />}
             </>
@@ -848,18 +863,23 @@ export function ChatPage() {
             </div>
           )}
 
-        {/* Right panel slot — ONE of: arch viewer, file editor, or secrets.
-            Arch & editor get flex-1 (wide). Secrets gets w-56 (narrow, same as files).
-            They replace each other — never stack side by side. */}
+        {/* Mobile agents full-page view */}
+        {isMobile && mobileTab === "agents" && (
+          <AgentPickerFullPage
+            recentAgents={fleet.recentAgents}
+            roles={fleet.roles}
+            connectors={fleet.connectors}
+            loading={fleet.loading}
+          />
+        )}
+
+        {/* Right panel slot — ONE of: arch viewer or file editor.
+            Both get flex-1 (wide). They replace each other — never stack side by side. */}
         {showArchViewer &&
         workingDirectory &&
         (!isMobile || mobileTab === "arch") ? (
           <div className="flex-1 min-w-0 overflow-hidden border-r border-slate-200 dark:border-slate-700">
             <ArchitectureViewer projectPath={workingDirectory} />
-          </div>
-        ) : showSecrets && (!isMobile || mobileTab === "secrets") ? (
-          <div className={isMobile ? "flex-1 min-w-0" : "w-56 flex-shrink-0 border-r border-slate-200 dark:border-slate-700"}>
-            <SecretsPanel />
           </div>
         ) : editingFile && (!isMobile || mobileTab === "editor") ? (
           <div className="flex-1 min-w-0 overflow-hidden border-r border-slate-200 dark:border-slate-700">
@@ -878,7 +898,7 @@ export function ChatPage() {
               ? mobileTab === "chat" || mobileTab === "history"
                 ? "flex-1"
                 : "hidden"
-              : editingFile || showArchViewer || showSecrets
+              : editingFile || showArchViewer
                 ? "w-[450px] flex-shrink-0"
                 : "flex-1"
           } min-w-0 flex flex-col overflow-hidden`}
@@ -956,7 +976,7 @@ export function ChatPage() {
                   // textarea when arch viewer or file editor toggles. Both
                   // collapse the chat panel between w-[450px] and flex-1.
                   focusTrigger={
-                    (showArchViewer ? 1 : 0) + (editingFile ? 2 : 0) + (showSecrets ? 4 : 0)
+                    (showArchViewer ? 1 : 0) + (editingFile ? 2 : 0)
                   }
                   pendingImages={pendingImages}
                   onImageAdd={(files) => {
@@ -1019,7 +1039,7 @@ export function ChatPage() {
       )}
 
       {/* Settings Modal */}
-      <SettingsModal isOpen={isSettingsOpen} onClose={handleSettingsClose} projectPath={workingDirectory || undefined} />
+      <SettingsModal isOpen={isSettingsOpen} onClose={handleSettingsClose} projectPath={workingDirectory || undefined} onRoleCreated={fleet.fetchFleet} />
 
       {/* Context Picker Dialog */}
       {showContextPicker && workingDirectory && (

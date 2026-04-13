@@ -274,6 +274,8 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
           path: string;
           filename: string;
           action: string;
+          oldString?: string;
+          newString?: string;
         };
         cbs.addMessage({
           type: "file_delivery",
@@ -281,6 +283,8 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
           filename: data.filename,
           action: data.action as "write" | "edit",
           timestamp: Date.now(),
+          oldString: data.oldString,
+          newString: data.newString,
         });
         cbs.onFileDelivery?.(data.path, data.filename);
         break;

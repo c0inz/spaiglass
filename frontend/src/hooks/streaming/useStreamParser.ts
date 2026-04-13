@@ -122,6 +122,8 @@ export function useStreamParser() {
             filename: delivery.filename,
             action: delivery.action,
             timestamp: Date.now(),
+            oldString: delivery.oldString,
+            newString: delivery.newString,
           };
           context.addMessage(deliveryMessage);
           context.onFileDelivery?.(delivery.path, delivery.filename);
