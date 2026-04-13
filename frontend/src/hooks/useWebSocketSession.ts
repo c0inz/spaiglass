@@ -178,7 +178,7 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
         if (msg.sessionId) {
           try {
             const url = new URL(window.location.href);
-            url.searchParams.set("session", msg.sessionId as string);
+            url.searchParams.set("sessionId", msg.sessionId as string);
             window.history.replaceState({}, "", url.toString());
           } catch {
             // URL manipulation failed (sandbox?) — non-fatal
@@ -468,7 +468,7 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
     lastSessionParamsRef.current = null;
     try {
       const url = new URL(window.location.href);
-      url.searchParams.delete("session");
+      url.searchParams.delete("sessionId");
       window.history.replaceState({}, "", url.toString());
     } catch {
       // Non-fatal

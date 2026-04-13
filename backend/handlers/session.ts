@@ -15,6 +15,61 @@ interface LastSession {
   timestamp: number;
 }
 
+interface SessionStore {
+  version: 2;
+  sessions: Record<string, LastSession>;
+}
+
+function sessionStoreKey(projectPath: string, role?: string): string {
+  return JSON.stringify([projectPath, role || ""]);
+}
+
+function isLastSession(value: unknown): value is LastSession {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as LastSession).sessionId === "string" &&
+    typeof (value as LastSession).projectPath === "string" &&
+    typeof (value as LastSession).timestamp === "number"
+  );
+}
+
+async function readSessionStore(): Promise<SessionStore> {
+  if (!(await exists(SESSION_FILE))) {
+    return { version: 2, sessions: {} };
+  }
+
+  const raw = await fs.readFile(SESSION_FILE, "utf8");
+  const parsed = JSON.parse(raw) as
+    | SessionStore
+    | LastSession
+    | Record<string, unknown>;
+
+  if (
+    typeof parsed === "object" &&
+    parsed !== null &&
+    "version" in parsed &&
+    parsed.version === 2 &&
+    "sessions" in parsed &&
+    typeof parsed.sessions === "object" &&
+    parsed.sessions !== null
+  ) {
+    return parsed as SessionStore;
+  }
+
+  // Legacy format: the file stored exactly one LastSession object.
+  if (isLastSession(parsed)) {
+    return {
+      version: 2,
+      sessions: {
+        [sessionStoreKey(parsed.projectPath, parsed.role)]: parsed,
+      },
+    };
+  }
+
+  return { version: 2, sessions: {} };
+}
+
 /**
  * POST /api/session/save
  * Saves last session info for auto-resume.
@@ -35,43 +90,46 @@ export async function handleSessionSaveRequest(c: Context) {
     timestamp: Date.now(),
   };
 
+  const store = await readSessionStore();
+  store.sessions[sessionStoreKey(projectPath, role)] = session;
+
   await fs.mkdir(SESSION_DIR, { recursive: true });
-  await fs.writeFile(SESSION_FILE, JSON.stringify(session, null, 2));
+  await fs.writeFile(SESSION_FILE, JSON.stringify(store, null, 2));
 
   logger.app.info("Session saved: {sessionId}", { sessionId });
   return c.json({ ok: true });
 }
 
 /**
- * GET /api/session/last?projectPath=...
- * Returns last session for a given project, if one exists and is recent (< 24h).
+ * GET /api/session/last?projectPath=...&role=...
+ * Returns the most recent session for the given project/role pair.
  */
 export async function handleSessionLastRequest(c: Context) {
   const projectPath = c.req.query("projectPath");
+  const role = c.req.query("role") || undefined;
 
   if (!projectPath) {
     return c.json({ error: "projectPath query param required" }, 400);
   }
 
-  if (!(await exists(SESSION_FILE))) {
-    return c.json({ session: null });
-  }
-
   try {
-    const raw = await fs.readFile(SESSION_FILE, "utf8");
-    const session: LastSession = JSON.parse(raw);
+    const store = await readSessionStore();
+    if (role) {
+      return c.json({
+        session: store.sessions[sessionStoreKey(projectPath, role)] ?? null,
+      });
+    }
 
-    // Must match project
-    if (session.projectPath !== projectPath) {
+    const projectSessions = Object.values(store.sessions).filter(
+      (session) => session.projectPath === projectPath,
+    );
+    if (projectSessions.length === 0) {
       return c.json({ session: null });
     }
 
-    // Must be within 24 hours
-    const ageMs = Date.now() - session.timestamp;
-    const maxAgeMs = 24 * 60 * 60 * 1000;
-    if (ageMs > maxAgeMs) {
-      return c.json({ session: null });
-    }
+    const session = projectSessions.sort(
+      (a, b) => b.timestamp - a.timestamp,
+    )[0];
 
     return c.json({ session });
   } catch (err) {

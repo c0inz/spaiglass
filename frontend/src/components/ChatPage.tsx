@@ -179,6 +179,7 @@ export function ChatPage() {
             // Try next path
           }
         }
+        setContextChecked(true);
       };
       tryLoadRole();
     }
@@ -228,14 +229,20 @@ export function ChatPage() {
       return; // skip resume — start fresh
     }
     if (sessionId || isHistoryView || !workingDirectory) return;
-    fetch(
-      `/api/session/last?projectPath=${encodeURIComponent(workingDirectory)}`,
-    )
+    const lastSessionUrl = new URL("/api/session/last", window.location.origin);
+    lastSessionUrl.searchParams.set("projectPath", workingDirectory);
+    if (roleFile) {
+      lastSessionUrl.searchParams.set("role", roleFile);
+    }
+    fetch(lastSessionUrl.toString())
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (data?.session?.sessionId) {
           const params = new URLSearchParams(searchParams);
           params.set("sessionId", data.session.sessionId);
+          if (data.session.role) {
+            params.set("role", data.session.role);
+          }
           navigate({ search: params.toString() }, { replace: true });
         }
       })
@@ -357,9 +364,18 @@ export function ChatPage() {
   // Start/join session once WS is connected and we have roleFile + workingDirectory
   useEffect(() => {
     if (!ws.connected || !roleFile || !workingDirectory) return;
+    if (!contextChecked) return;
     if (ws.attached) return; // already in a session
     ws.startSession(roleFile, workingDirectory, activeContext?.content);
-  }, [ws.connected, ws.attached, roleFile, workingDirectory, activeContext?.content, ws.startSession]);
+  }, [
+    ws.connected,
+    ws.attached,
+    roleFile,
+    workingDirectory,
+    contextChecked,
+    activeContext?.content,
+    ws.startSession,
+  ]);
 
   const {
     allowedTools,
@@ -459,11 +475,6 @@ export function ChatPage() {
 
       // Need either text or attachments
       if (!content && attachmentPaths.length === 0) return;
-
-      // Prepend context file content on first message of session
-      if (!ws.sessionId && activeContext?.content) {
-        content = `[Session Context: ${activeContext.filename}]\n\n${activeContext.content}\n\n---\n\n${content}`;
-      }
 
       // Only add user message to chat if not hidden
       if (!hideUserMessage) {

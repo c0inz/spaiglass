@@ -33,11 +33,34 @@ export function useChatState(options: ChatStateOptions = {}) {
   // Sticky timer: prevent lower-priority status from replacing a high-priority
   // one before its stickyMs expires.
   const stickyRef = useRef<{ status: DisplayStatus; expiresAt: number } | null>(null);
+  const hydratedSessionIdRef = useRef<string | null>(null);
 
-  // Only re-sync sessionId (not messages) when the parent changes it
+  // Re-hydrate messages when the parent loads a different historical session.
+  // For the active live session, only fill from history if the chat is still empty
+  // so we don't wipe messages that arrived over WebSocket first.
   useEffect(() => {
+    if (!initialSessionId) {
+      return;
+    }
+
     setCurrentSessionId(initialSessionId);
-  }, [initialSessionId]);
+    setMessages((prev) => {
+      const isDifferentSession =
+        (hydratedSessionIdRef.current !== null &&
+          hydratedSessionIdRef.current !== initialSessionId) ||
+        (currentSessionId !== null && currentSessionId !== initialSessionId);
+      const shouldHydrateEmptyChat =
+        prev.length === 0 && initialMessages.length > 0;
+
+      if (isDifferentSession || shouldHydrateEmptyChat) {
+        hydratedSessionIdRef.current = initialSessionId;
+        return initialMessages;
+      }
+
+      hydratedSessionIdRef.current = initialSessionId;
+      return prev;
+    });
+  }, [currentSessionId, initialMessages, initialSessionId]);
 
   const addMessage = useCallback((msg: AllMessage) => {
     setMessages((prev) => [...prev, msg]);
