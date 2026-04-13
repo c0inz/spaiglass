@@ -8,7 +8,8 @@ import {
 } from "@heroicons/react/24/outline";
 import type { SessionStats } from "../types";
 import { HelpPanel } from "./HelpPanel";
-import { SecretsPanel } from "./SecretsPanel";
+// SecretsPanel hidden for now — see research/secrets_roadmap.md
+// import { SecretsPanel } from "./SecretsPanel";
 
 interface TreeEntry {
   name: string;
@@ -149,7 +150,7 @@ export function FileSidebar({
 }: FileSidebarProps) {
   const [tree, setTree] = useState<TreeEntry[]>([]);
   const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<"tree" | "context" | "help" | "keys">(
+  const [activeTab, setActiveTab] = useState<"tree" | "context" | "help">(
     "tree",
   );
 
@@ -216,16 +217,7 @@ export function FileSidebar({
         >
           Help
         </button>
-        <button
-          onClick={() => setActiveTab("keys")}
-          className={`flex-1 text-xs font-medium py-2 transition-colors ${
-            activeTab === "keys"
-              ? "text-blue-600 dark:text-blue-400 border-b-2 border-blue-500"
-              : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300"
-          }`}
-        >
-          Keys
-        </button>
+        {/* Keys tab hidden — see research/secrets_roadmap.md */}
         <button
           onClick={loadTree}
           className="px-2 py-2 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
@@ -237,9 +229,7 @@ export function FileSidebar({
 
       {/* Tab content */}
       <div className="flex-1 overflow-auto py-1">
-        {activeTab === "keys" ? (
-          <SecretsPanel />
-        ) : activeTab === "help" ? (
+        {activeTab === "help" ? (
           <HelpPanel
             stats={
               sessionStats || {
