@@ -35,7 +35,10 @@ for arg in "$@"; do
   esac
 done
 
-VERSION="$(date -u +%Y.%m.%d)"
+# Version defaults to today's UTC date but can be overridden via env var so
+# multiple deploys in one day can each bump the VM fleet (fleet-rollout uses
+# exact-string comparison — if VERSION doesn't change, VMs are skipped).
+VERSION="${SPAIGLASS_VERSION:-$(date -u +%Y.%m.%d)}"
 echo "==> SpAIglass VM tarball pack — version $VERSION"
 
 # 1. Build backend bundle (skip the static copy step entirely — relay serves frontend)
