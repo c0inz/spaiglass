@@ -65,6 +65,23 @@ if ($Uninstall) {
 # ----- preflight -----
 Write-Step "Pre-flight checks"
 
+# Persistence gate — warn loudly before we download anything. Unlike Linux
+# (systemd --user + enable-linger) and macOS (launchd agents), Windows
+# scheduled tasks registered as Interactive LogonType only run while the
+# user is logged in. The moment the user signs out / switches users / reboots
+# without auto-login, the task terminates and the VM goes offline. Getting a
+# task to "run whether logged on or not" needs -LogonType Password (stores
+# the user's password) or -LogonType S4U (local accounts only, no network),
+# neither of which is appropriate for an installer that claims "no admin
+# needed". This is a known limitation — document it, don't hide it.
+#
+# TODO: ship a proper Windows service (nssm / sc.exe create) as a follow-up
+# so Windows VMs reach parity with Linux/macOS.
+Write-Warn2 "Windows persistence note: this VM stays online only while you are"
+Write-Warn2 "logged in. Logging out, switching users, or rebooting without"
+Write-Warn2 "auto-login will take the VM offline until you sign back in."
+Write-Warn2 "(Linux + macOS hosts do NOT have this limitation.)"
+
 # Reuse credentials from existing .env on upgrade
 $EnvPath = Join-Path $InstallDir ".env"
 if (-not $Token -and (Test-Path $EnvPath)) {
@@ -122,6 +139,16 @@ if (-not $tarExe) { Write-Fail "tar.exe not found — Windows 10 build 17063 or 
 if ($LASTEXITCODE -ne 0) { Write-Fail "tar extraction failed" }
 Remove-Item $TmpTar -ErrorAction SilentlyContinue
 
+# Strip Mark-of-the-Web from every extracted file. Invoke-WebRequest stamps
+# MOTW on the tarball and Windows' tar.exe propagates it to the extracted
+# files on current builds. SmartScreen will silently block the first exec of
+# an MOTW-tagged unsigned .exe under a hidden Scheduled Task, producing a
+# dead service with no user-visible error. Unblock-File is idempotent and a
+# no-op when no MOTW is present. Longer term: Authenticode-sign the binary.
+Get-ChildItem -Path $InstallDir -Recurse -File -ErrorAction SilentlyContinue |
+    Unblock-File -ErrorAction SilentlyContinue
+Write-Ok "Cleared Mark-of-the-Web (SmartScreen bypass)"
+
 if (-not (Test-Path (Join-Path $InstallDir "VERSION"))) { Write-Fail "Tarball is missing VERSION" }
 $BinPath = Join-Path $InstallDir "spaiglass-host.exe"
 if (-not (Test-Path $BinPath)) { Write-Fail "Tarball is missing spaiglass-host.exe" }
@@ -161,7 +188,14 @@ SPAIGLASS_VERSION=$Version
 PORT=$Port
 HOST=$BindHost
 "@
-$envContent | Set-Content -Path $EnvPath -NoNewline -Encoding UTF8
+# BOM-less UTF-8 write. `Set-Content -Encoding UTF8` on PowerShell 5.1 (the
+# version that ships with stock Windows 10/11) emits a UTF-8 BOM (EF BB BF).
+# Reading it back line-by-line makes the first key come out as `\ufeffRELAY_URL`,
+# the regex `^\s*([A-Z_]+)` fails to match, and RELAY_URL silently disappears
+# from the runner's process env — the binary then crashes on missing config.
+# [IO.File]::WriteAllText with UTF8Encoding($false) is BOM-less on BOTH
+# 5.1 and 7+, so we route around the cmdlet entirely.
+[System.IO.File]::WriteAllText($EnvPath, $envContent, [System.Text.UTF8Encoding]::new($false))
 Write-Ok "Wrote $EnvPath"
 
 # Note: ~/projects/*/agents/ auto-registration in .claude.json is now done by
@@ -195,7 +229,9 @@ Get-Content '$EnvPath' | ForEach-Object {
 `$proc.WaitForExit()
 exit `$proc.ExitCode
 "@
-$RunnerContent | Set-Content -Path $RunnerPath -Encoding UTF8
+# BOM-less UTF-8 — same reason as the .env write above. powershell.exe
+# tolerates a BOM'd script, but consistency + defensiveness.
+[System.IO.File]::WriteAllText($RunnerPath, $RunnerContent, [System.Text.UTF8Encoding]::new($false))
 
 $action    = New-ScheduledTaskAction -Execute "powershell.exe" `
                 -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$RunnerPath`""
@@ -230,10 +266,12 @@ else { Write-Warn2 "Local backend didn't respond yet. Check: Get-Content $LogsDi
 
 Write-Host ""
 Write-Host "Spaiglass $Version installed." -ForegroundColor Green
-Write-Host "  Fleet:      $RelayUrl/fleetrelay"
-Write-Host "  This VM:    $RelayUrl/vm/<your-login>.$Name/"
+Write-Host "  Sign in:    $RelayUrl  (GitHub auth — routes you straight to your chat)"
+Write-Host "  VM name:    $Name"
 Write-Host "  Binding:    ${BindHost}:$Port ($BindLabel)"
 Write-Host "  Logs:       Get-Content $LogsDir\spaiglass.err.log -Tail 50 -Wait"
-Write-Host "  Update:     re-run this command"
+Write-Host "  Update:     re-run this command (idempotent — preserves .env)"
 Write-Host "  Uninstall:  iwr $RelayUrl/install.ps1 -useb | iex; -Uninstall"
+Write-Host ""
+Write-Warn2 "Reminder: VM stays online only while you are signed in to Windows."
 Write-Host ""

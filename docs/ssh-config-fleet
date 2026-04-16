@@ -1,0 +1,122 @@
+# ReadyStack agent fleet SSH config
+#
+# Drop the entries below into your local ~/.ssh/config (Windows:
+# C:\Users\<you>\.ssh\config). After installing, you can SSH to any agent by
+# its short name, e.g.:
+#
+#     ssh AgentEPC
+#     ssh TomBombadil
+#     ssh Fuzz
+#
+# Three of the agents are on the LAN directly. The other sixteen are libvirt
+# guests on the 192.168.122.0/24 bridge and need a ProxyJump through the
+# mombadil VM host (192.168.1.124).
+#
+# Prerequisite: your public key must be present in
+# ~/.ssh/authorized_keys on every agent AND on mombadil. Run
+# `bash /home/johntdavenport/scripts/push-windows-key.sh` from ExceedBot to
+# distribute it to the whole fleet.
+
+# === Jump host (libvirt VM host) ===
+Host mombadil
+  HostName 192.168.1.124
+  User johntdavenport
+
+Host bombadil
+  HostName 192.168.1.185
+  User johntdavenport
+
+# === Direct-LAN agents ===
+Host TomBombadil
+  HostName 192.168.1.202
+  User readystack
+
+Host Fuzz
+  HostName 192.168.1.113
+  User johntdavenport
+
+Host Daniel
+  HostName 192.168.1.213
+  User readystack
+
+# === Agents behind mombadil (libvirt 192.168.122.0/24) ===
+Host AgentEPC
+  HostName 192.168.122.57
+  User readystack
+  ProxyJump mombadil
+
+Host SolarKnock
+  HostName 192.168.122.175
+  User readystack
+  ProxyJump mombadil
+
+Host RSRerelease
+  HostName 192.168.122.159
+  User readystack
+  Port 2222
+  ProxyJump mombadil
+
+Host SingleMessage
+  HostName 192.168.122.187
+  User readystack
+  ProxyJump mombadil
+
+Host TheDezz
+  HostName 192.168.122.206
+  User readystack
+  ProxyJump mombadil
+
+Host SoSatisfying
+  HostName 192.168.122.58
+  User readystack
+  ProxyJump mombadil
+
+Host Gadzoom
+  HostName 192.168.122.181
+  User readystack
+  ProxyJump mombadil
+
+Host UsaPrime
+  HostName 192.168.122.139
+  User readystack
+  ProxyJump mombadil
+
+Host SolarKnock2
+  HostName 192.168.122.40
+  User readystack
+  ProxyJump mombadil
+
+Host CVPower
+  HostName 192.168.122.29
+  User readystack
+  ProxyJump mombadil
+
+Host NFTHall
+  HostName 192.168.122.30
+  User readystack
+  ProxyJump mombadil
+
+Host ExceedIO
+  HostName 192.168.122.189
+  User readystack
+  ProxyJump mombadil
+
+Host GadzoomBuy
+  HostName 192.168.122.199
+  User readystack
+  ProxyJump mombadil
+
+Host CryptoDev
+  HostName 192.168.122.133
+  User readystack
+  ProxyJump mombadil
+
+Host SocialDev
+  HostName 192.168.122.125
+  User readystack
+  ProxyJump mombadil
+
+Host MarketingAgent
+  HostName 192.168.122.112
+  User readystack
+  ProxyJump mombadil

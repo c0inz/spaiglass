@@ -158,7 +158,21 @@ export function TermText({
 // TermSpinner — animated frame cycle (used during stream_thinking)
 // ---------------------------------------------------------------------------
 
-const SPINNER_FRAMES = ["·", "+", "✦", "✿"];
+// Braille dots — see StatusLine.tsx for rationale. All ten frames render
+// at the same width in any monospace font so the adjacent label stays
+// rock-steady as the spinner advances.
+const SPINNER_FRAMES = [
+  "⠋",
+  "⠙",
+  "⠹",
+  "⠸",
+  "⠼",
+  "⠴",
+  "⠦",
+  "⠧",
+  "⠇",
+  "⠏",
+];
 
 interface TermSpinnerProps {
   label?: string;
@@ -170,7 +184,7 @@ export function TermSpinner({ label, color = "cyan" }: TermSpinnerProps) {
   useEffect(() => {
     const id = setInterval(
       () => setFrame((f) => (f + 1) % SPINNER_FRAMES.length),
-      200,
+      80,
     );
     return () => clearInterval(id);
   }, []);
@@ -180,7 +194,13 @@ export function TermSpinner({ label, color = "cyan" }: TermSpinnerProps) {
       role="status"
       aria-live="polite"
     >
-      <span aria-hidden="true">{SPINNER_FRAMES[frame]}</span>
+      <span
+        aria-hidden="true"
+        className="inline-block text-center"
+        style={{ width: "1ch" }}
+      >
+        {SPINNER_FRAMES[frame]}
+      </span>
       {label && <span>{label}</span>}
     </span>
   );

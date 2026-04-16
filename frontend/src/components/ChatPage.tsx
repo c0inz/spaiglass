@@ -1,22 +1,22 @@
 import { useEffect, useCallback, useState, useRef } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
-import { ChevronLeftIcon, FolderIcon, CubeTransparentIcon } from "@heroicons/react/24/outline";
-import type {
-  ChatMessage,
-  ProjectInfo,
-  SessionStats,
-} from "../types";
+import {
+  FolderIcon,
+  CubeTransparentIcon,
+  PlusCircleIcon,
+} from "@heroicons/react/24/outline";
+import type { ProjectInfo, SessionStats } from "../types";
+import type { ErrorFrame, UserContentBlock } from "../../../shared/frames";
 import { useChatState } from "../hooks/chat/useChatState";
+import { useFrameChatState } from "../hooks/chat/useFrameChatState";
 import { usePermissions } from "../hooks/chat/usePermissions";
 import { usePermissionMode } from "../hooks/chat/usePermissionMode";
 import { useAutoHistoryLoader } from "../hooks/useHistoryLoader";
 import { useWebSocketSession } from "../hooks/useWebSocketSession";
 import { SettingsButton } from "./SettingsButton";
 import { SettingsModal } from "./SettingsModal";
-import { HistoryButton } from "./chat/HistoryButton";
 import { ChatInput } from "./chat/ChatInput";
-import { ChatMessages } from "./chat/ChatMessages";
-import { HistoryView } from "./HistoryView";
+import { FrameChatView } from "../terminal/frames/FrameChatView";
 import { FileSidebar } from "./FileSidebar";
 import { FileEditor } from "./FileEditor";
 import { FileMention } from "./FileMention";
@@ -39,6 +39,7 @@ export function ChatPage() {
   const [searchParams] = useSearchParams();
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [sessionFocusBump, setSessionFocusBump] = useState(0);
   const [showSidebar, setShowSidebar] = useState(false);
   const [editingFile, setEditingFile] = useState<{
     path: string;
@@ -85,9 +86,10 @@ export function ChatPage() {
   const [sessionStats, setSessionStats] = useState<SessionStats>(
     sessionStatsRef.current,
   );
-  // useVmConfig() side-effects (logging, telemetry) are still useful even
-  // though no consumer reads its return value here. Call it for the effect.
-  void useVmConfig();
+  // VM hostname + primary LAN IP — shown next to the working directory in
+  // the header so the user can tell at a glance which machine they're on
+  // when jumping across the fleet.
+  const vmConfig = useVmConfig();
 
   // Fleet agent switcher — fetches connectors + roles from relay
   const fleet = useFleetAgents();
@@ -137,16 +139,15 @@ export function ChatPage() {
     },
   });
 
-  // Get current view, sessionId, and role from query parameters or relay context
-  const currentView = searchParams.get("view");
+  // Get sessionId and role from query parameters or relay context. The old
+  // ?view=history query parameter is intentionally no longer read — the
+  // prior-sessions list UI was removed entirely.
   const sessionId = searchParams.get("sessionId");
   const roleFile =
     searchParams.get("role") ||
     (window as Window & { __SG_RESOLVED?: { role?: string } }).__SG_RESOLVED
       ?.role ||
     null;
-  const isHistoryView = currentView === "history";
-  const isLoadedConversation = !!sessionId && !isHistoryView;
 
   // Load role context file if specified in URL.
   // Try .claude/agents/ (native Claude Code convention) first, then agents/ (legacy).
@@ -208,7 +209,6 @@ export function ChatPage() {
   // Show context picker for new sessions — skip if role is already set via URL
   useEffect(() => {
     if (
-      !isHistoryView &&
       !sessionId &&
       workingDirectory &&
       !contextChecked &&
@@ -216,7 +216,7 @@ export function ChatPage() {
     ) {
       setShowContextPicker(true);
     }
-  }, [isHistoryView, sessionId, workingDirectory, contextChecked, roleFile]);
+  }, [sessionId, workingDirectory, contextChecked, roleFile]);
 
   // Auto-resume last session on page load (no sessionId in URL).
   // ?new=1 skips resume and starts a fresh session.
@@ -228,7 +228,7 @@ export function ChatPage() {
       navigate({ search: params.toString() }, { replace: true });
       return; // skip resume — start fresh
     }
-    if (sessionId || isHistoryView || !workingDirectory) return;
+    if (sessionId || !workingDirectory) return;
     const lastSessionUrl = new URL("/api/session/last", window.location.origin);
     lastSessionUrl.searchParams.set("projectPath", workingDirectory);
     if (roleFile) {
@@ -280,9 +280,11 @@ export function ChatPage() {
     return finalProject?.encodedName || null;
   }, [workingDirectory, projects]);
 
-  // Load conversation history if sessionId is provided
+  // Load conversation history if sessionId is provided. The backend
+  // returns pre-replayed Frame[] from a headless FrameEmitter (see
+  // backend/history/conversationLoader.ts).
   const {
-    messages: historyMessages,
+    frames: historyFrames,
     loading: historyLoading,
     error: historyError,
     sessionId: loadedSessionId,
@@ -291,29 +293,79 @@ export function ChatPage() {
     sessionId || undefined,
   );
 
-  // Initialize chat state with loaded history
+  // Initialize chat state — input/loading/session only; rows live in
+  // the frame-native reducer below.
   const {
-    messages,
     input,
     isLoading,
     currentSessionId,
-    currentAssistantMessage,
-    setMessages,
     setInput,
     setCurrentSessionId,
-    setCurrentAssistantMessage,
-    addMessage,
-    updateLastMessage,
-    markInteractiveAnswered,
     updateStatus,
     currentStatus,
     clearInput,
     resetRequestState,
     startRequest,
   } = useChatState({
-    initialMessages: historyMessages,
     initialSessionId: loadedSessionId || undefined,
   });
+
+  // Frame-native scrollback — the single source of truth for rows.
+  const frameChat = useFrameChatState();
+
+  // Hydrate rows from the backend's replayed Frame[] whenever a different
+  // historical session lands. Guard against re-hydrating across re-renders
+  // of the same array reference; only reload when the loaded sessionId
+  // actually changes so live frames already in the reducer aren't wiped.
+  const hydratedSessionIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!loadedSessionId) return;
+    if (hydratedSessionIdRef.current === loadedSessionId) return;
+    hydratedSessionIdRef.current = loadedSessionId;
+    frameChat.loadFrames(historyFrames);
+  }, [loadedSessionId, historyFrames, frameChat]);
+
+  // Surface real history-load failures as a notice frame instead of
+  // replacing the whole chat view with a full-screen error. That way the
+  // permission-mode announcement and any live frames still show up, and
+  // the user can start a new message immediately.
+  const announcedHistoryErrorRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!historyError) return;
+    if (announcedHistoryErrorRef.current === historyError) return;
+    announcedHistoryErrorRef.current = historyError;
+    // Inlined synthesizer — emitLocalNotice is declared below and this
+    // effect only needs to run on transitions into an error state.
+    const frame: ErrorFrame = {
+      id: `local-${Math.random().toString(36).slice(2, 10)}`,
+      seq: 0,
+      ts: Date.now(),
+      type: "error",
+      category: "notice",
+      message: `History couldn't be loaded: ${historyError}`,
+    };
+    frameChat.addFrame(frame);
+  }, [historyError, frameChat]);
+
+  // Local notice helper — surfaces client-side events (permission-mode
+  // announcement, /reset banner, etc.) on the same scrollback the backend
+  // feeds, so we don't need a second state store. Uses the ErrorFrame
+  // "notice" category so the row renders as a neutral notice box, not a
+  // red error card.
+  const emitLocalNotice = useCallback(
+    (message: string) => {
+      const frame: ErrorFrame = {
+        id: `local-${Math.random().toString(36).slice(2, 10)}`,
+        seq: 0,
+        ts: Date.now(),
+        type: "error",
+        category: "notice",
+        message,
+      };
+      frameChat.addFrame(frame);
+    },
+    [frameChat],
+  );
 
   // Save session when a new sessionId is received from Claude
   useEffect(() => {
@@ -330,21 +382,13 @@ export function ChatPage() {
     }
   }, [currentSessionId, workingDirectory, roleFile]);
 
-  // Keep currentAssistantMessage in a ref so WS callbacks don't go stale
-  // every time the streaming text updates state.
-  const currentAssistantMessageRef = useRef(currentAssistantMessage);
-  currentAssistantMessageRef.current = currentAssistantMessage;
-
-  // Wire WebSocket callbacks so the hook can pipe messages into useChatState.
-  // currentAssistantMessage is read via ref — NOT in the dependency array.
+  // Wire WebSocket callbacks. Frame-native: every inbound frame flows
+  // straight into the reducer via `onFrame`; protocol-only side effects
+  // (session id, slash commands, file delivery refresh, turn completion,
+  // transient status line) come through their own callbacks.
   useEffect(() => {
     ws.setCallbacks({
-      addMessage,
-      updateLastMessage,
-      setCurrentAssistantMessage,
-      get currentAssistantMessage() {
-        return currentAssistantMessageRef.current;
-      },
+      onFrame: frameChat.addFrame,
       onSessionId: (sid: string) => {
         setCurrentSessionId(sid);
         sessionStatsRef.current = { ...sessionStatsRef.current, sessionId: sid };
@@ -360,7 +404,13 @@ export function ChatPage() {
       },
       onStatusUpdate: updateStatus,
     });
-  }, [addMessage, updateLastMessage, updateStatus, setCurrentAssistantMessage, ws.setCallbacks, setCurrentSessionId, resetRequestState]);
+  }, [
+    ws.setCallbacks,
+    frameChat.addFrame,
+    setCurrentSessionId,
+    resetRequestState,
+    updateStatus,
+  ]);
 
   // Start/join session once WS is connected and we have roleFile + workingDirectory
   useEffect(() => {
@@ -392,6 +442,40 @@ export function ChatPage() {
     onPermissionModeChange: setPermissionMode,
   });
 
+  // One-shot permission-mode announcement. Fires once after the WS session
+  // attaches so the user sees on load that bypassPermissions is active
+  // (our default — see usePermissionMode). Re-announces if the session is
+  // restarted (handleNewSession clears this ref). Synthesizes a local
+  // notice frame so it joins the scrollback through the same reducer as
+  // the live frames.
+  const announcedModeRef = useRef(false);
+  useEffect(() => {
+    if (!ws.attached || announcedModeRef.current) return;
+    announcedModeRef.current = true;
+    const label: Record<typeof permissionMode, string> = {
+      bypassPermissions:
+        "Bypass permissions mode — Claude will run tools without asking. Toggle in the input bar if you want prompts.",
+      acceptEdits:
+        "Accept-edits mode — Claude auto-accepts file edits but still prompts for other tools.",
+      plan: "Plan mode — Claude will outline changes and wait for approval before acting.",
+      default:
+        "Default permission mode — Claude will prompt before running tools.",
+    };
+    emitLocalNotice(label[permissionMode]);
+  }, [ws.attached, permissionMode, emitLocalNotice]);
+
+  // New Session — same logic as the /reset slash command, exposed as a
+  // header button so the user isn't required to type anything to start over.
+  const handleNewSession = useCallback(() => {
+    frameChat.resetFrames();
+    if (roleFile && workingDirectory) {
+      ws.restartSession(roleFile, workingDirectory);
+    }
+    announcedModeRef.current = false; // re-announce mode on the next attach
+    emitLocalNotice("New session started.");
+    setSessionFocusBump((n) => n + 1);
+  }, [frameChat, roleFile, workingDirectory, ws.restartSession, emitLocalNotice]);
+
   const sendMessage = useCallback(
     async (
       messageContent?: string,
@@ -406,16 +490,11 @@ export function ChatPage() {
       // /reset — restart session via WebSocket (saves JSONL history)
       if (trimmedLower === "/reset") {
         clearInput();
-        setMessages([]);
+        frameChat.resetFrames();
         if (roleFile && workingDirectory) {
           ws.restartSession(roleFile, workingDirectory);
         }
-        addMessage({
-          type: "system",
-          subtype: "abort",
-          message: "Session reset. Send a message to start a new session.",
-          timestamp: Date.now(),
-        });
+        emitLocalNotice("New session started.");
         return;
       }
 
@@ -424,34 +503,32 @@ export function ChatPage() {
         clearInput();
         ws.interrupt();
         resetRequestState();
-        addMessage({
-          type: "system",
-          subtype: "abort",
-          message: "Interrupted.",
-          timestamp: Date.now(),
-        });
+        emitLocalNotice("Interrupted.");
         return;
       }
 
       // /btw — send a side-message without interrupting; Claude reads it
-      // from the queue when it next checks for input
+      // from the queue when it next checks for input. The backend echoes
+      // the message back as a user_message frame once it lands in the
+      // queue, so we don't need to pre-render it locally.
       if (trimmedLower.startsWith("/btw ") || trimmedLower === "/btw") {
         const btw = content.trim().slice(4).trim();
         if (!btw) return;
         clearInput();
-        addMessage({
-          type: "chat",
-          role: "user",
-          content: `[btw] ${btw}`,
-          timestamp: Date.now(),
-        });
         ws.sendMessage(btw);
         return;
       }
 
+      // Snapshot the current pending attachments before the async upload
+      // loop so the local echo can reference the in-memory blob URLs even
+      // after state is cleared. We key off the File objects (not the upload
+      // response) so the echo still works if an upload fails — the user
+      // sees what they tried to send, and any send-side error surfaces via
+      // the error notice path separately.
+      const pendingSnapshot = pendingImages;
+
       // Upload pending files and collect server paths
       const attachmentPaths: string[] = [];
-      const attachmentNames: string[] = [];
       if (pendingImages.length > 0 && workingDirectory) {
         for (const img of pendingImages) {
           const formData = new FormData();
@@ -465,7 +542,6 @@ export function ChatPage() {
             if (res.ok) {
               const data = await res.json();
               attachmentPaths.push(data.path);
-              attachmentNames.push(data.filename);
             }
           } catch (err) {
             console.error("File upload failed:", err);
@@ -477,19 +553,44 @@ export function ChatPage() {
       // Need either text or attachments
       if (!content && attachmentPaths.length === 0) return;
 
-      // Only add user message to chat if not hidden
+      // Echo the user's message into scrollback immediately via a
+      // client-side UserMessageFrame. The backend will also emit a
+      // real user_message frame a beat later, but `useWebSocketSession`
+      // swallows that live echo so we don't see a double-row. `hideUserMessage`
+      // is used for background continuations (permission "continue", plan
+      // "accept") that shouldn't appear in scrollback at all.
       if (!hideUserMessage) {
-        const displayContent =
-          attachmentNames.length > 0
-            ? `${attachmentNames.map((n) => `[${n}]`).join(" ")}\n${content || ""}`
-            : content;
-        const userMessage: ChatMessage = {
-          type: "chat",
-          role: "user",
-          content: displayContent.trim(),
-          timestamp: Date.now(),
-        };
-        addMessage(userMessage);
+        const blocks: UserContentBlock[] = [];
+        const nonImageNames: string[] = [];
+        for (const img of pendingSnapshot) {
+          if (img.file.type.startsWith("image/")) {
+            // Blob URL survives for the lifetime of the page — good enough
+            // for in-session display. History replay of images is a separate
+            // problem tracked in the roadmap backlog.
+            blocks.push({
+              type: "image",
+              mimeType: img.file.type,
+              dataUrl: img.preview,
+            });
+          } else {
+            nonImageNames.push(img.file.name);
+          }
+        }
+        const prefix =
+          nonImageNames.length > 0
+            ? `${nonImageNames.map((n) => `[${n}]`).join(" ")}\n`
+            : "";
+        const text = (prefix + (content || "")).trim();
+        if (text) blocks.push({ type: "text", text });
+        if (blocks.length > 0) {
+          frameChat.addFrame({
+            id: `local-user-${Math.random().toString(36).slice(2, 10)}`,
+            seq: 0,
+            ts: Date.now(),
+            type: "user_message",
+            content: blocks,
+          });
+        }
       }
 
       if (!messageContent) clearInput();
@@ -515,8 +616,9 @@ export function ChatPage() {
       activeContext,
       clearInput,
       startRequest,
-      addMessage,
-      setMessages,
+      frameChat,
+      emitLocalNotice,
+      resetRequestState,
       pendingImages,
     ],
   );
@@ -630,12 +732,6 @@ export function ChatPage() {
       }
     : undefined;
 
-  const handleHistoryClick = useCallback(() => {
-    const searchParams = new URLSearchParams();
-    searchParams.set("view", "history");
-    navigate({ search: searchParams.toString() });
-  }, [navigate]);
-
   const handleSettingsClick = useCallback(() => {
     setIsSettingsOpen(true);
   }, []);
@@ -659,22 +755,6 @@ export function ChatPage() {
     };
     loadProjects();
   }, []);
-
-  const handleBackToChat = useCallback(() => {
-    navigate({ search: "" });
-  }, [navigate]);
-
-  const handleBackToHistory = useCallback(() => {
-    const searchParams = new URLSearchParams();
-    searchParams.set("view", "history");
-    navigate({ search: searchParams.toString() });
-  }, [navigate]);
-
-  const handleBackToProjectChat = useCallback(() => {
-    if (workingDirectory) {
-      navigate(`/projects${workingDirectory}`);
-    }
-  }, [navigate, workingDirectory]);
 
   // Handle global keyboard shortcuts
   useEffect(() => {
@@ -702,30 +782,18 @@ export function ChatPage() {
   // Derive the active mobile tab from existing layout state. Single source
   // of truth — desktop keeps using these flags directly, mobile just maps
   // them onto a tab enum.
-  const mobileTab: MobileTab = isHistoryView
-    ? "history"
-    : showAgents
-      ? "agents"
-      : showArchViewer
-        ? "arch"
-        : editingFile
-          ? "editor"
-          : showSidebar
-            ? "files"
-            : "chat";
+  const mobileTab: MobileTab = showAgents
+    ? "agents"
+    : showArchViewer
+      ? "arch"
+      : editingFile
+        ? "editor"
+        : showSidebar
+          ? "files"
+          : "chat";
 
   const handleMobileTabSelect = useCallback(
     (tab: MobileTab) => {
-      if (tab === "history") {
-        // History lives in URL state. Going to history clears the panels so
-        // returning to chat lands cleanly.
-        setShowSidebar(false);
-        setShowArchViewer(false);
-        handleHistoryClick();
-        return;
-      }
-      // Any non-history tab leaves the history view if we're in it.
-      if (isHistoryView) navigate({ search: "" });
       setShowSidebar(tab === "files");
       setShowArchViewer(tab === "arch");
       setShowAgents(tab === "agents");
@@ -733,72 +801,84 @@ export function ChatPage() {
       // Selecting "chat" while a file is open keeps the file in memory but
       // collapses to chat — same as desktop behavior with both flags off.
     },
-    [handleHistoryClick, isHistoryView, navigate],
+    [],
   );
 
   return (
     <div className="h-screen flex flex-col bg-slate-50 dark:bg-slate-900 transition-colors duration-300 overflow-hidden">
-      {/* Header — always at top */}
+      {/* Header — always at top. The back-arrow chevrons that used to sit
+          here (one for history view, one for loaded prior conversations) have
+          been removed along with the prior-sessions list page. */}
       <div className="flex items-center justify-between px-4 py-3 flex-shrink-0 border-b border-slate-200 dark:border-slate-700 min-w-0 gap-2">
         <div className="flex items-center gap-4 min-w-0 flex-1">
-          {isHistoryView && (
-            <button
-              onClick={handleBackToChat}
-              className="p-2 rounded-lg bg-white/80 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-800 transition-all duration-200 backdrop-blur-sm shadow-sm hover:shadow-md"
-              aria-label="Back to chat"
-            >
-              <ChevronLeftIcon className="w-5 h-5 text-slate-600 dark:text-slate-400" />
-            </button>
-          )}
-          {isLoadedConversation && (
-            <button
-              onClick={handleBackToHistory}
-              className="p-2 rounded-lg bg-white/80 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-800 transition-all duration-200 backdrop-blur-sm shadow-sm hover:shadow-md"
-              aria-label="Back to history"
-            >
-              <ChevronLeftIcon className="w-5 h-5 text-slate-600 dark:text-slate-400" />
-            </button>
-          )}
           <div className="min-w-0 flex-1">
             <div className="flex items-center min-w-0">
               <span className="text-slate-800 dark:text-slate-100 text-lg sm:text-2xl font-bold tracking-tight px-1 -mx-1 flex-shrink-0">
                 SpAIglass
               </span>
-              {workingDirectory && (
-                <span
-                  className="ml-3 text-sm font-medium text-blue-500 dark:text-blue-400 truncate min-w-0"
-                  title={workingDirectory}
-                >
-                  {workingDirectory}
-                </span>
-              )}
-              {activeContext && (
-                <span className="ml-2 text-xs font-medium text-emerald-500 dark:text-emerald-400 flex-shrink-0">
-                  / {activeContext.name}
-                </span>
-              )}
-              {isHistoryView && (
-                <>
-                  <span className="text-slate-400 mx-2 flex-shrink-0">›</span>
-                  <span className="text-slate-800 dark:text-slate-100 text-lg font-bold flex-shrink-0">
-                    History
+              {(() => {
+                // Big-font project/role display. Project = basename of the
+                // working directory; role = activeContext.name when loaded,
+                // otherwise a humanized fallback from the raw roleFile (e.g.
+                // "dev-ops.md" → "dev ops"). Path lives in the subline below.
+                const projectBase = workingDirectory
+                  ? workingDirectory
+                      .replace(/\/+$/, "")
+                      .split(/[\\/]/)
+                      .filter(Boolean)
+                      .pop() || workingDirectory
+                  : null;
+                const roleLabel =
+                  activeContext?.name ||
+                  (roleFile
+                    ? roleFile.replace(/\.md$/, "").replace(/[-_]/g, " ")
+                    : null);
+                if (!projectBase && !roleLabel) return null;
+                return (
+                  <span className="ml-3 flex items-center min-w-0 text-lg sm:text-2xl font-bold tracking-tight truncate">
+                    {projectBase && (
+                      <span
+                        className="text-blue-500 dark:text-blue-400 truncate"
+                        title={workingDirectory || projectBase}
+                      >
+                        {projectBase}
+                      </span>
+                    )}
+                    {projectBase && roleLabel && (
+                      <span className="mx-2 text-slate-400 flex-shrink-0">
+                        /
+                      </span>
+                    )}
+                    {roleLabel && (
+                      <span className="text-emerald-500 dark:text-emerald-400 truncate">
+                        {roleLabel}
+                      </span>
+                    )}
                   </span>
-                </>
-              )}
+                );
+              })()}
             </div>
             {workingDirectory && (
-              <button
-                onClick={handleBackToProjectChat}
-                className="text-xs font-mono text-slate-500 dark:text-slate-400 hover:text-blue-500 transition-colors truncate max-w-full block text-left"
-                title={workingDirectory}
+              <div
+                className="text-xs font-mono text-slate-500 dark:text-slate-400 max-w-full block text-left select-text cursor-text"
               >
-                {workingDirectory}
-                {sessionId && (
-                  <span className="ml-2 text-slate-400">
-                    {sessionId.substring(0, 8)}...
+                {workingDirectory.replace(/^\/home\/[^/]+/, "~")}
+                {vmConfig && (vmConfig.vmName || vmConfig.ipv4) && (
+                  <span className="ml-2 text-slate-400 dark:text-slate-500">
+                    @ {vmConfig.vmName}
+                    {vmConfig.ipv4 && (
+                      <span className="ml-1 text-slate-500 dark:text-slate-400">
+                        ({vmConfig.ipv4})
+                      </span>
+                    )}
                   </span>
                 )}
-              </button>
+                {sessionId && (
+                  <span className="ml-2 text-slate-400">
+                    {sessionId}
+                  </span>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -846,9 +926,16 @@ export function ChatPage() {
               >
                 <CubeTransparentIcon className="w-5 h-5" />
               </button>
-              {!isHistoryView && <HistoryButton onClick={handleHistoryClick} />}
             </>
           )}
+          <button
+            onClick={handleNewSession}
+            className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-800/80 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 transition-all duration-200"
+            title="New session"
+            aria-label="New session"
+          >
+            <PlusCircleIcon className="w-5 h-5" />
+          </button>
           <SettingsButton onClick={handleSettingsClick} />
         </div>
       </div>
@@ -907,7 +994,7 @@ export function ChatPage() {
         <div
           className={`${
             isMobile
-              ? mobileTab === "chat" || mobileTab === "history"
+              ? mobileTab === "chat"
                 ? "flex-1"
                 : "hidden"
               : editingFile || showArchViewer
@@ -916,34 +1003,13 @@ export function ChatPage() {
           } min-w-0 flex flex-col overflow-hidden`}
         >
           <div className="flex-1 flex flex-col overflow-hidden p-3 sm:p-4">
-            {isHistoryView ? (
-              <HistoryView
-                workingDirectory={workingDirectory || ""}
-                encodedName={getEncodedName()}
-                onBack={handleBackToChat}
-              />
-            ) : historyLoading ? (
+            {historyLoading ? (
               <div className="flex-1 flex items-center justify-center">
                 <div className="text-center">
                   <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin mx-auto mb-4"></div>
                   <p className="text-slate-600 dark:text-slate-400">
                     Loading conversation history...
                   </p>
-                </div>
-              </div>
-            ) : historyError ? (
-              <div className="flex-1 flex items-center justify-center">
-                <div className="text-center max-w-md">
-                  <p className="text-red-500 text-xl mb-2">Error</p>
-                  <p className="text-slate-600 dark:text-slate-400 text-sm mb-4">
-                    {historyError}
-                  </p>
-                  <button
-                    onClick={() => navigate({ search: "" })}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                  >
-                    Start New Conversation
-                  </button>
                 </div>
               </div>
             ) : (
@@ -958,8 +1024,9 @@ export function ChatPage() {
                   }}
                   onDismiss={() => setStaleFiles([])}
                 />
-                <ChatMessages
-                  messages={messages}
+                <FrameChatView
+                  rows={frameChat.state.rows}
+                  toolCalls={frameChat.state.toolCalls}
                   isLoading={isLoading}
                   currentStatus={currentStatus}
                   userLogin={ws.login}
@@ -969,14 +1036,24 @@ export function ChatPage() {
                     setShowArchViewer(false);
                   }}
                   onToolResult={(requestId, status, data, reason) => {
-                    // Tell the backend what the user picked, then immediately
-                    // disable the widget so a replay/reconnect can't let them
-                    // answer the same prompt twice.
+                    // Tell the backend what the user picked.
                     ws.sendToolResult(requestId, status, data, reason);
-                    markInteractiveAnswered(requestId);
+                    // Optimistically flip the matching interactive row to
+                    // resolved so a stray replay/reconnect can't re-open
+                    // the widget. The backend will confirm with a real
+                    // interactive_resolved frame shortly.
+                    frameChat.addFrame({
+                      id: `local-resolved-${Math.random().toString(36).slice(2, 10)}`,
+                      seq: 0,
+                      ts: Date.now(),
+                      type: "interactive_resolved",
+                      requestId,
+                      resolution: status,
+                    });
                   }}
                   onSubmitText={(text) => sendMessage(text)}
                 />
+
                 <ChatInput
                   input={input}
                   isLoading={isLoading}
@@ -992,10 +1069,22 @@ export function ChatPage() {
                   thinkingLevel={thinkingLevel}
                   onThinkingLevelChange={setThinkingLevel}
                   // Layout-reshape signature so ChatInput re-focuses the
-                  // textarea when arch viewer or file editor toggles. Both
-                  // collapse the chat panel between w-[450px] and flex-1.
+                  // textarea after any panel toggle. Each contributing flag
+                  // gets its own bit so the integer changes whenever any of
+                  // them flip:
+                  //   • arch viewer / file editor — collapse the chat panel
+                  //     between w-[450px] and flex-1
+                  //   • file sidebar — narrows the chat panel by the
+                  //     w-56 left column
+                  //   • settings modal — toggles `document.body.style.overflow`
+                  //     which reflows the page; without a refocus the caret
+                  //     ends up clipped behind the chat scrollback
                   focusTrigger={
-                    (showArchViewer ? 1 : 0) + (editingFile ? 2 : 0)
+                    (showArchViewer ? 1 : 0) +
+                    (editingFile ? 2 : 0) +
+                    (showSidebar ? 4 : 0) +
+                    (isSettingsOpen ? 8 : 0) +
+                    sessionFocusBump * 16
                   }
                   pendingImages={pendingImages}
                   onImageAdd={(files) => {

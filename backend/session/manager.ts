@@ -271,10 +271,26 @@ export class SessionManager {
         ...(fm.mcpServers || {}),
       } as Record<string, import("@anthropic-ai/claude-agent-sdk").McpServerConfig>;
 
-      // Use startup() for reliable initialization
+      // Use startup() for reliable initialization.
+      //
+      // pathToClaudeCodeExecutable MUST be passed explicitly. Without it the
+      // SDK tries to resolve a bundled native claude binary via
+      // `import.meta.url` relative paths — which are meaningless inside a
+      // bun-compiled single-file host (everything is embedded in the
+      // executable). That fallback throws "Native CLI binary for
+      // linux-x64 not found" on every outside-user install.
+      //
+      // Since Anthropic's current installer (`curl https://claude.ai/install.sh | bash`)
+      // drops a standalone ELF/Mach-O/PE binary at `this.cliPath`, the SDK's
+      // isExecutable check (`!path.endsWith(".js"|".mjs"|...)`) returns true
+      // and the SDK spawns the binary directly — no node/bun runtime needed
+      // on the host. See backend/cli/validation.ts for how this.cliPath is
+      // discovered. If a future Anthropic installer regresses to a JS-based
+      // wrapper we'll need to fall back to spawnClaudeCodeProcess.
       const warmSession = await startup({
         options: {
           cwd: workingDirectory,
+          pathToClaudeCodeExecutable: this.cliPath,
           permissionMode: (fm.permissionMode as "bypassPermissions" | undefined) || "bypassPermissions" as const,
           allowDangerouslySkipPermissions: true,
           mcpServers,

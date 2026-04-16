@@ -18,3 +18,13 @@ node_modules/
 # Environment and databases
 .env
 *.db
+
+# Session scratch files
+CURRENT-SESSION.md
+MEMORY_UPDATE.md
+SPAIGLASS_WIDGETS.md
+spaiglass_session.notes
+architecture-upgrade-workplan.md
+
+# Symlink to frontend dist in backend
+backend/static

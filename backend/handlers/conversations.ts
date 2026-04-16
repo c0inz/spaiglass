@@ -47,7 +47,7 @@ export async function handleConversationRequest(c: Context) {
     }
 
     logger.history.debug(
-      `Loaded conversation with ${conversationHistory.messages.length} messages`,
+      `Loaded conversation with ${conversationHistory.frames.length} frames`,
     );
 
     return c.json(conversationHistory);

@@ -17,6 +17,7 @@ import { exit } from "../utils/os.ts";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { SessionManager } from "../session/manager.ts";
 import { createWSHandler } from "../session/ws-handler.ts";
+import { registerProjects } from "../utils/register-projects.ts";
 
 /**
  * Boot the local backend (HTTP + WebSocket) and return once it is listening.
@@ -35,6 +36,11 @@ async function main(runtime: NodeRuntime) {
   if (args.debug) {
     logger.cli.info("🐛 Debug mode enabled");
   }
+
+  // Auto-register ~/projects/*/agents/ in ~/.claude.json so every project
+  // with a role file shows up in the dropdown. Phase 3 binary does this in
+  // spaiglass-host.ts; the legacy npm-install path needs it here too.
+  registerProjects();
 
   const cliPath = await validateClaudeCli(runtime, args.claudePath);
 

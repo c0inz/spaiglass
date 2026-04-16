@@ -12,7 +12,23 @@
 import { useState, useEffect, useRef, memo } from "react";
 import type { DisplayStatus } from "../utils/statusClassifier";
 
-const SPINNER_FRAMES = ["·", "+", "✦", "✿"];
+// Braille dots — the classic cli-spinners "dots" preset. All ten frames
+// are single-cell-width in any monospace font, so the adjacent label does
+// not jitter horizontally as the spinner advances. (The previous frames
+// "·+✦✿" mixed narrow ASCII with double-width symbols and made the action
+// word wiggle on every tick.)
+const SPINNER_FRAMES = [
+  "⠋",
+  "⠙",
+  "⠹",
+  "⠸",
+  "⠼",
+  "⠴",
+  "⠦",
+  "⠧",
+  "⠇",
+  "⠏",
+];
 
 /**
  * Map DisplayStatus.kind to a Tailwind color class for the spinner + label.
@@ -54,12 +70,12 @@ export const StatusLine = memo(function StatusLine({ status }: StatusLineProps) 
   const prevLabelRef = useRef<string | null>(null);
   const [fadeClass, setFadeClass] = useState("opacity-100");
 
-  // Spinner animation
+  // Spinner animation. 80ms cadence matches the cli-spinners dots preset.
   useEffect(() => {
     if (!status) return;
     const id = setInterval(
       () => setFrame((f) => (f + 1) % SPINNER_FRAMES.length),
-      200,
+      80,
     );
     return () => clearInterval(id);
   }, [status]);
@@ -91,7 +107,16 @@ export const StatusLine = memo(function StatusLine({ status }: StatusLineProps) 
       aria-live="polite"
     >
       <span className={`font-mono text-sm inline-flex items-center gap-2 ${color}`}>
-        <span aria-hidden="true">{SPINNER_FRAMES[frame]}</span>
+        {/* Fixed-width slot for the spinner glyph. Even though the braille
+            frames are all single-cell-width in monospace, pinning the box
+            width prevents subpixel rounding from nudging the label. */}
+        <span
+          aria-hidden="true"
+          className="inline-block text-center"
+          style={{ width: "1ch" }}
+        >
+          {SPINNER_FRAMES[frame]}
+        </span>
         <span>{status.label}</span>
       </span>
     </div>

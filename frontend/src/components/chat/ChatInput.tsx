@@ -99,12 +99,22 @@ export function ChatInput({
   const { enterBehavior } = useEnterBehavior();
 
   // Focus input when not loading and not in permission mode. focusTrigger is
-  // bumped by ChatPage on layout-state changes (arch/editor toggles) so the
-  // cursor returns to the textarea after the chat panel reshapes.
+  // bumped by ChatPage on layout-state changes (arch viewer / file editor /
+  // file sidebar / settings modal) so the cursor returns to the textarea
+  // after the chat panel reshapes.
+  //
+  // We defer the focus call to the next animation frame so any in-flight
+  // layout reflow (sidebar slide, modal close, body overflow restore) has
+  // settled first — focusing mid-reflow leaves the caret at the textarea's
+  // OLD position, which can render visually behind the chat scrollback.
+  // `preventScroll: true` stops the focus from triggering a scroll-into-view
+  // walk that would jolt any ancestor scrollable.
   useEffect(() => {
-    if (!isLoading && !showPermissions && inputRef.current) {
-      inputRef.current.focus();
-    }
+    if (isLoading || showPermissions) return;
+    const raf = requestAnimationFrame(() => {
+      inputRef.current?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(raf);
   }, [isLoading, showPermissions, focusTrigger]);
 
   // Auto-resize textarea
@@ -312,7 +322,13 @@ export function ChatInput({
           ))}
         </div>
       )}
-      <form onSubmit={handleSubmit} className="relative">
+      <form
+        onSubmit={handleSubmit}
+        className="relative"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) inputRef.current?.focus();
+        }}
+      >
         {mentionDropdown}
         {slashMenu &&
           slashCommands.length > 0 &&
@@ -429,14 +445,15 @@ export function ChatInput({
               <PaperClipIcon className="w-4 h-4" />
             </button>
           )}
-          {isLoading && !input.trim() && (
+          {isLoading && (
             <button
               type="button"
               onClick={onAbort}
-              className="p-2 bg-red-100 hover:bg-red-200 dark:bg-red-900/20 dark:hover:bg-red-900/30 text-red-600 dark:text-red-400 rounded-lg transition-all duration-200 shadow-sm hover:shadow-md"
+              className="px-2 py-1 bg-red-100 hover:bg-red-200 dark:bg-red-900/20 dark:hover:bg-red-900/30 text-red-600 dark:text-red-400 rounded-lg transition-all duration-200 shadow-sm hover:shadow-md flex items-center gap-1 text-xs font-medium max-h-[28px]"
               title="Stop (ESC)"
             >
-              <StopIcon className="w-4 h-4" />
+              <StopIcon className="w-3.5 h-3.5" />
+              Stop
             </button>
           )}
           <button

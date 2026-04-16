@@ -1,20 +1,9 @@
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
-import { Suspense, lazy } from "react";
 import { ProjectSelector } from "./components/ProjectSelector";
 import { ChatPage } from "./components/ChatPage";
 import { RoleResolver } from "./components/RoleResolver";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { SettingsProvider } from "./contexts/SettingsContext";
-import { isDevelopment } from "./utils/environment";
-
-// Lazy load DemoPage only in development
-const DemoPage = isDevelopment()
-  ? lazy(() =>
-      import("./components/DemoPage").then((module) => ({
-        default: module.DemoPage,
-      })),
-    )
-  : null;
 
 function App() {
   return (
@@ -27,16 +16,6 @@ function App() {
           <Route path="/" element={<ProjectSelector />} />
           <Route path="/projects/*" element={<ChatPage />} />
           <Route path="*" element={<RoleResolver />} />
-          {DemoPage && (
-            <Route
-              path="/demo"
-              element={
-                <Suspense fallback={<div>Loading demo...</div>}>
-                  <DemoPage />
-                </Suspense>
-              }
-            />
-          )}
         </Routes>
       </Router>
     </SettingsProvider>

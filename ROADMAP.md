@@ -498,7 +498,9 @@ Implement the interactive components and the MCP tool plumbing per `agent-termin
 
 # Phase 8 — CSP and frontend integrity
 
-**Status:** in progress (2026-04-11). Steps A-D code complete, CI updated. Pending: deploy to live relay and tag first release with bundle hash. **Owner:** Claude (code) + John (deploy).
+**Status:** **GATED (2026-04-14).** Steps A-D code complete, CI updated. Pending: deploy to live relay, wire `GIT_SHA`, and tag first release with bundle hash. **Owner:** Claude (code) + John (deploy).
+
+> **Gate (2026-04-14):** John's call — no further hardening work (this phase OR Phase 5) until the project goes **7 consecutive days without a bug fix or feature-creep request**. When the clock is clean, Phase 5 and Phase 8 get implemented together as a single block rather than piecemeal. Rationale: CSP debugging and supply-chain plumbing create deploy friction that compounds with active feature churn; stabilize the surface first, then lock it down. Any new hardening idea that surfaces before the gate opens should be accumulated under this same gate — do not execute it in isolation.
 
 > **Dependency resolved (2026-04-10):** Phase 5 was moved to the bottom of the execution order, which would have left Phase 8 step 5 stranded waiting on the `/api/health` commit-SHA work from Phase 5 deliverable #8. **John's call: option 2 — pull deliverable #8 forward into Phase 8.** The 1-hour `GIT_SHA` plumbing now lives inside Phase 8 (see step 5 below). Phase 5 deliverable #8 has been retitled as a cross-reference pointing back here. Phase 8 ships as a complete unit with all 5 steps.
 
@@ -807,7 +809,7 @@ Once 7.6 is shipped:
 
 # Phase 5 — Supply-chain hardening
 
-**Status:** README mentions "planned." Now we ship it. **Estimate:** 1 week. **Owner:** TBD.
+**Status:** **GATED (2026-04-14).** See the same gate on Phase 8 — Phase 5 and Phase 8 ship together as a single hardening block once the project goes 7 consecutive days without a bug fix or feature-creep request. Do not start either phase in isolation. **Estimate:** 1 week (combined with Phase 8). **Owner:** TBD.
 
 > **Execution-order note (2026-04-10):** moved to last by John. Phase numbering preserved; only the order in which work happens changes. **Conflict resolved:** the original `Phase 8 → Phase 5` dependency on the `/api/health` commit-SHA work was resolved with option 2 — deliverable #8 below was pulled forward into Phase 8 step 5. See Phase 8 step 5 for the actual implementation. Phase 5's deliverable #8 is now a verification checkbox, not new work.
 
@@ -865,6 +867,8 @@ Items worth tracking but not on a clock:
   - Typing indicators on a 500ms debounced channel
   - Per-message `github_login` attribution rendered in the UI
   - `active_sessions` table in the relay SQLite, GC'd on a 60s sweep
+- **Wire `inline_tool_result` content blocks end-to-end.** The Phase B frame protocol reserves an `inline_tool_result` variant on `AssistantContentBlock` (see `shared/frames.ts:115`) for SDK-native tools like WebSearch that return results inside the assistant message instead of via the normal `tool_call_start` → `tool_call_end` lifecycle. Today nothing emits it: the backend `FrameEmitter` never produces one, and `FrameInterpreter.tsx:268` just renders a gray `[inline_tool_result #<id>]` dev tag. No decision needed until we turn on a tool that actually uses this shape (WebSearch is the likely trigger). When that happens, revisit whether to wire a real inline-result renderer (probably a compact chip next to the `tool_use` block) or drop the variant and have the emitter synthesize a `tool_call_end` instead.
+- **Inline file attachments from Claude into the chat transcript.** Today's `file_delivery` card is a *pointer* to a file on the VM disk (Open loads it in the editor, Download streams it from the VM). It is not an attachment the chat transcript owns. John asked (2026-04-15) for Telegram-bot-style behavior where Claude "sends a file into chat" and it just appears inline. Scope: new stream event type (e.g. `file_attachment`) in the backend stream + Ink Layer Contract, frontend renderer that shows an inline card with a short-lived blob URL or base64-embedded content, decision on size cap and binary handling, and whether large files fall back to the existing pointer-card path. Touches `backend/handlers/chat.ts`, the frame protocol, `agent-terminal-json.md`, and the terminal interpreter. Needs brainstorming before any code — do not start without an explicit go. Workaround until then: the existing Download button on the `file_delivery` card, or have Claude push the file to an existing Telegram bot tool from inside the VM.
 - **Org-level access and group-based collaborator management** (formerly Phase 2 v3). "Share with anyone in GitHub org X," team definitions, SSO beyond GitHub. Revisit after Phase 2 ships and we see what users actually ask for.
 - Real-time CRDT collaborative file editing on top of any future concurrent-presence work
 - Multi-tab attach to the same session as a single user (a degenerate case of concurrent presence)

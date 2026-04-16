@@ -115,12 +115,44 @@ if [ -z "$TOKEN" ] && [ -f "$INSTALL_DIR/.env" ]; then
   fi
 fi
 
-[ -n "$TOKEN" ]     || fail "Missing --token=... (get it from $RELAY_URL/fleetrelay when you add a VM)"
+[ -n "$TOKEN" ]     || fail "Missing --token=... (get it from $RELAY_URL when you add a VM)"
 [ -n "$CONN_ID" ]   || fail "Missing --id=..."
 [ -n "$CONN_NAME" ] || fail "Missing --name=..."
 
 command -v curl >/dev/null || fail "curl not found"
 command -v tar  >/dev/null || fail "tar not found"
+
+# Hard-gate Linux installs on user lingering. A systemd --user service does
+# not survive logout unless `loginctl enable-linger <user>` has been run, and
+# enabling linger is a root-only operation. We check this BEFORE downloading
+# anything so a half-installed host can't end up in a state where the service
+# dies the moment the setup agent's shell goes away. macOS (launchd) and
+# Windows (Scheduled Task) have no linger requirement.
+if [ "$PLATFORM" = "linux" ]; then
+  if ! loginctl show-user "$USER" 2>/dev/null | grep -q "Linger=yes"; then
+    # Try passwordless sudo first. If that works, enable it inline.
+    if sudo -n loginctl enable-linger "$USER" 2>/dev/null; then
+      ok "Enabled linger for $USER (via passwordless sudo)"
+    else
+      printf '\n' >&2
+      printf '%s✗ Linger is not enabled for %s%s\n' "$RED$BOLD" "$USER" "$RESET" >&2
+      printf '\n' >&2
+      printf 'SpAIglass installs as a systemd --user service. Without linger, that\n' >&2
+      printf 'service will stop the moment you log out — the VM will appear to go\n' >&2
+      printf 'offline as soon as your shell ends.\n' >&2
+      printf '\n' >&2
+      printf 'Enabling linger requires sudo (root-only setting). Ask a human user\n' >&2
+      printf 'with sudo on this machine to run:\n' >&2
+      printf '\n' >&2
+      printf '    %ssudo loginctl enable-linger %s%s\n' "$BOLD" "$USER" "$RESET" >&2
+      printf '\n' >&2
+      printf 'Then re-run this exact install one-liner. The installer is idempotent\n' >&2
+      printf 'and will pick up where it left off.\n' >&2
+      printf '\n' >&2
+      exit 1
+    fi
+  fi
+fi
 
 CLAUDE_BIN="$HOME/.local/bin/claude"
 if [ ! -x "$CLAUDE_BIN" ]; then
@@ -156,6 +188,46 @@ tar -xzf "$TMP_TAR" -C "$INSTALL_DIR" --strip-components=1
 [ -x "$INSTALL_DIR/spaiglass-host" ] || fail "Tarball is missing the spaiglass-host binary"
 VERSION=$(cat "$INSTALL_DIR/VERSION")
 ok "Extracted spaiglass $VERSION"
+
+# macOS — strip com.apple.quarantine xattr.
+#
+# The Apple Silicon kernel-level signature requirement is satisfied at BUILD
+# time by ldid (see backend/scripts/build-binary.sh) — every Darwin binary
+# leaving the build pipeline carries a valid ad-hoc signature, so end-users
+# need ZERO developer tools to run it. No `codesign`, no developer account,
+# no notarization. This block only handles the quarantine xattr that curl
+# stamps on every downloaded file, which is a separate Gatekeeper UX layer
+# that triggers launchd warnings even on signed binaries.
+#
+# Defensive fallback: if for any reason the binary is NOT signed when it
+# arrives (build pipeline regression, manual binary swap, etc.) AND local
+# `codesign` happens to be available, ad-hoc sign it on the spot. We never
+# ask the user to install anything — if codesign is missing and the binary
+# is unsigned, we surface a clear error pointing at the build pipeline as
+# the right place to fix it.
+#
+# Both branches are no-ops on Linux.
+if [ "$PLATFORM" = "darwin" ]; then
+  if command -v xattr >/dev/null 2>&1; then
+    xattr -dr com.apple.quarantine "$INSTALL_DIR" 2>/dev/null || true
+    ok "Stripped com.apple.quarantine xattrs (Gatekeeper bypass)"
+  fi
+  # Verify signature is present (build pipeline should have signed it).
+  # `codesign -dv` exits 0 if signed, 1 if not. On systems without codesign
+  # we trust the build pipeline silently rather than failing.
+  if command -v codesign >/dev/null 2>&1; then
+    if codesign -dv "$INSTALL_DIR/spaiglass-host" >/dev/null 2>&1; then
+      ok "Binary signature verified (signed at build time)"
+    else
+      warn "Binary arrived unsigned — applying local ad-hoc signature as fallback"
+      if codesign --sign - --force "$INSTALL_DIR/spaiglass-host" 2>/dev/null; then
+        ok "Ad-hoc code-signed spaiglass-host locally"
+      else
+        fail "Binary is unsigned and local codesign failed. This is a build pipeline bug — please report at https://github.com/c0inz/spaiglass/issues"
+      fi
+    fi
+  fi
+fi
 
 # Clean stale files from a pre-Phase-3 npm-based install if present.
 if [ -d "$INSTALL_DIR/backend" ]; then
@@ -227,11 +299,6 @@ EOF
   systemctl --user enable spaiglass.service >/dev/null 2>&1 || true
   systemctl --user restart spaiglass.service
   ok "systemd --user service installed and started"
-
-  if ! loginctl show-user "$USER" 2>/dev/null | grep -q "Linger=yes"; then
-    warn "User lingering is OFF — service will stop when you log out."
-    warn "  Enable persistence with:  sudo loginctl enable-linger $USER"
-  fi
 
   LOGS_HINT="journalctl --user -u spaiglass -f"
 else
@@ -307,10 +374,10 @@ fi
 
 echo
 printf '%s%sSpAIglass %s installed.%s\n' "$BOLD" "$GREEN" "$VERSION" "$RESET"
-printf '  Fleet:      %s/fleetrelay\n' "$RELAY_URL"
-printf '  This VM:    %s/vm/<your-login>.%s/\n' "$RELAY_URL" "$CONN_NAME"
+printf '  Sign in:    %s  (GitHub auth — routes you straight to your chat)\n' "$RELAY_URL"
+printf '  VM name:    %s\n' "$CONN_NAME"
 printf '  Binding:    %s:%s (%s)\n' "$BIND_HOST" "$PORT" "$BIND_LABEL"
 printf '  Logs:       %s\n' "$LOGS_HINT"
-printf '  Update:     re-run this command\n'
+printf '  Update:     re-run this command (idempotent — preserves .env)\n'
 printf '  Uninstall:  curl -fsSL %s/install.sh | bash -s -- --uninstall\n' "$RELAY_URL"
 echo

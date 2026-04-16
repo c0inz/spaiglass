@@ -322,6 +322,15 @@ export function handleConnectorWs() {
         return;
       }
 
+      // Keepalive ping from the VM connector. Reply with pong so the
+      // return path stays warm as well; without this, upstream TLS
+      // proxies will idle-terminate a silent WS in ~60s, causing
+      // "VM is offline" errors on the next browser reconnect.
+      if (msg.type === "ping") {
+        try { ws.send(JSON.stringify({ type: "pong" })); } catch { /* ignore */ }
+        return;
+      }
+
       // Handle auth
       if (msg.type === "auth") {
         const token = msg.token as string;
@@ -493,6 +502,20 @@ export function createBrowserWsHandler(
 
     onMessage(ws: WSContext, event: MessageEvent) {
       const raw = typeof event.data === "string" ? event.data : event.data.toString();
+
+      // Keepalive ping from the browser. Reply locally; do NOT forward
+      // to the VM (the backend session handler would log it as an
+      // unknown message type). This keeps the browser ↔ relay hop
+      // warm so upstream TLS proxies don't idle-close it.
+      if (raw.length < 200 && raw.indexOf('"ping"') !== -1) {
+        try {
+          const parsed = JSON.parse(raw) as { type?: unknown };
+          if (parsed && parsed.type === "ping") {
+            try { ws.send(JSON.stringify({ type: "pong" })); } catch { /* ignore */ }
+            return;
+          }
+        } catch { /* not JSON — fall through */ }
+      }
 
       // Owners and editors: forward opaquely (the relay does not inspect content).
       if (role !== "viewer") {

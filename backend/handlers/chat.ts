@@ -17,6 +17,42 @@ import { getClaudeSpawnEnv } from "../utils/anthropic-key.ts";
 
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 
+/**
+ * Intercept the claude CLI's "Not logged in · Please run /login" error and
+ * rewrite it to an actionable in-chat message. The raw text is ambiguous for
+ * outside users — "/login" looks like a chat slash command, but it's actually
+ * a reference to running `claude login` on the VM shell. An outside user with
+ * no context will read the raw message and be stuck.
+ *
+ * This interception runs on every assistant text block; it's a pure substring
+ * check so the common path (text that doesn't match) is effectively free. The
+ * rewrite's own text uses "isn't signed in" and "claude login" (no slash), so
+ * it can never match itself — no double-rewrite risk if the rewritten string
+ * were somehow fed back through.
+ *
+ * The VM name comes from CONNECTOR_NAME, which install.sh / install.ps1 plant
+ * into the host's .env from the --name flag the user chose when registering
+ * the VM. Falls back to "this VM" if the env var is missing (shouldn't happen
+ * on a properly-installed host, but we degrade gracefully rather than crash).
+ */
+function rewriteNotLoggedIn(text: string): string | null {
+  if (!text.includes("Not logged in") || !text.includes("/login")) {
+    return null;
+  }
+  const vmName = process.env.CONNECTOR_NAME || "this VM";
+  return [
+    `⚠ **Claude Code isn't signed in on \`${vmName}\`.**`,
+    ``,
+    `This VM's Claude CLI needs a one-time OAuth sign-in before it can respond. On the VM, run:`,
+    ``,
+    "```",
+    `claude login`,
+    "```",
+    ``,
+    `Follow the browser prompt to sign in with your Claude Max/Pro account, then send your message again. You only have to do this once per VM — the credentials persist.`,
+  ].join("\n");
+}
+
 function mediaTypeForExt(ext: string): string {
   const map: Record<string, string> = {
     ".png": "image/png",
@@ -176,7 +212,12 @@ async function* executeClaudeCommand(
       prompt,
       options: {
         abortController,
-        executable: "node" as const,
+        // Do NOT set `executable: "node"` here. cliPath points at the
+        // standalone claude binary (ELF/Mach-O/PE) from Anthropic's installer.
+        // The SDK's isExecutable heuristic (`!path.endsWith(".js"|".mjs"|...)`)
+        // detects that and spawns the binary directly — no node/bun runtime
+        // needed. Hardcoding `executable: "node"` used to crash every chat on
+        // Phase 3 bun-compiled hosts because `node` is not on PATH.
         executableArgs: [],
         pathToClaudeCodeExecutable: cliPath,
         ...(!hasImages && sessionId ? { resume: sessionId } : {}),
@@ -190,6 +231,32 @@ async function* executeClaudeCommand(
     })) {
       // Debug logging of raw SDK messages with detailed content
       logger.chat.debug("Claude SDK Message: {sdkMessage}", { sdkMessage });
+
+      // Intercept "Not logged in" from the claude CLI before it hits the
+      // frontend. Rewrites the assistant text block in-place so the user sees
+      // an actionable message ("SSH to <VM> and run `claude login`") instead
+      // of the raw CLI error. See rewriteNotLoggedIn() for the why.
+      if (sdkMessage.type === "assistant" && sdkMessage.message?.content) {
+        const content = sdkMessage.message.content;
+        if (Array.isArray(content)) {
+          for (const item of content) {
+            if (
+              item.type === "text" &&
+              typeof (item as { text?: unknown }).text === "string"
+            ) {
+              const rewritten = rewriteNotLoggedIn(
+                (item as { text: string }).text,
+              );
+              if (rewritten !== null) {
+                (item as { text: string }).text = rewritten;
+                logger.chat.info(
+                  "Rewrote 'Not logged in' CLI error to friendly chat message",
+                );
+              }
+            }
+          }
+        }
+      }
 
       yield {
         type: "claude_json",

@@ -24,6 +24,7 @@
     "@anthropic-ai/claude-agent-sdk": "^0.2.97",
     "@heroicons/react": "^2.2.0",
     "@monaco-editor/react": "^4.7.0",
+    "monaco-editor": "^0.55.1",
     "ansi-to-html": "^0.7.2",
     "dayjs": "^1.11.13",
     "highlight.js": "^11.11.1",

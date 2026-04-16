@@ -52,11 +52,13 @@ export interface HistoryListResponse {
 }
 
 // Conversation history types
-// Note: messages are typed as unknown[] to avoid frontend/backend dependency issues
-// Frontend should cast to TimestampedSDKMessage[] (defined in frontend/src/types.ts)
+// Phase B: history endpoint returns pre-replayed Frame[] (frame-native renderer).
+// The backend runs the stored JSONL through a headless FrameEmitter so the
+// frontend does not need to host SDK→frame translation.
 export interface ConversationHistory {
   sessionId: string;
-  messages: unknown[]; // TimestampedSDKMessage[] in practice, but avoiding frontend type dependency
+  /** Ordered Frame[] from server-side replay — consumed by buildFrameState. */
+  frames: unknown[]; // Frame[] in practice — typed as unknown[] to avoid shared/frames <-> frontend coupling at shared/types layer
   metadata: {
     startTime: string;
     endTime: string;

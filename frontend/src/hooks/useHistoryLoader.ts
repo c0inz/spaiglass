@@ -1,11 +1,20 @@
+/**
+ * Phase B — frame-native history loader.
+ *
+ * Fetches `/api/projects/:encoded/histories/:sessionId` and hands back the
+ * pre-replayed `Frame[]` the backend produced via server-side FrameEmitter.
+ * No SDK-message → frame translation in the frontend; no legacy AllMessage
+ * intermediate. Callers feed the array directly into `buildFrameState` /
+ * `loadFrames`.
+ */
+
 import { useState, useEffect, useCallback } from "react";
-import type { AllMessage, TimestampedSDKMessage } from "../types";
+import type { Frame } from "../../../shared/frames";
 import type { ConversationHistory } from "../../../shared/types";
 import { getConversationUrl } from "../config/api";
-import { useMessageConverter } from "./useMessageConverter";
 
 interface HistoryLoaderState {
-  messages: AllMessage[];
+  frames: Frame[];
   loading: boolean;
   error: string | null;
   sessionId: string | null;
@@ -16,31 +25,13 @@ interface HistoryLoaderResult extends HistoryLoaderState {
   clearHistory: () => void;
 }
 
-// Type guard to check if a message is a TimestampedSDKMessage
-function isTimestampedSDKMessage(
-  message: unknown,
-): message is TimestampedSDKMessage {
-  return (
-    typeof message === "object" &&
-    message !== null &&
-    "type" in message &&
-    "timestamp" in message &&
-    typeof (message as { timestamp: unknown }).timestamp === "string"
-  );
-}
-
-/**
- * Hook for loading and converting conversation history from the backend
- */
 export function useHistoryLoader(): HistoryLoaderResult {
   const [state, setState] = useState<HistoryLoaderState>({
-    messages: [],
+    frames: [],
     loading: false,
     error: null,
     sessionId: null,
   });
-
-  const { convertConversationHistory } = useMessageConverter();
 
   const loadHistory = useCallback(
     async (encodedProjectName: string, sessionId: string) => {
@@ -71,31 +62,34 @@ export function useHistoryLoader(): HistoryLoaderResult {
 
         const conversationHistory: ConversationHistory = await response.json();
 
-        // Validate the response structure
+        // If the backend is serving a stale response shape (pre-Phase B
+        // `{messages: [...]}` instead of `{frames: [...]}`), degrade
+        // gracefully: skip history, log a warning, and let the chat open
+        // empty. The alternative — hard-throwing and replacing the whole
+        // view with an error screen — also hid the permission-mode
+        // announcement and gave the user no way to start chatting.
         if (
-          !conversationHistory.messages ||
-          !Array.isArray(conversationHistory.messages)
+          !conversationHistory.frames ||
+          !Array.isArray(conversationHistory.frames)
         ) {
-          throw new Error("Invalid conversation history format");
+          console.warn(
+            "History response missing frames[] (stale backend shape?). Opening empty scrollback.",
+          );
+          setState((prev) => ({
+            ...prev,
+            frames: [],
+            loading: false,
+            sessionId: conversationHistory.sessionId ?? sessionId,
+          }));
+          return;
         }
 
-        // Convert unknown[] to TimestampedSDKMessage[] with type checking
-        const timestampedMessages: TimestampedSDKMessage[] = [];
-        for (const msg of conversationHistory.messages) {
-          if (isTimestampedSDKMessage(msg)) {
-            timestampedMessages.push(msg);
-          } else {
-            console.warn("Skipping invalid message in history:", msg);
-          }
-        }
-
-        // Convert to frontend message format
-        const convertedMessages =
-          convertConversationHistory(timestampedMessages);
+        // The backend produces Frame[] directly; cast through unknown[].
+        const frames = conversationHistory.frames as Frame[];
 
         setState((prev) => ({
           ...prev,
-          messages: convertedMessages,
+          frames,
           loading: false,
           sessionId: conversationHistory.sessionId,
         }));
@@ -112,12 +106,12 @@ export function useHistoryLoader(): HistoryLoaderResult {
         }));
       }
     },
-    [convertConversationHistory],
+    [],
   );
 
   const clearHistory = useCallback(() => {
     setState({
-      messages: [],
+      frames: [],
       loading: false,
       error: null,
       sessionId: null,
@@ -132,7 +126,7 @@ export function useHistoryLoader(): HistoryLoaderResult {
 }
 
 /**
- * Hook for loading conversation history on mount when sessionId is provided
+ * Hook for loading conversation history on mount when sessionId is provided.
  */
 export function useAutoHistoryLoader(
   encodedProjectName?: string,
@@ -144,7 +138,6 @@ export function useAutoHistoryLoader(
     if (encodedProjectName && sessionId) {
       historyLoader.loadHistory(encodedProjectName, sessionId);
     } else if (!sessionId) {
-      // Only clear if there's no sessionId - don't clear while waiting for encodedProjectName
       historyLoader.clearHistory();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

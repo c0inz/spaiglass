@@ -3,11 +3,10 @@ import {
   FolderIcon,
   DocumentTextIcon,
   Squares2X2Icon,
-  ClockIcon,
   UserGroupIcon,
 } from "@heroicons/react/24/outline";
 
-export type MobileTab = "chat" | "files" | "editor" | "arch" | "history" | "agents";
+export type MobileTab = "chat" | "files" | "editor" | "arch" | "agents";
 
 interface MobileTabBarProps {
   activeTab: MobileTab;
@@ -27,7 +26,6 @@ const TABS: TabDef[] = [
   { id: "editor", label: "Editor", Icon: DocumentTextIcon },
   { id: "arch", label: "Arch", Icon: Squares2X2Icon },
   { id: "agents", label: "Agents", Icon: UserGroupIcon },
-  { id: "history", label: "History", Icon: ClockIcon },
 ];
 
 /**

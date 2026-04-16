@@ -2,7 +2,7 @@
   "project": {
     "name": "SpAIglass",
     "summary": "Browser-based multi-VM Claude Code interface with fleet relay",
-    "version": "2026.04.12",
+    "version": "2026.04.15",
     "owner": "johntdavenport",
     "domain": "spaiglass.xyz",
     "repo": "github.com/c0inz/spaiglass"
@@ -29,18 +29,19 @@
   },
 
   "components": [
-    { "id": "relay", "name": "SGCleanRelay", "type": "gateway", "description": "Stateless routing proxy — WebSocket tunnels, GitHub OAuth, fleet dashboard, static frontend serving", "runsOn": ["relay-droplet"], "status": "active" },
-    { "id": "backend", "name": "Hono Backend", "type": "api-server", "description": "Per-VM API server — spawns Claude CLI, file ops, secrets, session state", "runsOn": ["agent-vm"], "dependsOn": ["claude-cli"], "status": "active" },
+    { "id": "relay", "name": "SGCleanRelay", "type": "gateway", "description": "Stateless routing proxy — WebSocket tunnels, GitHub OAuth, fleet dashboard, static frontend serving, setup docs, project registration docs", "runsOn": ["relay-droplet"], "status": "active" },
+    { "id": "backend", "name": "Hono Backend", "type": "api-server", "description": "Per-VM API server — spawns Claude CLI, file ops, secrets, session state, project/role registration, auto-discovers ~/projects at startup", "runsOn": ["agent-vm"], "dependsOn": ["claude-cli"], "status": "active" },
     { "id": "connector", "name": "Connector", "type": "service", "description": "Persistent WebSocket link from VM to relay — registers the VM, tunnels HTTP/WS traffic", "runsOn": ["agent-vm"], "dependsOn": ["relay"], "status": "active" },
-    { "id": "frontend", "name": "React Frontend", "type": "spa", "description": "Terminal-themed chat UI, file browser, editor, arch viewer, secrets panel. PWA installable.", "runsOn": ["relay-droplet"], "status": "active" },
+    { "id": "frontend", "name": "React Frontend", "type": "spa", "description": "Terminal-themed chat UI, file browser, editor, arch viewer, secrets panel, fleet agent switcher. PWA installable.", "runsOn": ["relay-droplet"], "status": "active" },
     { "id": "claude-cli", "name": "Claude CLI", "type": "cli-tool", "description": "Anthropic Claude Code CLI — spawned per chat session via Agent SDK", "runsOn": ["agent-vm"], "status": "active" },
     { "id": "terminal-renderer", "name": "Terminal Renderer", "type": "ui-component", "description": "Markdown rendering with GFM tables, syntax highlighting, intent-fenced widgets, ANSI color, mermaid diagrams", "runsOn": ["browser"], "dependsOn": ["frontend"], "status": "active" },
     { "id": "secrets-panel", "name": "Secrets Panel", "type": "ui-component", "description": "CRUD panel for named secrets stored per-VM in ~/.spaiglass/secrets.json", "runsOn": ["browser"], "dependsOn": ["backend"], "status": "active" },
-    { "id": "arch-viewer", "name": "Architecture Viewer", "type": "ui-component", "description": "Colored collapsible renderer for architecture.json operational manifest", "runsOn": ["browser"], "dependsOn": ["frontend"], "status": "active" }
+    { "id": "arch-viewer", "name": "Architecture Viewer", "type": "ui-component", "description": "Colored collapsible renderer for architecture.json operational manifest", "runsOn": ["browser"], "dependsOn": ["frontend"], "status": "active" },
+    { "id": "agent-switcher", "name": "Fleet Agent Switcher", "type": "ui-component", "description": "Header dropdown listing all fleet agents as project/role with path — switch between VMs without returning to dashboard", "runsOn": ["browser"], "dependsOn": ["frontend", "relay"], "status": "active" }
   ],
 
   "connections": [
-    { "id": "c1", "from": "Browser", "to": "Relay", "mode": "https", "purpose": "Dashboard, OAuth, frontend assets" },
+    { "id": "c1", "from": "Browser", "to": "Relay", "mode": "https", "purpose": "Dashboard, OAuth, frontend assets, setup docs" },
     { "id": "c2", "from": "Browser", "to": "Relay", "mode": "wss", "purpose": "Chat WebSocket tunneled to VM" },
     { "id": "c3", "from": "Relay", "to": "Connector", "mode": "wss", "purpose": "HTTP-over-WebSocket tunnel" },
     { "id": "c4", "from": "Backend", "to": "Claude CLI", "mode": "stdio", "purpose": "Spawn CLI, stream NDJSON responses" },
@@ -51,14 +52,14 @@
   "infrastructure": [
     { "id": "relay-droplet", "name": "DigitalOcean Droplet (spaiglass.xyz)", "type": "cloud", "description": "Public-facing relay, Caddy TLS termination, serves frontend bundle", "hosts": ["relay", "frontend"] },
     { "id": "agent-vm", "name": "Agent VMs (19 total, Tailscale mesh)", "type": "virtual-machine", "description": "Each runs one spaiglass backend + connector + Claude CLI", "hosts": ["backend", "connector", "claude-cli"] },
-    { "id": "browser", "name": "User Browser / PWA", "type": "client", "description": "Chrome/Edge/Safari — installable as standalone PWA", "hosts": ["terminal-renderer", "secrets-panel", "arch-viewer"] }
+    { "id": "browser", "name": "User Browser / PWA", "type": "client", "description": "Chrome/Edge/Safari — installable as standalone PWA", "hosts": ["terminal-renderer", "secrets-panel", "arch-viewer", "agent-switcher"] }
   ],
 
   "datastores": [
     { "id": "relay-db", "name": "Relay SQLite", "engine": "better-sqlite3", "path": "/opt/sgcleanrelay/data/relay.db", "description": "Users, connectors, sessions, agent keys, role assignments", "status": "active" },
     { "id": "secrets-store", "name": "Secrets JSON", "engine": "filesystem", "path": "~/.spaiglass/secrets.json", "description": "Per-VM named secrets, chmod 600", "status": "active" },
     { "id": "session-state", "name": "Session State", "engine": "filesystem", "path": "~/.claude-webui/last-session.json", "description": "Last session ID + project path for session resume", "status": "active" },
-    { "id": "claude-projects", "name": "Claude Projects", "engine": "filesystem", "path": "~/.claude.json", "description": "Claude Code project registry — auto-discovered by backend", "status": "active" }
+    { "id": "claude-projects", "name": "Claude Projects", "engine": "filesystem", "path": "~/.claude.json", "description": "Claude Code project registry — auto-discovered by backend at startup via registerProjects()", "status": "active" }
   ],
 
   "frontends": [
@@ -70,35 +71,43 @@
   "siteMap": [
     {
       "path": "/",
-      "label": "Landing",
-      "description": "Public home page with login",
-      "auth": false,
+      "label": "Landing / Fleet Dashboard",
+      "description": "Fleet dashboard with VM list, online status, role selector, add-VM modal. Doubles as landing page with login.",
       "children": [
+        { "path": "/fleetrelay", "label": "Fleet Dashboard (alias)", "description": "Same view as /" },
         { "path": "/setup", "label": "Setup Guide", "auth": false, "description": "VM installation walkthrough" },
+        { "path": "/add-project", "label": "Add Project Guide", "auth": false, "description": "API documentation for POST /api/projects/register endpoint" },
+        { "path": "/architecture-manual", "label": "Architecture Manual", "auth": false, "description": "Guide for creating architecture.json manifests" },
         { "path": "/terms", "label": "Terms of Service", "auth": false },
         { "path": "/privacy", "label": "Privacy Policy", "auth": false },
-        { "path": "/api/setup", "label": "Setup JSON", "auth": false, "description": "Machine-readable setup data" }
-      ]
-    },
-    {
-      "path": "/fleetrelay",
-      "label": "Fleet Dashboard",
-      "description": "VM list, online status, role selector, add-VM modal",
-      "children": [
+        { "path": "/api/setup", "label": "Setup JSON", "auth": false, "description": "Machine-readable setup data" },
         { "path": "/api/release", "label": "Release API", "description": "Current version info" },
-        { "path": "/api/connectors", "label": "Connector API", "description": "CRUD connectors" }
+        { "path": "/api/connectors", "label": "Connector API", "description": "CRUD connectors" },
+        { "path": "/api/health", "label": "Health API", "auth": false, "description": "Relay health check" },
+        { "path": "/install.sh", "label": "Install Script (Linux/macOS)", "auth": false },
+        { "path": "/install.ps1", "label": "Install Script (Windows)", "auth": false },
+        { "path": "/roletemplate.md", "label": "Role Template", "auth": false, "description": "Default role file template" }
       ]
     },
     {
       "path": "/vm/:slug/",
       "label": "VM Chat",
-      "description": "React SPA — chat, files, editor, arch, secrets, history",
+      "description": "React SPA — chat, files, editor, arch, secrets, history, agent switcher",
       "children": [
         { "path": "/vm/:slug/api/chat", "label": "Chat API", "description": "POST — NDJSON streaming chat" },
-        { "path": "/vm/:slug/api/files/*", "label": "File API", "description": "Tree, read, write, snapshot" },
+        { "path": "/vm/:slug/api/files/*", "label": "File API", "description": "Tree, read, write, snapshot, list" },
         { "path": "/vm/:slug/api/secrets", "label": "Secrets API", "description": "GET/PUT/DELETE named secrets" },
         { "path": "/vm/:slug/api/ws", "label": "WebSocket", "description": "Bidirectional session channel" },
-        { "path": "/vm/:slug/api/config", "label": "Config API", "description": "VM config + health" }
+        { "path": "/vm/:slug/api/config", "label": "Config API", "description": "VM config + health" },
+        { "path": "/vm/:slug/api/projects", "label": "Projects API", "description": "List registered projects" },
+        { "path": "/vm/:slug/api/projects/register", "label": "Register Project API", "description": "POST — one-shot project + role creation" },
+        { "path": "/vm/:slug/api/projects/contexts", "label": "Contexts API", "description": "Context file discovery" },
+        { "path": "/vm/:slug/api/roles", "label": "Roles API", "description": "GET/POST/PUT roles and plugins" },
+        { "path": "/vm/:slug/api/settings/anthropic-key", "label": "Anthropic Key API", "description": "GET/POST BYO API key (host-local)" },
+        { "path": "/vm/:slug/api/session/*", "label": "Session API", "description": "Save, last, stale detection" },
+        { "path": "/vm/:slug/api/upload", "label": "Upload API", "description": "Image/file upload for chat" },
+        { "path": "/vm/:slug/api/__relay/fleet", "label": "Fleet Relay API", "description": "Fleet agent list for agent switcher" },
+        { "path": "/vm/:slug/api/__relay/self", "label": "Self Relay API", "description": "Current VM connector info + display name" }
       ]
     },
     {
@@ -134,7 +143,12 @@
     { "id": "github-auth", "name": "GitHub OAuth", "description": "Login via GitHub, role-based access per connector", "status": "active", "phase": "P7" },
     { "id": "themes", "name": "Themes", "description": "Dark, light, glass, plain, 70s-dark (5 phosphor colors), 70s-light", "status": "active", "phase": "P5" },
     { "id": "arch-viewer", "name": "Architecture viewer", "description": "Colored collapsible operational manifest from architecture.json", "status": "active", "phase": "P8" },
-    { "id": "ansi-color", "name": "ANSI color in bash output", "description": "Preserves terminal colors and collapses CR progress bars", "status": "active", "phase": "P6.5" }
+    { "id": "ansi-color", "name": "ANSI color in bash output", "description": "Preserves terminal colors and collapses CR progress bars", "status": "active", "phase": "P6.5" },
+    { "id": "agent-switcher", "name": "Fleet agent switcher", "description": "Header dropdown to switch between fleet VMs/roles without returning to dashboard. Shows project/role + path.", "status": "active", "phase": "P9" },
+    { "id": "project-registration", "name": "One-shot project registration", "description": "POST /api/projects/register creates project dir, role file, and Claude config in one call. Backend auto-discovers projects at startup.", "status": "active", "phase": "P9" },
+    { "id": "frame-dedup", "name": "Frame deduplication", "description": "Skips replayed frames on WebSocket reconnect resume — prevents duplicate chat rows from seq-based replay", "status": "active", "phase": "P9" },
+    { "id": "offline-suppression", "name": "Transient offline suppression", "description": "12-second grace period before surfacing VM offline errors — absorbs connector flapping without spamming error messages", "status": "active", "phase": "P9" },
+    { "id": "custom-tab-title", "name": "Custom tab title", "description": "Settings panel to set custom display name for browser tab; relay renders compact server title by default", "status": "active", "phase": "P9" }
   ],
 
   "externalSystems": [
@@ -146,8 +160,8 @@
   ],
 
   "deployments": [
-    { "id": "frontend-deploy", "name": "Frontend deploy", "method": "scp", "target": "relay droplet", "script": "tar + scp to /opt/sgcleanrelay/frontend/", "description": "Build locally, tar dist, push to droplet, no restart needed", "status": "active" },
-    { "id": "relay-deploy", "name": "Relay deploy", "method": "scp + systemctl", "target": "relay droplet", "script": "scp src/*.ts, systemctl restart sgcleanrelay", "description": "Push TypeScript source, restart — runs via tsx directly", "status": "active" },
+    { "id": "frontend-deploy", "name": "Frontend deploy", "method": "deploy-relay.sh --frontend", "target": "relay droplet", "script": "relay/release/deploy-relay.sh", "description": "Build frontend, upload to /opt/sgcleanrelay/frontend/, restart relay", "status": "active" },
+    { "id": "relay-deploy", "name": "Relay deploy", "method": "deploy-relay.sh", "target": "relay droplet", "script": "relay/release/deploy-relay.sh", "description": "Push relay source + frontend, restart sgcleanrelay service", "status": "active" },
     { "id": "fleet-rollout", "name": "Fleet rollout", "method": "ssh", "target": "all agent VMs", "script": "~/scripts/fleet-rollout-spaiglass.sh", "description": "pack.sh builds tarball, uploads to relay, script fetches + installs on each VM", "status": "active" }
   ],
 
@@ -159,6 +173,8 @@
     "Claude CLI is the only LLM integration — no provider switching",
     "File API restricted to project directory — path traversal blocked",
     "GitHub OAuth required for relay — VMs trust the relay's session token",
+    "No Anthropic API key auth — subscription billing only, always use claude login OAuth",
+    "Project registration must be trivially easy — single API call creates everything needed",
     "Architecture.json is the single operational manifest — agents must keep it current after architectural changes"
   ]
 }

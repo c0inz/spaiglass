@@ -80,14 +80,12 @@ export function connectorRoutes(): Hono<RelayEnv> {
     }
 
     const connector = createConnector(user.id, body.name.trim());
-    const publicUrl = c.env.PUBLIC_URL;
     return c.json({
       id: connector.id,
       name: connector.name,
       displayName: connectorDisplayName(connector),
       token: connector.token,
       createdAt: connector.created_at,
-      url: `${publicUrl}/vm/${user.github_login}.${connector.name}/`,
     }, 201);
   });
 

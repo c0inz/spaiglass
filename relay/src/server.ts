@@ -12,8 +12,9 @@ import { createServer } from "node:http";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { getCookie } from "hono/cookie";
 import { readFileSync, existsSync, statSync, createReadStream } from "node:fs";
+import { marked } from "marked";
 import { join as pathJoin } from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   initDb,
   cleanExpiredSessions,
@@ -25,8 +26,10 @@ import {
   getSharedConnectorsForUser,
   getConnectorAccess,
   connectorDisplayName,
+  updateConnectorDisplayName,
   getUserPreference,
   setUserPreference,
+  createAgentKey,
   type ConnectorRole,
 } from "./db.ts";
 import { authRoutes, SESSION_COOKIE } from "./auth.ts";
@@ -64,12 +67,49 @@ const RELAY_COMMIT =
 // missing, so a fresh deploy without the frontend copy still works.
 const RELAY_FRONTEND_DIR =
   process.env.RELAY_FRONTEND_DIR || "/opt/sgcleanrelay/frontend";
+const ARCHITECTURE_DIR =
+  process.env.ARCHITECTURE_DIR || "/opt/sgcleanrelay/architecture";
 
 if (!GITHUB_CLIENT_ID || !GITHUB_CLIENT_SECRET) {
   console.warn(
     "WARNING: GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET not set. OAuth will not work.",
   );
 }
+
+// --- Canonical role-file baseline ---
+//
+// Served at /roletemplate (HTML) and /roletemplate.md (raw). Referenced from
+// the setup guide so a setup agent running on a fresh VM can drop a working
+// role file in place without stopping to ask the human what to write. This
+// is intentionally minimal — identity line, project dir, a short list of
+// hard rules, and an explicit "this is a baseline, discuss with your human"
+// footer. Everything else belongs in the setup guide as suggestions.
+const ROLE_TEMPLATE_MD = `---
+model: claude-opus-4-6
+---
+# <PROJECT_NAME> — Developer
+
+IMPORTANT: You are the primary developer for **<PROJECT_NAME>** in the directory \`~/projects/<PROJECT_NAME>/\`. You are a senior engineer with a shell on this machine. Execute, don't narrate — report results, not intentions.
+
+## Project location
+\`~/projects/<PROJECT_NAME>/\`
+
+## How to check your work
+Run the project's own build / typecheck / test / lint commands before declaring work done. If none exist yet, ask the human what "done" looks like on the first turn and record those commands in this file.
+
+## When context compacts
+Preserve: modified files, pending deploys, the current task, and verification commands.
+
+## Hard rules
+- NEVER commit credentials — live tokens leak into git history permanently.
+- NEVER force-push to main — other sessions and automation depend on linear history.
+- NEVER run destructive operations (rm -rf, DROP TABLE, force push, sudo rm) without explicit instruction.
+
+---
+
+**This file is a baseline.** Talk to your human about strengthening it for SpAIglass effectiveness — see <https://spaiglass.xyz/setup> for the full guide (frontmatter schema, architecture/verification/access sections, anti-patterns). This file is also compatible with the [AGENTS.md](https://agents.md) convention — the same content works as \`AGENTS.md\` at the repo root.
+`;
+
 
 // --- Server-side compact name helpers (mirrors client-side abbreviate/compactName) ---
 
@@ -719,17 +759,21 @@ const PHASE3_TARGETS = new Set([
   "darwin-arm64",
   "windows-x64",
 ]);
-app.get("/releases/spaiglass-host-:target{.+\\.tar\\.gz}", (c) => {
-  const raw = c.req.param("target");
-  if (!raw) return c.text("Missing target", 400);
-  // raw is like "linux-x64.tar.gz" — strip the suffix and validate.
-  const target = raw.replace(/\.tar\.gz$/, "");
+app.get("/releases/:filename", (c) => {
+  const filename = c.req.param("filename");
+  if (!filename) return c.text("Missing filename", 400);
+  // Expect "spaiglass-host-<target>.tar.gz" — validate against the pinned
+  // target list to prevent path traversal or serving arbitrary files from
+  // RELEASE_DIR.
+  const match = filename.match(/^spaiglass-host-(.+)\.tar\.gz$/);
+  if (!match) return c.text("Unknown release filename", 404);
+  const target = match[1];
   if (!PHASE3_TARGETS.has(target)) {
     return c.text("Unknown target", 404);
   }
-  const path = pathJoin(RELEASE_DIR, `spaiglass-host-${target}.tar.gz`);
+  const path = pathJoin(RELEASE_DIR, filename);
   if (!existsSync(path)) {
-    return c.text(`spaiglass-host-${target}.tar.gz not yet published`, 503);
+    return c.text(`${filename} not yet published`, 503);
   }
   const stat = statSync(path);
   c.header("Content-Type", "application/gzip");
@@ -773,20 +817,24 @@ function getSetupData() {
     },
     steps: [
       {
-        title: "Authenticate",
+        title: "Get an agent key (two options)",
         description:
-          "Exchange a GitHub PAT for a SpAIglass agent key. The PAT proves your GitHub identity. The agent key is used for all subsequent API calls.",
+          'You need an <code>sg_...</code> agent key before you can register a VM. Pick whichever option fits how your human user is set up:<br><br><strong>Option A — You already have your user\'s GitHub PAT.</strong> Exchange it for an agent key via the API below. This is the fastest path when you (the agent) already have credentials. A <em>classic</em> PAT needs no scopes (the relay only calls <code>GET https://api.github.com/user</code>). A <em>fine-grained</em> PAT needs <strong>Account permissions → Read profile data</strong> — no repo scopes.<br><br><strong>Option B — Ask the human to retrieve a token.</strong> Tell the user: "Go to <a href="' +
+          PUBLIC_URL +
+          '">' +
+          PUBLIC_URL +
+          '</a> and sign in with GitHub. If you have no VMs registered yet, a one-shot token will appear in a copy-box — paste it back to me." That token is a real <code>sg_...</code> agent key minted for their session. Either option produces the same kind of key; use Option B whenever you do not already have a PAT and do not want to ask for one.',
         endpoint: `POST ${PUBLIC_URL}/api/auth/token-exchange`,
         body: '{ "github_pat": "ghp_YOUR_TOKEN", "key_name": "my-agent" }',
-        note: "Save the agent_key — it is shown only once. If you already have an agent key, skip this step. If using the browser dashboard, sign in with GitHub instead.",
+        note: "Save the agent key — it is shown only once. Treat it like a password. All subsequent steps set the header `Authorization: Bearer sg_YOUR_KEY`.",
       },
       {
         title: "Register a VM",
         description:
-          "Register a new VM connector. The name is a label for your reference — it becomes part of the URL slug. From the dashboard, the Add-VM modal will hand you the install command for Linux/macOS or Windows; via API, register here and grab the token from the response.",
+          'Register a new VM connector. The <code>name</code> is a short label for your reference (used as the URL slug the human will see later). You can register one VM, or one for each project you are setting up — the agent key is reusable across VMs.',
         endpoint: `POST ${PUBLIC_URL}/api/connectors`,
         body: '{ "name": "my-vm" }',
-        note: "Requires Authorization: Bearer sg_YOUR_KEY header. The token is shown ONCE in the response — save it before moving on.",
+        note: "Requires `Authorization: Bearer sg_YOUR_KEY` header. The response returns `{ id, name, token, ... }` — save the token, it is shown ONCE and you'll feed it to the installer in the next step. You do NOT need to construct or remember a VM URL; sign-in handles routing for the human automatically.",
       },
       {
         title: "Install Claude Code CLI on the host",
@@ -810,9 +858,12 @@ function getSetupData() {
       {
         title: "Install spaiglass on the host (one liner)",
         description:
-          "The installer downloads a slim tarball (~130 KB) from the relay, extracts it under ~/spaiglass, installs production node dependencies, writes the .env, and registers a service that launches the backend + relay connector at boot/logon. Re-running upgrades in place and preserves credentials.",
+          'The installer downloads a self-contained binary tarball (~30 MB) from the relay, extracts it under <code>~/spaiglass</code>, writes the <code>.env</code>, and registers a per-user service that launches the backend + relay connector at boot/logon. <strong>Idempotent.</strong> Re-running upgrades in place and preserves the existing <code>.env</code> — if setup failed partway through, you (the agent) can re-run the exact same one-liner with the original <code>--token/--id/--name</code>, or without any flags to refresh from the saved <code>.env</code>.<br><br><strong>Linux gating decision — user lingering (requires sudo).</strong> On Linux, the <code>systemd --user</code> service only survives logout if lingering is enabled for the user, and enabling lingering is a root-only operation. Before running the installer, check whether passwordless sudo is available: <code>sudo -n loginctl enable-linger $USER</code>. If that succeeds silently, you are done — proceed to install. If it fails (prompts for a password or exits non-zero), <strong>stop and ask the human user to run it manually</strong> — without linger the service will die on logout and the VM will appear to "go offline" mysteriously. The installer itself hard-fails on Linux when linger is not set, so there is no way to sleepwalk past this. macOS and Windows have no linger requirement.',
         commands: [
-          "# Linux / macOS:",
+          "# Linux preflight (ask the user to run if this errors):",
+          "sudo -n loginctl enable-linger $USER",
+          "",
+          "# Linux / macOS install:",
           "curl -fsSL " + PUBLIC_URL + "/install.sh | bash -s -- \\",
           "    --token=YOUR_TOKEN --id=YOUR_ID --name=YOUR_VM_NAME",
           "",
@@ -822,27 +873,34 @@ function getSetupData() {
             "/install.ps1 -useb))) `",
           "    -Token YOUR_TOKEN -Id YOUR_ID -Name YOUR_VM_NAME",
         ],
-        note: "Installs a systemd --user unit on Linux, a launchd LaunchAgent on macOS, and a per-user Scheduled Task on Windows. All three start automatically and restart on crash. No inbound ports are opened — the connector dials out over WSS to the relay.",
+        note: "Installs a systemd --user unit on Linux, a launchd LaunchAgent on macOS, and a per-user Scheduled Task on Windows. All three start automatically and restart on crash. No inbound ports are opened — the connector dials out over WSS to the relay. If the installer bails on the linger check, fix linger and re-run the same one-liner.",
       },
       {
-        title: "Access your VM",
+        title: "Add one or more roles to projects",
         description:
-          "Open your VM in the browser. The URL uses your GitHub login and VM name.",
-        url: `${PUBLIC_URL}/vm/<githubLogin>.<vmName>/`,
-        example: `${PUBLIC_URL}/vm/octocat.dev-server/`,
-        note: "The slug is case-insensitive. Bookmark a project and role with: /vm/<login>.<vm>/<projectname>-<rolename>/",
-      },
-      {
-        title: "Add a role to a project",
-        description:
-          "Roles are the most important part of SpAIglass. A role file defines who Claude is, what plugins and tools it has, and how it should behave. SpAIglass uses Claude Code's native <code>.claude/agents/</code> directory — the same convention the CLI uses with <code>claude --agent &lt;name&gt;</code>. Each <code>.md</code> file becomes a selectable role in the SpAIglass dashboard. SpAIglass extends the native convention with per-role plugin isolation via <code>CLAUDE_CONFIG_DIR</code>, so different roles on the same project can have completely different plugin sets without conflicting.",
+          'Roles are the most important part of SpAIglass. A role file defines who Claude is, what plugins and tools it has, and how it should behave. SpAIglass uses Claude Code\'s native <code>.claude/agents/</code> directory — the same convention the CLI uses with <code>claude --agent &lt;name&gt;</code>. Each <code>.md</code> file becomes a selectable role in the SpAIglass chat view.<br><br><strong>Fastest path — use the register API.</strong> One POST to the VM\'s local backend does everything: creates the project directory, the role file, registers it in Claude\'s config, and creates the project metadata directory. <strong>See <a href="/add-project">Adding Projects &amp; Roles</a> for the endpoint reference.</strong><br><br><strong>Manual path (same result).</strong> If you prefer shell commands, the block below works. After creating the file, restart the spaiglass service (<code>systemctl --user restart spaiglass</code>) so the backend re-scans.<br><br><strong>Start from the baseline.</strong> A setup agent running on a fresh VM should not stop to hand-craft a role file — there is a canonical template at <a href="/roletemplate">/roletemplate</a> (raw: <a href="/roletemplate.md"><code>/roletemplate.md</code></a>). Drop it in, finish setup, and then <em>discuss with your human user how to improve the role.md to make SpAIglass more effective</em> during the first real session.',
         commands: [
-          "mkdir -p ~/projects/myproject/.claude/agents",
-          "# Create the role file (see schema and checklist below)",
-          "nano ~/projects/myproject/.claude/agents/developer.md",
+          "# ── RECOMMENDED: one-shot register via API ──",
+          "curl -s -X POST http://127.0.0.1:8080/api/projects/register \\",
+          "  -H 'Content-Type: application/json' \\",
+          "  -d '{\"name\": \"MyProject\", \"role\": \"developer\"}'",
+          "",
+          "# With custom role content:",
+          "curl -s -X POST http://127.0.0.1:8080/api/projects/register \\",
+          "  -H 'Content-Type: application/json' \\",
+          "  -d '{\"name\": \"MyProject\", \"role\": \"developer\", \"roleContent\": \"You are the developer for MyProject...\"}'",
+          "",
+          "# ── Manual path (if you prefer shell commands) ──",
+          "PROJECT=myproject",
+          "ROLE=developer",
+          "mkdir -p ~/projects/$PROJECT/.claude/agents",
+          "curl -fsSL " + PUBLIC_URL + "/roletemplate.md \\",
+          '  | sed "s/<PROJECT_NAME>/$PROJECT/g" \\',
+          "  > ~/projects/$PROJECT/.claude/agents/$ROLE.md",
+          "systemctl --user restart spaiglass  # re-scan projects",
         ],
         example: `${PUBLIC_URL}/vm/octocat.dev-server/myproject-developer/`,
-        note: "SpAIglass also checks the legacy agents/ directory for backward compatibility. If the same filename exists in both .claude/agents/ and agents/, the .claude/agents/ version takes precedence.",
+        note: "SpAIglass also checks the legacy agents/ directory for backward compatibility. If the same filename exists in both .claude/agents/ and agents/, the .claude/agents/ version takes precedence. The canonical baseline template is at /roletemplate — use it whenever a setup agent would otherwise block on \"what should the role file say?\".",
         roleFrontmatterSchema: {
           description:
             "Role files use YAML frontmatter (between --- delimiters) to configure plugins, tools, MCP servers, and model settings. The markdown body below the frontmatter is injected into Claude's system prompt.",
@@ -1077,7 +1135,14 @@ Preserve: list of modified files, pending deploys, current task, test results.
     addMoreVms:
       "The agent key is reusable. To add another VM, repeat steps 2-4 with the same key — each VM gets its own connector token. Mix and match Linux, macOS, and Windows hosts under the same account.",
     shortcut:
-      "If you already have a token/id/name from the dashboard, skip straight to step 4.",
+      "If you already have a token/id/name from a previous registration, skip straight to the install step.",
+    finalStep: {
+      title: "Tell the human user you're done",
+      description:
+        "Once the service is running and at least one role file exists, setup is finished. Report success to your human user and tell them: \"Setup complete. Go to " +
+        PUBLIC_URL +
+        " and sign in with GitHub — you'll land directly in your chat.\" They do not need a URL, a VM name, or a role name; sign-in routes them to the right place automatically. Do not construct or share <code>/vm/&lt;login&gt;.&lt;vm&gt;/</code> URLs — that detail is now internal. If something failed partway through, say so plainly and tell the user what you need from them (typically: `sudo loginctl enable-linger $USER`, then re-run the install one-liner).",
+    },
     features: [
       "Chat with Claude Code from any browser — laptop, phone, tablet",
       "Project file browser — see and edit your files while you chat",
@@ -1103,6 +1168,184 @@ Preserve: list of modified files, pending deploys, current task, test results.
     },
   };
 }
+
+// ── Adding Projects & Roles — standalone reference page ──
+// Linked from /setup step 5 and from setup agents. This is THE document an
+// uninformed agent reads to register a project. Keep it dead simple.
+app.get("/add-project", (c) => {
+  return c.html(`<!DOCTYPE html>
+<html><head><title>Adding Projects &amp; Roles — SpAIglass</title>
+${FAVICON}
+<style>
+body{font-family:system-ui,-apple-system,sans-serif;max-width:720px;margin:40px auto;padding:0 20px;color:#1a1a2e;background:#f0f0f5;line-height:1.6}
+h1{color:#1a1a2e;border-bottom:2px solid #6366f1;padding-bottom:8px}
+h2{color:#4338ca;margin-top:2em}
+code{background:#e4e4ec;padding:2px 6px;border-radius:4px;font-size:0.9em}
+pre{background:#1e1e2e;color:#cdd6f4;padding:16px;border-radius:8px;overflow-x:auto;font-size:0.85em;line-height:1.5}
+.endpoint{background:#1e293b;color:#38bdf8;padding:12px 16px;border-radius:8px;font-family:monospace;font-size:0.95em;margin:12px 0}
+.field{margin:6px 0;padding-left:16px}
+.field strong{color:#4338ca}
+.note{background:#fef3c7;border-left:4px solid #f59e0b;padding:12px 16px;border-radius:0 8px 8px 0;margin:16px 0}
+table{border-collapse:collapse;width:100%;margin:12px 0}
+th,td{text-align:left;padding:8px 12px;border:1px solid #cbd5e1}
+th{background:#e2e8f0}
+a{color:#4338ca}
+</style>
+</head><body>
+<h1>Adding Projects &amp; Roles</h1>
+
+<p><strong>One API call</strong> creates everything needed for a project to appear in the SpAIglass dropdown. No manual file creation, no config editing, no service restart.</p>
+
+<h2>Register Endpoint</h2>
+
+<div class="endpoint">POST http://127.0.0.1:8080/api/projects/register</div>
+
+<p>This runs on the <strong>VM's local backend</strong> (port 8080), not the relay.</p>
+
+<h2>Request Body (JSON)</h2>
+
+<table>
+<tr><th>Field</th><th>Type</th><th>Required</th><th>Description</th></tr>
+<tr><td><code>name</code></td><td>string</td><td>yes</td><td>Project directory name. Alphanumeric, hyphens, underscores, dots. Example: <code>BHMarketing</code></td></tr>
+<tr><td><code>role</code></td><td>string</td><td>yes</td><td>Role filename (without .md). Example: <code>developer</code></td></tr>
+<tr><td><code>roleContent</code></td><td>string</td><td>no</td><td>Markdown content for the role file. If omitted, a default template is written.</td></tr>
+</table>
+
+<h2>What It Does</h2>
+<ol>
+<li>Creates <code>~/projects/{name}/</code></li>
+<li>Creates <code>~/projects/{name}/.claude/agents/{role}.md</code></li>
+<li>Registers the project in <code>~/.claude.json</code></li>
+<li>Creates <code>~/.claude/projects/{encoded-name}/</code></li>
+</ol>
+<p>The project appears in the dropdown <strong>immediately</strong> — no restart needed.</p>
+
+<h2>Examples</h2>
+
+<p><strong>Minimal — default role template:</strong></p>
+<pre>curl -s -X POST http://127.0.0.1:8080/api/projects/register \\
+  -H 'Content-Type: application/json' \\
+  -d '{"name": "BHMarketing", "role": "developer"}'</pre>
+
+<p><strong>With custom role content:</strong></p>
+<pre>curl -s -X POST http://127.0.0.1:8080/api/projects/register \\
+  -H 'Content-Type: application/json' \\
+  -d '{
+  "name": "BHMarketing",
+  "role": "developer",
+  "roleContent": "You are the developer for BHMarketing.\\n\\n## Project Location\\n~/projects/BHMarketing/\\n\\n## Tech Stack\\n- Node.js / TypeScript\\n- PostgreSQL"
+}'</pre>
+
+<p><strong>Add a second role to the same project:</strong></p>
+<pre>curl -s -X POST http://127.0.0.1:8080/api/projects/register \\
+  -H 'Content-Type: application/json' \\
+  -d '{"name": "BHMarketing", "role": "qa-lead"}'</pre>
+
+<h2>Response</h2>
+<pre>{
+  "ok": true,
+  "project": "BHMarketing",
+  "role": "developer",
+  "roleFile": "/home/readystack/projects/BHMarketing/.claude/agents/developer.md",
+  "projectDir": "/home/readystack/projects/BHMarketing"
+}</pre>
+
+<div class="note">
+<strong>Idempotent.</strong> Calling again with the same name/role overwrites the role file but doesn't break anything else. Safe to retry.
+</div>
+
+<h2>For a richer role file</h2>
+<p>The default template is bare-minimum. For a real role file, use the <a href="/roletemplate">role template</a> as a starting point, or see the <a href="/setup">full setup guide</a> for the frontmatter schema, checklist, and examples.</p>
+
+<p style="margin-top:2em;color:#64748b;font-size:0.85em">
+<a href="/setup">← Back to full setup guide</a>
+</p>
+</body></html>`);
+});
+
+// Raw role template — curl target for setup agents
+//   curl -fsSL https://spaiglass.xyz/roletemplate.md \
+//     | sed "s/<PROJECT_NAME>/TrendZion/g" \
+//     > ~/projects/TrendZion/.claude/agents/developer.md
+app.get("/roletemplate.md", (c) => {
+  c.header("Content-Type", "text/markdown; charset=utf-8");
+  c.header("Cache-Control", "public, max-age=300");
+  return c.body(ROLE_TEMPLATE_MD);
+});
+
+// Role template page — HTML view of the canonical baseline role file.
+// Linked from /setup step "Add a role to a project".
+app.get("/roletemplate", (c) => {
+  // HTML-escape the template body for <pre> display.
+  const escaped = ROLE_TEMPLATE_MD
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  return c.html(`<!DOCTYPE html>
+<html><head><title>Role Template — SpAIglass</title>
+${FAVICON}
+${THEME_HEAD}
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { font-family: system-ui; max-width: 800px; margin: 40px auto; padding: 0 20px; color: #1a1a2e; background: #f0f0f5; line-height: 1.55; }
+  h1 { font-size: 1.8em; }
+  h2 { margin-top: 28px; font-size: 1.2em; }
+  .card { background: white; border-radius: 8px; padding: 16px 20px; margin: 12px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  pre { background: #1e293b; color: #e2e8f0; padding: 14px 18px; border-radius: 6px; overflow-x: auto; font-size: 0.85em; white-space: pre-wrap; }
+  code { background: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+  .note { font-size: 0.9em; color: #475569; }
+  .info { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 12px 16px; margin: 12px 0; font-size: 0.9em; }
+  .subtitle { color: #666; }
+  a { color: #3b82f6; }
+  .nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+</style>
+</head><body>
+${THEME_TOGGLE_HTML}
+<div class="nav">
+  <a href="/setup">&larr; Setup guide</a>
+  <a href="/">Home</a>
+</div>
+<h1>Canonical Role Template</h1>
+<p class="subtitle">A minimal, working <code>.claude/agents/&lt;role&gt;.md</code> baseline. Don't stop to perfect it — drop it in, start the session, then iterate.</p>
+
+<div class="info">
+  <strong>This is a baseline, not a finished role file.</strong> It exists so a setup agent never has to stop and ask "what should I write?" Once the session is live, discuss with your LLM user how to strengthen it — see the <a href="/setup#role">checklist and anti-patterns</a> on the setup guide for where to go next.
+</div>
+
+<h2>The template</h2>
+<pre>${escaped}</pre>
+
+<h2>How to use it</h2>
+<p>Replace <code>&lt;PROJECT_NAME&gt;</code> with your actual project name and save it to <code>~/projects/&lt;PROJECT_NAME&gt;/.claude/agents/&lt;role&gt;.md</code>. The setup agent on a fresh VM can do this in one command:</p>
+<pre>PROJECT=TrendZion
+ROLE=developer
+mkdir -p ~/projects/$PROJECT/.claude/agents
+curl -fsSL ${PUBLIC_URL}/roletemplate.md \\
+  | sed "s/&lt;PROJECT_NAME&gt;/$PROJECT/g" \\
+  &gt; ~/projects/$PROJECT/.claude/agents/$ROLE.md</pre>
+
+<h2>What to add after the session is alive</h2>
+<p class="note">The baseline gives you an identity line, a project dir, verification discipline, and hard rules. The setup guide's <a href="/setup">role checklist</a> covers the higher-leverage additions:</p>
+<ul>
+  <li><strong>Architecture / tech stack table</strong> — only list what Claude can't figure out by reading the code</li>
+  <li><strong>Key directories table</strong> — beats two paragraphs of prose</li>
+  <li><strong>Verification commands</strong> — exact build / test / lint / deploy-check commands (highest-leverage section)</li>
+  <li><strong>Access &amp; credentials paths</strong> — list <code>~/credentials/*.json</code> files explicitly; if Claude doesn't know it has access, it won't use it</li>
+  <li><strong>Conventions</strong> — commit message style, branch strategy, naming rules <em>that differ from defaults</em></li>
+  <li><strong>Per-project hard rules</strong> — absolute language (NEVER, MUST NOT) with <em>a reason</em> for each rule, because rules with rationale are followed more reliably</li>
+</ul>
+<p class="note">Avoid: flattery, step-by-step scripts, knowledge dumps, repeating what Claude already knows, or going over ~200 lines.</p>
+
+<h2>Related</h2>
+<ul>
+  <li><a href="/roletemplate.md">Raw <code>roletemplate.md</code></a> (for curl)</li>
+  <li><a href="/setup">Full setup guide</a> — frontmatter schema, full checklist, example role file</li>
+  <li><a href="https://agents.md">AGENTS.md convention</a> — this template is also compatible with the cross-tool <code>AGENTS.md</code> standard; the same content works at the repo root for any agent that reads it</li>
+</ul>
+
+<p style="margin-top: 24px;"><a href="/setup">&larr; Back to Setup</a></p>
+</body></html>`);
+});
 
 // Setup page — HTML for browsers
 app.get("/setup", (c) => {
@@ -1185,7 +1428,6 @@ app.get("/setup", (c) => {
       ${s.body ? `<pre>${s.body}</pre>` : ""}
       ${s.requirements ? `<p><strong>Requirements:</strong> ${s.requirements.join(", ")}</p>` : ""}
       ${s.commands ? `<pre>${s.commands.join("\n")}</pre>` : ""}
-      ${s.url ? `<code class="block">${s.url}</code>` : ""}
       ${s.example ? (s.example.includes("\n") ? `<p>Example:</p><pre>${s.example}</pre>` : `<p>Example: <code>${s.example}</code></p>`) : ""}
       ${roleFrontmatterHtml}
       ${roleConfigDirHtml}
@@ -1231,6 +1473,12 @@ ${THEME_TOGGLE_HTML}
 <h1>SpAIglass Setup Guide</h1>
 <p class="subtitle">${data.description}</p>
 
+<div class="card" style="border-left: 4px solid #3b82f6; background: #eff6ff;">
+  <h3 style="margin-top: 0;">Reading this as an agent?</h3>
+  <p style="margin: 8px 0;">If parsing this HTML is awkward, fetch <a href="/api/setup"><code>${PUBLIC_URL}/api/setup</code></a> instead — exact same content, structured JSON, no CSS/markup noise. Both endpoints stay in sync (they're rendered from one source).</p>
+  <p style="margin: 8px 0 0; font-size: 0.9em; color: #475569;">Use whichever format is easier for your tools. The numbered steps, decision trees, and final instructions are identical.</p>
+</div>
+
 <div class="features">
   <h2>Supported Platforms</h2>
   <p style="margin: 4px 0 10px; font-size: 0.92em; color: #475569;">SpAIglass runs anywhere the Anthropic Claude Code CLI runs. Mix and match in the same fleet.</p>
@@ -1273,6 +1521,22 @@ ${THEME_TOGGLE_HTML}
 
 ${stepsHtml}
 
+<div class="card" style="border-left: 4px solid #22c55e;">
+  <h3>${data.steps.length + 1}. ${data.finalStep.title}</h3>
+  <p>${data.finalStep.description}</p>
+</div>
+
+<div class="card" style="border-left: 4px solid #f59e0b; background: #fffbeb;">
+  <h3 style="margin-top: 0;">Architecture Manifest (required for every project)</h3>
+  <p>Every project registered through this setup produces one file: <code>architecture/architecture.json</code>. That single file is the <strong>operational snapshot</strong> of what the project is doing &mdash; a human coming back after months away should be able to open it and rebuild full mental context without touching the code.</p>
+  <p><strong>This is not a breadcrumb diagram.</strong> Shallow architecture files are worse than none: they create the illusion of documentation while hiding the risks they should be surfacing. A manifest that doesn&rsquo;t list orphaned routes won&rsquo;t help you find the 2024 signup form still live at <code>/old-signup</code>. A manifest that doesn&rsquo;t list database schemas and their row counts won&rsquo;t help you notice the tenant that stopped getting writes three weeks ago. A manifest that doesn&rsquo;t list unauthenticated endpoints can&rsquo;t be used as a security baseline.</p>
+  <p style="font-size: 1.05em; font-weight: 600; margin: 16px 0 8px;"><strong>Full instructions &mdash; and they are long by design &mdash; are at:</strong></p>
+  <p style="font-size: 1.1em; margin: 4px 0 16px;">&rarr; <a href="/architecture-manual"><code>${PUBLIC_URL}/architecture-manual</code></a></p>
+  <p style="font-size: 0.9em; color: #475569;">Read the whole thing before you write a single field. The manual covers: the sourcing rules (never use docs as source-of-truth), the JSON schema, the site-map requirements (every route, every form, every orphan), the database-layer requirements (schemas, tables, grants, row counts), the security surface (unauthenticated endpoints, exceptions with rationale, open CVEs), and the ASCII-art rendering conventions the SpAIglass viewer uses.</p>
+  <p style="font-size: 0.9em; color: #475569;">The manual includes a self-check list at the end. An <code>architecture.json</code> that fails any of the checks is <strong>not done</strong>.</p>
+  <p style="font-size: 0.88em; color: #92400e; margin-top: 12px;"><strong>&#9888; Agent directive:</strong> do not produce a partial manifest. If you cannot verify a field (a process is unreachable, a database rejects your connection, a repo is unreadable), write <code>"unknown"</code> with a <code>statusSource</code> explaining why. An honest unknown is the correct output when the ground truth can&rsquo;t be observed.</p>
+</div>
+
 <h2>Machine-readable</h2>
 <p>Agents and scripts can fetch <a href="/api/setup"><code>/api/setup</code></a> for the same content as JSON.</p>
 <p style="margin-top: 24px;"><a href="/">&larr; Back to Home</a></p>
@@ -1288,6 +1552,84 @@ app.get("/api/setup", (c) => {
     authenticated: !!user,
     user: user ? { login: user.github_login } : null,
   });
+});
+
+// Architecture manual — the generation spec for architecture.json.
+// Source markdown lives in ARCHITECTURE_DIR/MANUAL.md + MANUAL-REFERENCE.md,
+// deployed alongside the relay. Rendered to HTML at request time via `marked`.
+// The /api/ endpoint returns raw markdown for agents.
+function readManualMarkdown(): { core: string; reference: string } | null {
+  const corePath = pathJoin(ARCHITECTURE_DIR, "MANUAL.md");
+  const refPath = pathJoin(ARCHITECTURE_DIR, "MANUAL-REFERENCE.md");
+  if (!existsSync(corePath)) return null;
+  return {
+    core: readFileSync(corePath, "utf-8"),
+    reference: existsSync(refPath) ? readFileSync(refPath, "utf-8") : "",
+  };
+}
+
+app.get("/architecture-manual", (c) => {
+  const md = readManualMarkdown();
+  if (!md) {
+    return c.html(
+      `<html><body><h1>Not found</h1><p>Architecture manual not deployed yet.</p></body></html>`,
+      404,
+    );
+  }
+
+  const coreHtml = marked.parse(md.core) as string;
+  const referenceHtml = md.reference
+    ? (marked.parse(md.reference) as string)
+    : "";
+
+  return c.html(`<!DOCTYPE html>
+<html><head><title>Architecture Manual — SpAIglass</title>
+${FAVICON}
+${THEME_HEAD}
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { font-family: system-ui; max-width: 860px; margin: 40px auto; padding: 0 20px; color: #1a1a2e; background: #f0f0f5; line-height: 1.7; }
+  h1 { font-size: 1.8em; margin-bottom: 4px; }
+  h2 { margin-top: 32px; border-bottom: 2px solid #e2e8f0; padding-bottom: 6px; }
+  h3 { margin-top: 24px; }
+  pre { background: #1e293b; color: #e2e8f0; padding: 14px 18px; border-radius: 6px; overflow-x: auto; font-size: 0.85em; white-space: pre-wrap; }
+  code { background: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+  pre code { background: none; padding: 0; }
+  blockquote { border-left: 4px solid #3b82f6; margin: 12px 0; padding: 8px 16px; background: #eff6ff; border-radius: 0 8px 8px 0; color: #1e40af; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.9em; margin: 12px 0; }
+  th, td { padding: 6px 12px; border-bottom: 1px solid #e2e8f0; text-align: left; }
+  th { font-weight: 600; border-bottom: 2px solid #cbd5e1; }
+  a { color: #3b82f6; }
+  .nav { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .nav a { font-size: 0.95em; }
+  .subtitle { color: #666; font-size: 0.95em; }
+  ul.contains-task-list { list-style: none; padding-left: 4px; }
+  .reference { margin-top: 48px; border-top: 3px solid #3b82f6; padding-top: 24px; }
+  .info { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 12px 16px; margin: 16px 0; font-size: 0.9em; }
+</style>
+</head><body>
+${THEME_TOGGLE_HTML}
+<div class="nav">
+  <a href="/setup">&larr; Setup guide</a>
+  <a href="/api/architecture-manual">Raw markdown (for agents)</a>
+</div>
+<p class="subtitle">Spec: <code>spaiglass-architecture/1</code> &mdash; Published at <code>${PUBLIC_URL}/architecture-manual</code></p>
+<div class="info">
+  <strong>Reading this as an agent?</strong> Fetch <a href="/api/architecture-manual"><code>${PUBLIC_URL}/api/architecture-manual</code></a> for the raw markdown &mdash; easier to parse, same content. Read the <strong>entire</strong> core manual before writing any field.
+</div>
+${coreHtml}
+${referenceHtml ? `<div class="reference"><h1>Reference Appendix</h1>${referenceHtml}</div>` : ""}
+<p style="margin-top: 32px;"><a href="/setup">&larr; Back to Setup</a></p>
+</body></html>`);
+});
+
+app.get("/api/architecture-manual", (c) => {
+  const md = readManualMarkdown();
+  if (!md) {
+    return c.json({ error: "Architecture manual not deployed" }, 404);
+  }
+  c.header("Content-Type", "text/markdown; charset=utf-8");
+  return c.body(md.core + (md.reference ? "\n\n---\n\n" + md.reference : ""));
 });
 
 // Terms of Service
@@ -1416,10 +1758,10 @@ app.route("/", agentKeyRoutes());
 // Fleet Relay (canonical at /fleetrelay; / is also served for back-compat).
 // Authenticated users get the fleet management UI; anonymous users get the
 // landing/marketing page from the same handler.
-function renderFleetRelay(c: Context<RelayEnv>) {
-  const user = c.get("user");
-  if (!user) {
-    return c.html(`<!DOCTYPE html>
+// Unauthenticated landing page — marketing copy + "Sign in with GitHub" CTA.
+// Split out so renderFleetRelay stays focused on the redirect decision.
+function renderLanding(c: Context<RelayEnv>) {
+  return c.html(`<!DOCTYPE html>
 <html><head><title>SpAIglass</title>
 ${FAVICON}
 ${THEME_HEAD}
@@ -1479,717 +1821,130 @@ function copyPrompt(el) {
 <p class="mit">Released under the <a href="https://github.com/c0inz/spaiglass/blob/main/LICENSE" style="color: #3b82f6;">MIT License</a>. Full source on <a href="https://github.com/c0inz/spaiglass" style="color: #3b82f6;">GitHub</a>.</p>
 <div class="footer"><a href="/terms">Terms</a> &middot; <a href="/privacy">Privacy</a> &middot; <a href="https://github.com/c0inz/spaiglass">github.com/c0inz/spaiglass</a></div>
 </body></html>`);
-  }
+}
+
+// Authenticated user hit `/` but has no fleet (no owned connectors and no
+// shared connectors). We can't land them on a chat window so instead:
+// mint a fresh single-use agent key for this user, display it in a copy-box,
+// and tell the human user to hand it to their setup agent. The agent runs
+// /setup from there and — when done — the human signs in again and lands
+// straight on chat (the `renderFleetRelay` path).
+//
+// A new key is minted on EVERY visit. Unused keys are harmless; used keys
+// are still listed under /api/agent-keys where the user can revoke them.
+function renderNoFleetWithToken(c: Context<RelayEnv>, userId: string) {
+  const rawKey = randomBytes(32).toString("hex");
+  const key = `sg_${rawKey}`;
+  const keyHash = createHash("sha256").update(key).digest("hex");
+  const prefix = `sg_${rawKey.slice(0, 8)}...`;
+  const keyName = `browser-signon-${Date.now()}`;
+  createAgentKey(userId, keyName, keyHash, prefix);
 
   return c.html(`<!DOCTYPE html>
-<html><head><title>SpAIglass Fleet</title>
+<html><head><title>SpAIglass — Give this token to your agent</title>
 ${FAVICON}
 ${THEME_HEAD}
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  body { font-family: 'Satoshi', system-ui, sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; color: #1a1a2e; background: #f0f0f5; }
-  h1 { font-family: 'Clash Display', system-ui, sans-serif; font-size: 1.8em; font-weight: 600; }
-  h2 { font-family: 'Clash Display', system-ui, sans-serif; font-weight: 600; }
-  .brand { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; }
-  .brand-link { display: flex; align-items: center; gap: 10px; text-decoration: none; color: inherit; }
-  .brand-logo { width: 36px; height: 36px; flex-shrink: 0; }
-  .brand-name { font-family: 'Clash Display', system-ui, sans-serif; font-size: 1.4em; font-weight: 700; letter-spacing: 0.5px; }
-  .user { display: flex; align-items: center; gap: 12px; margin-left: auto; }
-  .user img { width: 40px; height: 40px; border-radius: 50%; }
-  .card { background: white; border-radius: 14px; margin: 10px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.08); overflow: hidden; border: 1px solid rgba(0,0,0,0.06); transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); }
-  .card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.1); transform: translateY(-1px); }
-  .online { color: #22c55e; }
-  .offline { color: #94a3b8; }
-  .dot { font-size: 1.2em; line-height: 1; }
-  button, a.btn { padding: 8px 16px; border: none; border-radius: 10px; cursor: pointer; font-family: 'Satoshi', system-ui, sans-serif; font-size: 0.85em; font-weight: 500; text-decoration: none; display: inline-block; line-height: 1.5; transition: all 0.2s ease; }
-  button:hover, a.btn:hover { transform: translateY(-1px); }
-  .btn-primary { background: #3b82f6; color: white; font-family: 'Clash Display', system-ui, sans-serif; font-weight: 600; padding: 10px 20px; }
-  .btn-primary:hover { background: #2563eb; box-shadow: 0 4px 12px rgba(59,130,246,0.3); }
-  .btn-danger { background: #fef2f2; color: #ef4444; border: 1px solid rgba(239,68,68,0.2); }
-  .btn-danger:hover { background: #ef4444; color: white; border-color: transparent; }
-  .btn-secondary { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
-  .btn-secondary:hover { background: #e2e8f0; }
-  .btn-ghost { background: none; color: #94a3b8; font-size: 0.78em; padding: 4px 8px; }
-  .btn-ghost:hover { color: #475569; }
-  input { padding: 10px 14px; border: 1px solid #d1d5db; border-radius: 10px; font-family: 'Satoshi', system-ui, sans-serif; font-size: 0.9em; transition: all 0.2s ease; }
-  input:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); outline: none; }
-  #connectors { margin-top: 16px; }
-  pre { background: #1e293b; color: #e2e8f0; padding: 16px; border-radius: 12px; overflow-x: auto; font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 0.85em; }
-
-  /* Server row — single thin line */
-  .server-row { display: flex; align-items: center; gap: 10px; padding: 12px 16px; font-size: 0.85em; flex-wrap: nowrap; }
-  .server-row .name { font-family: 'Clash Display', system-ui, sans-serif; font-weight: 600; white-space: nowrap; }
-  .server-row .id { color: #94a3b8; font-size: 0.8em; font-family: 'IBM Plex Mono', monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
-  .server-row .spacer { flex: 1; }
-  .server-row .actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
-
-  /* Role grid */
-  .role-divider { border-top: 1px solid #f0f0f5; }
-  .role-grid { padding: 0 16px 10px; }
-  .role-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 0.82em; transition: background 0.15s; }
-  .role-row:hover { background: #f8fafc; }
-  .role-row .role-name { font-weight: 500; color: #3b82f6; min-width: 80px; white-space: nowrap; }
-  .role-row .role-url { color: #94a3b8; font-family: 'IBM Plex Mono', monospace; font-size: 0.9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
-  .role-row.hidden-role { opacity: 0.4; }
-  .no-roles { padding: 8px 16px; color: #94a3b8; font-size: 0.82em; font-style: italic; }
-
-  /* Hidden roles checkbox */
-  .show-hidden { font-size: 0.75em; color: #94a3b8; cursor: pointer; display: flex; align-items: center; gap: 3px; white-space: nowrap; }
-  .show-hidden input { width: 12px; height: 12px; margin: 0; }
-
-  /* Add-VM modal */
-  .modal-backdrop { display: none; position: fixed; inset: 0; background: rgba(15,23,42,0.55); z-index: 9998; backdrop-filter: blur(4px); }
-  .modal-backdrop.show { display: flex; align-items: center; justify-content: center; }
-  .modal { background: white; border-radius: 16px; padding: 24px 28px; max-width: 640px; width: calc(100% - 32px); box-shadow: 0 20px 50px rgba(0,0,0,0.2); }
-  .modal h2 { margin: 0 0 4px; font-family: 'Clash Display', system-ui, sans-serif; font-size: 1.25em; font-weight: 600; }
-  .modal .modal-sub { color: #64748b; font-size: 0.88em; margin-bottom: 16px; }
-  .modal .platform-tabs { display: flex; gap: 6px; margin-bottom: 12px; border-bottom: 1px solid #e2e8f0; }
-  .modal .platform-tab { padding: 8px 14px; background: none; border: none; font-family: 'Satoshi', system-ui, sans-serif; font-size: 0.85em; color: #64748b; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.15s; }
-  .modal .platform-tab.active { color: #1a1a2e; border-bottom-color: #3b82f6; font-weight: 600; }
-  .modal .platform-pane { display: none; }
-  .modal .platform-pane.active { display: block; }
-  .modal pre.cmd { background: #1e293b; color: #e2e8f0; padding: 14px; border-radius: 10px; overflow-x: auto; font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 0.78em; line-height: 1.5; white-space: pre-wrap; word-break: break-all; user-select: all; margin: 0; }
-  .modal .pane-hint { font-size: 0.78em; color: #64748b; margin: 6px 0 10px; }
-  .modal .modal-actions { display: flex; gap: 8px; align-items: center; margin-top: 14px; }
-  .modal .modal-actions .spacer { flex: 1; }
-  .modal .copy-status { font-size: 0.78em; color: #22c55e; min-height: 1em; }
-  .modal .warn { background: #fef3c7; border: 1px solid #fde68a; color: #78350f; font-size: 0.82em; padding: 8px 12px; border-radius: 10px; margin-top: 10px; }
+  body { font-family: 'Satoshi', system-ui, sans-serif; max-width: 680px; margin: 60px auto; padding: 0 20px; color: #1a1a2e; background: #f0f0f5; }
+  h1 { font-family: 'Clash Display', system-ui, sans-serif; font-size: 1.8em; font-weight: 700; margin-bottom: 8px; }
+  .card { background: white; border-radius: 14px; padding: 28px 32px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); border: 1px solid rgba(0,0,0,0.06); }
+  p { line-height: 1.6; color: #444; }
+  a { color: #3b82f6; font-weight: 600; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .muted { color: #94a3b8; font-size: 0.9em; margin-top: 24px; }
+  .token-box { position: relative; background: #1e293b; color: #e2e8f0; border-radius: 10px; padding: 16px 52px 16px 18px; margin: 16px 0 8px; font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 0.95em; word-break: break-all; cursor: pointer; }
+  .token-box:hover { background: #263548; }
+  .copy-btn { position: absolute; top: 50%; right: 12px; transform: translateY(-50%); background: none; border: 1px solid #475569; border-radius: 6px; color: #94a3b8; cursor: pointer; padding: 5px 10px; font-size: 0.85em; line-height: 1; transition: all 0.15s; }
+  .copy-btn:hover { border-color: #94a3b8; color: #e2e8f0; }
+  .copy-btn.copied { border-color: #22c55e; color: #22c55e; }
+  .prompt-box { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 14px 18px; margin: 16px 0; font-size: 0.92em; color: #1e3a8a; }
+  code { background: #e2e8f0; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
 </style>
 </head><body>
 ${THEME_TOGGLE_HTML}
-<div class="brand">
-  <a href="/" class="brand-link">
-    <svg class="brand-logo" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <g fill="currentColor">
-        <path fill-rule="evenodd" d="M2,32C7,15 20,12 32,12C44,12 57,15 62,32C57,49 44,52 32,52C20,52 7,49 2,32ZM9,32C13,21 22,17 32,17C42,17 51,21 55,32C51,43 42,47 32,47C22,47 13,43 9,32Z"/>
-        <path d="M21.5,26.5C16,28 9,30 9,32C9,34 16,36 21.5,37.5A11,11 0 0,0 21.5,26.5Z"/>
-        <path fill-rule="evenodd" d="M20,32A11,11 0 1,1 42,32A11,11 0 1,1 20,32ZM24,32A7,7 0 1,0 38,32A7,7 0 1,0 24,32Z"/>
-        <path d="M31,32L27,28A5,5 0 1,1 26,33Z"/>
-      </g>
-    </svg>
-    <span class="brand-name">SpAIglass</span>
-  </a>
-  <div class="user">
-    <img src="${user.github_avatar}" alt="${user.github_login}">
-    <div>
-      <strong>${user.github_name || user.github_login}</strong>
-      <div style="font-size: 0.85em; color: #666;">@${user.github_login}</div>
-    </div>
-    <button class="btn-secondary" onclick="logout()" style="padding: 6px 14px; font-size: 0.9em;">Sign out</button>
+<div class="card">
+  <h1>Give this token to your agent</h1>
+  <p>You are signed in, but no VMs are registered to your account yet. Hand the token below to the Claude Code agent running on the machine you want to add — it will use the token to register the VM and set itself up.</p>
+  <div class="token-box" onclick="copyToken(this)">
+    <span id="sg-token">${key}</span>
+    <button class="copy-btn" onclick="event.stopPropagation();copyToken(this.parentElement);" title="Copy to clipboard">&#x1F4CB;</button>
   </div>
-</div>
-
-<h1>SpAIglass Relay</h1>
-
-<div id="versionBanner" style="display:none; margin: 0 0 14px; padding: 12px 16px; background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; color: #78350f; font-size: 0.92em;">
-  <div style="display:flex; align-items:center; gap:10px;">
-    <span style="font-size:1.2em;">&#9888;</span>
-    <span id="versionBannerText" style="flex:1;"></span>
-    <button class="btn-secondary" id="versionBannerDismiss" style="padding: 4px 10px; font-size: 0.85em;">Dismiss</button>
-  </div>
-  <div style="margin-top: 8px; padding: 8px 10px; background: #fffbeb; border: 1px solid #fde68a; border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; user-select: all;">
-    curl -fsSL ${PUBLIC_URL}/install.sh | bash
-  </div>
-</div>
-
-<div style="display: flex; gap: 8px; align-items: center;">
-  <input id="vmName" placeholder="VM name (e.g. dev-server)" />
-  <button class="btn-primary" onclick="addConnector()" style="padding: 8px 16px; font-size: 0.9em;">Register VM</button>
-</div>
-
-<div id="connectors"></div>
-
-<div class="modal-backdrop" id="addVmModal" onclick="if(event.target===this)closeAddVmModal()">
-  <div class="modal" role="dialog" aria-labelledby="addVmTitle">
-    <h2 id="addVmTitle">VM registered</h2>
-    <div class="modal-sub">Run the install command below on the machine you want to enroll. The token is shown only once &mdash; copy it now.</div>
-    <div class="platform-tabs" role="tablist">
-      <button type="button" class="platform-tab active" data-pane="pane-linux" onclick="switchPlatformTab('pane-linux')">Linux / macOS</button>
-      <button type="button" class="platform-tab" data-pane="pane-windows" onclick="switchPlatformTab('pane-windows')">Windows 10 / 11</button>
-    </div>
-
-    <div class="platform-pane active" id="pane-linux">
-      <div class="pane-hint">Paste into a terminal. Installs a systemd user service on Linux or a launchd agent on macOS.</div>
-      <pre class="cmd" id="cmdLinux"></pre>
-    </div>
-
-    <div class="platform-pane" id="pane-windows">
-      <div class="pane-hint">Paste into PowerShell (no admin required). Installs a Scheduled Task that runs at logon.</div>
-      <pre class="cmd" id="cmdWindows"></pre>
-    </div>
-
-    <div class="warn">Save this token somewhere safe. You'll need it if you reinstall on a fresh machine &mdash; it cannot be shown again.</div>
-    <div class="modal-actions">
-      <button type="button" class="btn-secondary" onclick="copyActivePlatformCmd()">Copy command</button>
-      <span class="copy-status" id="copyStatus"></span>
-      <span class="spacer"></span>
-      <button type="button" class="btn-primary" onclick="closeAddVmModal()">Done</button>
+  <p class="muted" style="margin-top: 4px;">Shown once per page load. If you lose it, refresh — a fresh token will replace it. Unused tokens are harmless; revoke any you don't need under <a href="/api/agent-keys">/api/agent-keys</a>.</p>
+  <div class="prompt-box">
+    <strong>What to tell your agent:</strong><br>
+    Paste this into your agent's chat (copy/paste ready):
+    <div class="token-box" style="margin-top: 10px;" onclick="copyPrompt(this)">
+      <span id="agent-prompt">Follow <a href="${PUBLIC_URL}/setup" style="color:#93c5fd;">${PUBLIC_URL}/setup</a> and register this machine. Use this token for Option A / token-exchange: <strong>${key}</strong>. When setup is complete, tell me to sign in again at ${PUBLIC_URL} and I'll land in chat.</span>
+      <button class="copy-btn" onclick="event.stopPropagation();copyPrompt(this.parentElement);" title="Copy to clipboard">&#x1F4CB;</button>
     </div>
   </div>
+  <p class="muted">Once your agent reports "setup complete", refresh this page. You'll land directly in your chat window.</p>
+  <p class="muted"><a href="/auth/logout" onclick="fetch('/auth/logout',{method:'POST'}).then(function(){location.href='/'});return false;">Sign out</a></p>
 </div>
-
-<!-- Phase 2: collaborators modal — populated by manageCollaborators(id, name) -->
-<div class="modal-backdrop" id="collabModal" onclick="if(event.target===this)closeCollabModal()">
-  <div class="modal" role="dialog" aria-labelledby="collabTitle">
-    <h2 id="collabTitle">Collaborators</h2>
-    <div class="modal-sub" id="collabSub">Invite people by their GitHub login. They must have signed in to spaiglass at least once.</div>
-    <div style="display: flex; gap: 6px; align-items: center; margin-bottom: 12px;">
-      <input id="collabLogin" placeholder="GitHub login" style="flex:1;" />
-      <select id="collabRole">
-        <option value="editor">Editor</option>
-        <option value="viewer">Viewer</option>
-      </select>
-      <button class="btn-primary" onclick="inviteCollaborator()">Invite</button>
-    </div>
-    <div id="collabError" style="color:#b91c1c; font-size:0.85em; min-height:1em; margin-bottom:8px;"></div>
-    <div id="collabList"></div>
-    <div class="modal-actions">
-      <span class="spacer"></span>
-      <button type="button" class="btn-secondary" onclick="closeCollabModal()">Close</button>
-    </div>
-  </div>
-</div>
-
-<h2>Agent Keys</h2>
-<p style="font-size: 0.9em; color: #666;">Agent keys let scripts and LLM agents register VMs on your behalf without a browser.</p>
-<div style="display: flex; gap: 8px; align-items: center;">
-  <input id="keyName" placeholder="Key name (e.g. provisioner)" />
-  <button class="btn-primary" onclick="addKey()" style="padding: 8px 16px; font-size: 0.9em;">Create Key</button>
-</div>
-<div id="agentKeys" style="margin-top: 12px;"></div>
-
-<h2>Setup Guide</h2>
-<div class="card" style="padding: 14px;">
-  <p style="margin: 0;">Need to set up a new VM, Project, or Role? See the <a href="/setup" style="color: #3b82f6; font-weight: bold;">full setup guide</a>.</p>
-  <p style="font-size: 0.85em; color: #666; margin: 6px 0 0;">Agents and scripts can use <code style="background: #e2e8f0; padding: 2px 6px; border-radius: 4px;">/api/setup</code> for machine-readable JSON.</p>
-</div>
-
 <script>
-const LOGIN = '${user.github_login}';
-let hiddenRoles = JSON.parse(localStorage.getItem('sg_hidden_roles') || '[]');
-let roleLabels = JSON.parse(localStorage.getItem('sg_role_labels') || '{}');
-
-function labelKey(connId, projBase, roleFile) { return connId + ':' + projBase + ':' + roleFile; }
-function getCustomLabel(connId, projBase, roleFile) { return roleLabels[labelKey(connId, projBase, roleFile)] || null; }
-function setCustomLabel(connId, projBase, roleFile, label) {
-  var k = labelKey(connId, projBase, roleFile);
-  if (label && label.trim()) roleLabels[k] = label.trim();
-  else delete roleLabels[k];
-  localStorage.setItem('sg_role_labels', JSON.stringify(roleLabels));
-}
-function editLabel(connId, projBase, roleFile, fallback) {
-  var current = getCustomLabel(connId, projBase, roleFile) || fallback;
-  var next = prompt('Short name for this role (blank = reset to default):', current);
-  if (next === null) return; // cancelled
-  setCustomLabel(connId, projBase, roleFile, next);
-  loadConnectors();
-}
-
-function abbreviate(word, maxLen) {
-  if (word.length <= maxLen) return word;
-  // Split camelCase / hyphens / underscores into parts
-  var parts = word.replace(/([a-z])([A-Z])/g, '$1\\0$2').replace(/[-_]/g, '\\0').split('\\0').filter(Boolean);
-  if (parts.length > 1) {
-    // Multi-part: keep as many full parts from the left as fit
-    var result = '';
-    for (var i = 0; i < parts.length; i++) {
-      if ((result + parts[i]).length <= maxLen) { result += parts[i]; }
-      else { var rem = maxLen - result.length; if (rem > 0) result += parts[i].slice(0, rem); break; }
-    }
-    return result;
-  }
-  // Single word, short budget: capitalize + truncate (Dev, Adm)
-  if (maxLen <= 3) return word.charAt(0).toUpperCase() + word.slice(1, maxLen);
-  // Longer budget: capitalize + drop interior vowels, then truncate
-  var stripped = word.charAt(0).toUpperCase() + word.slice(1).replace(/[aeiou]/gi, '');
-  return stripped.length <= maxLen ? stripped : stripped.slice(0, maxLen);
-}
-
-function compactName(proj, role) {
-  var full = proj + '-' + role;
-  if (full.length <= 10) return full;
-  var budget = 9; // 10 minus hyphen
-  // Give project 60% of budget (it's more important for recognition)
-  var pBudget = Math.min(proj.length, Math.ceil(budget * 0.6));
-  var rBudget = budget - pBudget;
-  if (rBudget < 2) { rBudget = 2; pBudget = budget - 2; }
-  if (pBudget < 2) { pBudget = 2; rBudget = budget - 2; }
-  // Redistribute if one side doesn't need its full budget
-  if (proj.length < pBudget) { rBudget += pBudget - proj.length; pBudget = proj.length; }
-  if (role.length < rBudget) { pBudget += rBudget - role.length; rBudget = role.length; }
-  return abbreviate(proj, pBudget) + '-' + abbreviate(role, rBudget);
-}
-
-function isHidden(connId, projBase, roleFile) {
-  return hiddenRoles.includes(connId + ':' + projBase + ':' + roleFile);
-}
-
-function toggleHide(connId, projBase, roleFile) {
-  var key = connId + ':' + projBase + ':' + roleFile;
-  var idx = hiddenRoles.indexOf(key);
-  if (idx >= 0) hiddenRoles.splice(idx, 1);
-  else hiddenRoles.push(key);
-  localStorage.setItem('sg_hidden_roles', JSON.stringify(hiddenRoles));
-  loadConnectors();
-}
-
-function toggleShowHidden(connId) {
-  var cb = document.getElementById('sh-' + connId);
-  // Re-render role grid for this connector
-  var grid = document.getElementById('rg-' + connId);
-  if (!grid) return;
-  grid.querySelectorAll('.hidden-role').forEach(function(el) {
-    el.style.display = cb.checked ? 'flex' : 'none';
+function copyToken(el) {
+  var text = document.getElementById('sg-token').textContent;
+  navigator.clipboard.writeText(text).then(function() {
+    var btn = el.querySelector('.copy-btn');
+    btn.classList.add('copied');
+    btn.innerHTML = '&#x2713;';
+    setTimeout(function() { btn.classList.remove('copied'); btn.innerHTML = '&#x1F4CB;'; }, 2000);
   });
 }
-
-// Per-grid fingerprint of roles + visibility/label state. Re-rendering wipes
-// any in-progress UI (edit pencil prompt, hover state), so we only do it when
-// something the user can see actually changed.
-var rolesFingerprint = {};
-async function loadRoles(connId, connName, slug) {
-  var grid = document.getElementById('rg-' + connId);
-  if (!grid) return;
-  try {
-    var projRes = await fetch('/vm/' + slug + '/api/projects');
-    if (!projRes.ok) { grid.innerHTML = '<div class="no-roles">Unable to reach VM</div>'; rolesFingerprint[connId] = 'unreach'; return; }
-    var projData = await projRes.json();
-    var roles = [];
-    for (var proj of projData.projects) {
-      var ctxRes = await fetch('/vm/' + slug + '/api/projects/contexts?path=' + encodeURIComponent(proj.path));
-      if (!ctxRes.ok) continue;
-      var ctxData = await ctxRes.json();
-      var projBase = proj.path.split('/').filter(Boolean).pop() || proj.encodedName;
-      for (var ctx of (ctxData.contexts || [])) {
-        var roleBase = ctx.filename.replace(/\\.md$/, '');
-        // URL segment: <projectname>-<rolename>
-        var segment = projBase + '-' + roleBase;
-        roles.push({ projPath: proj.path, projBase: projBase, roleFile: ctx.filename, roleBase: roleBase, roleName: ctx.name, segment: segment });
-      }
-    }
-    if (roles.length === 0) {
-      if (rolesFingerprint[connId] !== 'empty') {
-        grid.innerHTML = '<div class="no-roles">No roles configured</div>';
-        rolesFingerprint[connId] = 'empty';
-      }
-      return;
-    }
-    var cb = document.getElementById('sh-' + connId);
-    var showHidden = cb && cb.checked;
-    // Fingerprint includes the role identity AND the per-role custom label /
-    // hidden state, so editing a label or toggling hide forces a re-render.
-    // showHidden is intentionally NOT in the fingerprint — toggleShowHidden
-    // mutates CSS display directly so its state persists between ticks.
-    var fp = roles.map(function(r) {
-      var hidden = isHidden(connId, r.projBase, r.roleFile);
-      var custom = getCustomLabel(connId, r.projBase, r.roleFile) || '';
-      return r.projBase + '/' + r.roleFile + '|' + (hidden ? '1' : '0') + '|' + custom;
-    }).join(';');
-    if (fp === rolesFingerprint[connId]) return;
-    rolesFingerprint[connId] = fp;
-    grid.innerHTML = roles.map(function(r) {
-      var hidden = isHidden(connId, r.projBase, r.roleFile);
-      var fallback = compactName(r.projBase, r.roleBase);
-      var custom = getCustomLabel(connId, r.projBase, r.roleFile);
-      var label = custom || fallback;
-      var url = '/vm/' + slug + '/' + r.segment + '/';
-      var display = hidden && !showHidden ? 'none' : 'flex';
-      var keyArgs = "'" + connId + "','" + r.projBase + "','" + r.roleFile + "'";
-      return '<div class="role-row' + (hidden ? ' hidden-role' : '') + '" style="display:' + display + '">' +
-        '<a href="' + url + '" target="_blank" class="role-name" style="text-decoration:none;color:#3b82f6;" title="' + (custom ? 'Custom: ' + label + ' (default ' + fallback + ')' : 'Default label') + '">' + label + '</a>' +
-        '<button class="btn-ghost edit-pencil" title="Edit short name" onclick="event.stopPropagation();editLabel(' + keyArgs + ',\\'' + fallback + '\\')">&#9998;</button>' +
-        '<a href="' + url + '?new=1" target="_blank" class="btn-ghost" title="New session" style="text-decoration:none;">+</a>' +
-        '<span class="role-url">' + url + '</span>' +
-        '<button class="btn-ghost" onclick="event.stopPropagation();toggleHide(' + keyArgs + ')">' + (hidden ? 'Show' : 'Hide') + '</button>' +
-      '</div>';
-    }).join('');
-  } catch(e) {
-    grid.innerHTML = '<div class="no-roles">Error loading roles</div>';
-  }
-}
-
-// Compare two date-based version strings ("YYYY.MM.DD"). Returns -1/0/1.
-// Anything not matching that shape is treated as "older" so unknown VMs surface in the banner.
-function compareVersion(a, b) {
-  if (a === b) return 0;
-  var re = /^(\\d{4})\\.(\\d{2})\\.(\\d{2})$/;
-  var ma = re.exec(a || ''), mb = re.exec(b || '');
-  if (!ma && !mb) return 0;
-  if (!ma) return -1;
-  if (!mb) return 1;
-  for (var i = 1; i <= 3; i++) {
-    var na = parseInt(ma[i], 10), nb = parseInt(mb[i], 10);
-    if (na !== nb) return na < nb ? -1 : 1;
-  }
-  return 0;
-}
-
-// Cached latest version from /api/health. Refreshed each loadConnectors tick.
-var latestSpAIglassVersion = null;
-var bannerDismissedFor = sessionStorage.getItem('sg_banner_dismissed') || '';
-
-document.getElementById('versionBannerDismiss').addEventListener('click', function() {
-  sessionStorage.setItem('sg_banner_dismissed', latestSpAIglassVersion || '');
-  bannerDismissedFor = latestSpAIglassVersion || '';
-  document.getElementById('versionBanner').style.display = 'none';
-});
-
-function updateVersionBanner(connectors) {
-  var banner = document.getElementById('versionBanner');
-  if (!latestSpAIglassVersion || latestSpAIglassVersion === 'unknown') {
-    banner.style.display = 'none';
-    return;
-  }
-  // Only count online VMs whose reported version is older than latest
-  var stale = connectors.filter(function(c) {
-    return c.online && compareVersion(c.spaiglassVersion, latestSpAIglassVersion) < 0;
-  });
-  if (stale.length === 0 || bannerDismissedFor === latestSpAIglassVersion) {
-    banner.style.display = 'none';
-    return;
-  }
-  var names = stale.map(function(c) { return c.displayName || c.name; }).join(', ');
-  document.getElementById('versionBannerText').innerHTML =
-    '<strong>' + stale.length + ' of ' + connectors.filter(function(c){return c.online;}).length +
-    ' online VM(s) running an out-of-date SpAIglass</strong> &nbsp; ' +
-    '(latest <code>' + latestSpAIglassVersion + '</code>) &nbsp; ' +
-    '<span style="color:#92400e;">' + names + '</span><br>' +
-    '<span style="font-size:0.92em;">Run this on each VM to upgrade. The installer reuses the existing token.</span>';
-  banner.style.display = 'block';
-}
-
-var connectorsFingerprint = '';
-async function loadConnectors() {
-  // Refresh latest-version metadata in parallel with the connector list.
-  // /api/health is unauthenticated, so it's cheap and shareable across browsers.
-  fetch('/api/health').then(function(r) { return r.json(); }).then(function(h) {
-    latestSpAIglassVersion = h.spaiglassVersion || null;
-  }).catch(function() { /* ignore */ });
-
-  var res = await fetch('/api/connectors');
-  var data = await res.json();
-  var el = document.getElementById('connectors');
-
-  // Update the banner on every tick (cheap; the DOM only changes on transitions)
-  updateVersionBanner(data);
-
-  if (data.length === 0) {
-    var emptyFp = 'empty';
-    if (connectorsFingerprint !== emptyFp) {
-      el.innerHTML = '<div class="card" style="padding: 14px; color: #94a3b8;">No VMs registered yet. Add one above.</div>';
-      connectorsFingerprint = emptyFp;
-    }
-    return;
-  }
-  // Phase 2: split into owned vs shared. Each entry has a role field.
-  var owned = data.filter(function(c) { return c.role === 'owner'; });
-  var shared = data.filter(function(c) { return c.role !== 'owner'; });
-  // Structural fingerprint. Re-rendering wipes the role grid, so only do it
-  // when something the user can see (id/name/online/hidden/version/role/section) has changed.
-  var fp = data.map(function(c) {
-    var hasHidden = hiddenRoles.some(function(h) { return h.startsWith(c.id + ':'); });
-    return c.id + '|' + c.name + '|' + (c.displayName || '') + '|' + (c.online ? '1' : '0') + '|' + (hasHidden ? '1' : '0') + '|' + (c.spaiglassVersion || '') + '|' + c.role;
-  }).join(';');
-  if (fp === connectorsFingerprint) {
-    // Nothing structural changed — just refresh role grids in place for online VMs.
-    data.forEach(function(c) {
-      var slug = c.role === 'owner' ? (LOGIN + '.' + c.name) : (c.ownerLogin + '.' + c.name);
-      if (c.online) loadRoles(c.id, c.name, slug);
-    });
-    return;
-  }
-  connectorsFingerprint = fp;
-
-  function renderCard(c) {
-    var slug = c.role === 'owner' ? (LOGIN + '.' + c.name) : (c.ownerLogin + '.' + c.name);
-    var hasHidden = hiddenRoles.some(function(h) { return h.startsWith(c.id + ':'); });
-    var verPill = '';
-    if (c.online && c.spaiglassVersion) {
-      var stale = latestSpAIglassVersion && compareVersion(c.spaiglassVersion, latestSpAIglassVersion) < 0;
-      var color = stale ? '#92400e' : '#475569';
-      var bg = stale ? '#fef3c7' : '#f1f5f9';
-      var title = stale ? ('Out of date — latest is ' + latestSpAIglassVersion) : 'Up to date';
-      verPill = '<span title="' + title + '" style="font-size:0.75em; padding: 2px 8px; border-radius: 10px; background: ' + bg + '; color: ' + color + '; font-family: ui-monospace, monospace;">' + c.spaiglassVersion + '</span>';
-    }
-    var rolePill = '';
-    if (c.role !== 'owner') {
-      var rbg = c.role === 'editor' ? '#dbeafe' : '#f1f5f9';
-      var rfg = c.role === 'editor' ? '#1e40af' : '#475569';
-      rolePill = '<span style="font-size:0.72em; padding: 2px 8px; border-radius: 10px; background: ' + rbg + '; color: ' + rfg + '; text-transform: uppercase; letter-spacing: 0.04em;">' + c.role + '</span>';
-    }
-    var ownerLabel = c.role !== 'owner' ? '<span style="font-size:0.78em; color:#64748b;">' + c.ownerLogin + '</span>' : '';
-    var displayLabel = c.displayName || c.name;
-    var slugLabel = (c.displayName && c.displayName !== c.name)
-      ? '<span style="font-size:0.72em; color:#94a3b8; margin-left:6px; font-family:ui-monospace,monospace;">' + c.name + '</span>'
-      : '';
-    var actions = '';
-    if (c.role === 'owner') {
-      actions =
-        '<button class="btn" onclick="renameConnector(\\'' + c.id + '\\', \\'' + displayLabel.replace(/'/g, "\\\\'") + '\\')">Rename</button> ' +
-        '<button class="btn" onclick="manageCollaborators(\\'' + c.id + '\\', \\'' + c.name + '\\')">Manage</button> ' +
-        '<button class="btn btn-danger" onclick="deleteConnector(\\'' + c.id + '\\')">Delete</button>';
-    }
-    return '<div class="card">' +
-      '<div class="server-row">' +
-        '<span class="dot ' + (c.online ? 'online' : 'offline') + '">&bull;</span>' +
-        '<span class="name">' + displayLabel + '</span>' +
-        slugLabel +
-        ownerLabel +
-        '<span class="id">' + c.id.slice(0, 8) + '</span>' +
-        verPill +
-        rolePill +
-        '<span class="spacer"></span>' +
-        (hasHidden ? '<label class="show-hidden"><input type="checkbox" id="sh-' + c.id + '" onchange="toggleShowHidden(\\'' + c.id + '\\')"> Show hidden</label>' : '') +
-        '<span class="actions">' + actions + '</span>' +
-      '</div>' +
-      (c.online ? '<div class="role-divider"></div><div class="role-grid" id="rg-' + c.id + '"><div class="no-roles">Loading roles...</div></div>' : '') +
-    '</div>';
-  }
-
-  var ownedHtml = owned.map(renderCard).join('');
-  var sharedHtml = shared.length
-    ? '<div style="margin-top: 24px;"><h3 style="font-size: 0.95em; color: #475569; margin: 0 0 8px;">Shared with me</h3>' + shared.map(renderCard).join('') + '</div>'
-    : '';
-  el.innerHTML = ownedHtml + sharedHtml;
-
-  // Load roles for online VMs
-  data.forEach(function(c) {
-    var slug = c.role === 'owner' ? (LOGIN + '.' + c.name) : (c.ownerLogin + '.' + c.name);
-    if (c.online) loadRoles(c.id, c.name, slug);
+function copyPrompt(el) {
+  var text = document.getElementById('agent-prompt').innerText;
+  navigator.clipboard.writeText(text).then(function() {
+    var btn = el.querySelector('.copy-btn');
+    btn.classList.add('copied');
+    btn.innerHTML = '&#x2713;';
+    setTimeout(function() { btn.classList.remove('copied'); btn.innerHTML = '&#x1F4CB;'; }, 2000);
   });
 }
-
-async function addConnector() {
-  var name = document.getElementById('vmName').value.trim();
-  if (!name) return alert('Enter a VM name');
-  var res = await fetch('/api/connectors', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: name }),
-  });
-  var data = await res.json();
-  if (data.token) {
-    var relayUrl = '${PUBLIC_URL}';
-    var linuxCmd =
-      'curl -fsSL ' + relayUrl + '/install.sh | bash -s -- ' +
-      '--token=' + data.token + ' --id=' + data.id + ' --name=' + data.name;
-    var windowsCmd =
-      '& ([scriptblock]::Create((iwr ' + relayUrl + '/install.ps1 -useb))) ' +
-      "-Token '" + data.token + "' -Id '" + data.id + "' -Name '" + data.name + "'";
-    document.getElementById('cmdLinux').textContent = linuxCmd;
-    document.getElementById('cmdWindows').textContent = windowsCmd;
-    switchPlatformTab('pane-linux');
-    document.getElementById('copyStatus').textContent = '';
-    document.getElementById('addVmModal').classList.add('show');
-    // Pre-copy the Linux/macOS command since that's the default tab
-    if (navigator.clipboard) {
-      try {
-        await navigator.clipboard.writeText(linuxCmd);
-        document.getElementById('copyStatus').textContent = 'Copied!';
-      } catch(e) { /* ignore */ }
-    }
-  }
-  document.getElementById('vmName').value = '';
-  loadConnectors();
-}
-
-function switchPlatformTab(paneId) {
-  var tabs = document.querySelectorAll('#addVmModal .platform-tab');
-  for (var i = 0; i < tabs.length; i++) {
-    tabs[i].classList.toggle('active', tabs[i].getAttribute('data-pane') === paneId);
-  }
-  var panes = document.querySelectorAll('#addVmModal .platform-pane');
-  for (var j = 0; j < panes.length; j++) {
-    panes[j].classList.toggle('active', panes[j].id === paneId);
-  }
-  document.getElementById('copyStatus').textContent = '';
-}
-
-async function copyActivePlatformCmd() {
-  var active = document.querySelector('#addVmModal .platform-pane.active pre.cmd');
-  if (!active || !navigator.clipboard) return;
-  try {
-    await navigator.clipboard.writeText(active.textContent || '');
-    var status = document.getElementById('copyStatus');
-    status.textContent = 'Copied!';
-    setTimeout(function() { if (status.textContent === 'Copied!') status.textContent = ''; }, 2000);
-  } catch(e) { /* ignore */ }
-}
-
-function closeAddVmModal() {
-  document.getElementById('addVmModal').classList.remove('show');
-  document.getElementById('cmdLinux').textContent = '';
-  document.getElementById('cmdWindows').textContent = '';
-}
-
-async function deleteConnector(id) {
-  if (!confirm('Delete this connector?')) return;
-  await fetch('/api/connectors/' + id, { method: 'DELETE' });
-  loadConnectors();
-}
-
-async function renameConnector(id, currentName) {
-  var newName = prompt('Display name (leave empty to reset to default):', currentName);
-  if (newName === null) return; // cancelled
-  await fetch('/api/connectors/' + id, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ displayName: newName.trim() || null }),
-  });
-  connectorsFingerprint = ''; // force re-render
-  loadConnectors();
-}
-
-// --- Phase 2: collaborators ---
-var currentCollabConnectorId = null;
-function manageCollaborators(id, name) {
-  currentCollabConnectorId = id;
-  document.getElementById('collabTitle').textContent = 'Collaborators — ' + name;
-  document.getElementById('collabError').textContent = '';
-  document.getElementById('collabLogin').value = '';
-  document.getElementById('collabRole').value = 'editor';
-  document.getElementById('collabModal').classList.add('show');
-  loadCollabsList();
-}
-
-function closeCollabModal() {
-  document.getElementById('collabModal').classList.remove('show');
-  currentCollabConnectorId = null;
-}
-
-async function loadCollabsList() {
-  var id = currentCollabConnectorId;
-  if (!id) return;
-  var listEl = document.getElementById('collabList');
-  listEl.innerHTML = '<div style="color:#94a3b8; font-size:0.85em;">Loading...</div>';
-  try {
-    var res = await fetch('/api/connectors/' + id + '/collaborators');
-    var data = await res.json();
-    if (!data.collaborators || data.collaborators.length === 0) {
-      listEl.innerHTML = '<div style="color:#94a3b8; font-size:0.85em; padding: 8px 0;">No collaborators yet. Invite someone above.</div>';
-      return;
-    }
-    listEl.innerHTML = data.collaborators.map(function(cb) {
-      var rbg = cb.role === 'editor' ? '#dbeafe' : '#f1f5f9';
-      var rfg = cb.role === 'editor' ? '#1e40af' : '#475569';
-      var avatar = cb.avatar
-        ? '<img src="' + cb.avatar + '" style="width:24px;height:24px;border-radius:50%;" />'
-        : '<span style="width:24px;height:24px;border-radius:50%;background:#e2e8f0;display:inline-block;"></span>';
-      return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid #f1f5f9;">' +
-        avatar +
-        '<strong>' + cb.login + '</strong>' +
-        '<span style="font-size:0.72em; padding: 2px 8px; border-radius: 10px; background: ' + rbg + '; color: ' + rfg + '; text-transform: uppercase; letter-spacing: 0.04em;">' + cb.role + '</span>' +
-        '<span style="flex:1;"></span>' +
-        '<select onchange="changeCollabRole(\\'' + cb.userId + '\\', this.value)" style="font-size:0.85em;">' +
-          '<option value="editor"' + (cb.role === 'editor' ? ' selected' : '') + '>editor</option>' +
-          '<option value="viewer"' + (cb.role === 'viewer' ? ' selected' : '') + '>viewer</option>' +
-        '</select>' +
-        '<button class="btn btn-danger" onclick="removeCollab(\\'' + cb.userId + '\\')">Remove</button>' +
-      '</div>';
-    }).join('');
-  } catch(e) {
-    listEl.innerHTML = '<div style="color:#b91c1c;">Failed to load collaborators.</div>';
-  }
-}
-
-async function inviteCollaborator() {
-  var id = currentCollabConnectorId;
-  if (!id) return;
-  var login = document.getElementById('collabLogin').value.trim();
-  var role = document.getElementById('collabRole').value;
-  var errEl = document.getElementById('collabError');
-  errEl.textContent = '';
-  if (!login) { errEl.textContent = 'Enter a GitHub login.'; return; }
-  try {
-    var res = await fetch('/api/connectors/' + id + '/collaborators', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ login: login, role: role }),
-    });
-    if (!res.ok) {
-      var err = await res.json();
-      errEl.textContent = err.error || 'Invite failed.';
-      return;
-    }
-    document.getElementById('collabLogin').value = '';
-    loadCollabsList();
-  } catch(e) {
-    errEl.textContent = 'Network error.';
-  }
-}
-
-async function changeCollabRole(userId, role) {
-  var id = currentCollabConnectorId;
-  if (!id) return;
-  await fetch('/api/connectors/' + id + '/collaborators/' + userId, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ role: role }),
-  });
-  loadCollabsList();
-}
-
-async function removeCollab(userId) {
-  var id = currentCollabConnectorId;
-  if (!id) return;
-  if (!confirm('Remove this collaborator?')) return;
-  await fetch('/api/connectors/' + id + '/collaborators/' + userId, { method: 'DELETE' });
-  loadCollabsList();
-}
-
-async function logout() {
-  await fetch('/auth/logout', { method: 'POST' });
-  location.reload();
-}
-
-async function loadKeys() {
-  var res = await fetch('/api/agent-keys');
-  var data = await res.json();
-  var el = document.getElementById('agentKeys');
-  if (data.length === 0) {
-    el.innerHTML = '<div class="card" style="padding: 14px; color: #94a3b8;">No agent keys yet.</div>';
-    return;
-  }
-  el.innerHTML = data.map(function(k) {
-    return '<div class="card" style="display: flex; justify-content: space-between; align-items: center; padding: 10px 14px;">' +
-      '<div><strong>' + k.name + '</strong> <span style="font-size:0.8em;color:#666;">' + k.prefix + ' &middot; ' + new Date(k.created_at).toLocaleDateString() + '</span></div>' +
-      '<button class="btn btn-danger" onclick="deleteKey(\\'' + k.id + '\\')">Delete</button>' +
-    '</div>';
-  }).join('');
-}
-
-async function addKey() {
-  var name = document.getElementById('keyName').value.trim();
-  if (!name) return alert('Enter a key name');
-  var res = await fetch('/api/agent-keys', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: name }),
-  });
-  var data = await res.json();
-  if (data.key) {
-    alert('Agent key created!\\n\\nKey (save this — shown only once):\\n' + data.key);
-  }
-  document.getElementById('keyName').value = '';
-  loadKeys();
-}
-
-async function deleteKey(id) {
-  if (!confirm('Delete this agent key?')) return;
-  await fetch('/api/agent-keys/' + id, { method: 'DELETE' });
-  loadKeys();
-}
-
-loadConnectors();
-loadKeys();
-setInterval(loadConnectors, 30000);
 </script>
-<div style="margin-top: 40px; padding-top: 16px; border-top: 1px solid #e2e8f0; font-size: 0.85em; color: #999;"><a href="/terms" style="color: #999;">Terms</a> &middot; <a href="/privacy" style="color: #999;">Privacy</a></div>
 </body></html>`);
 }
 
-// Mount the fleet relay UI at both / (back-compat) and /fleetrelay (canonical).
-// Login flows redirect to /fleetrelay so users see a meaningful URL.
+// Root route. Authenticated users go straight to a chat window — either the
+// last agent they used, or the first owned (or shared) connector. No more
+// fleet dashboard; the agent switcher in the chat header is the only fleet
+// navigation surface. Unauthenticated users see the marketing landing page.
+function renderFleetRelay(c: Context<RelayEnv>) {
+  const user = c.get("user");
+  if (!user) {
+    return renderLanding(c);
+  }
+
+  // Prefer the user's last-used agent URL if we have one.
+  const lastAgent = getUserPreference(user.id, "last_agent_url");
+  if (lastAgent?.startsWith("/")) {
+    return c.redirect(lastAgent);
+  }
+
+  // Otherwise fall back to the first owned connector, then the first shared
+  // connector. For owned, use bare connector name (resolveVmSlug accepts it);
+  // for shared, use owner_login.name so the slug resolves against the right
+  // owner.
+  const owned = getConnectorsByUser(user.id);
+  if (owned.length > 0) {
+    return c.redirect(`/vm/${owned[0].name}/`);
+  }
+  const shared = getSharedConnectorsForUser(user.id);
+  if (shared.length > 0) {
+    return c.redirect(`/vm/${shared[0].owner_login}.${shared[0].name}/`);
+  }
+
+  // Signed in, but no fleet configured (no owned + no shared). Show the
+  // token-minting no-fleet page.
+  return renderNoFleetWithToken(c, user.id);
+}
+
+// Root route. Authenticated users are redirected straight into a chat window
+// (last-used agent, or first owned/shared connector). Unauthenticated users
+// see the marketing landing page. There is no fleet dashboard UI anymore —
+// the agent switcher in the chat header replaces it. The `/fleetrelay` path
+// is kept as an alias so any bookmarks or stale links still land somewhere
+// sensible rather than 404.
 app.get("/", renderFleetRelay);
 app.get("/fleetrelay", renderFleetRelay);
 
@@ -2433,6 +2188,7 @@ function tryServeFromRelayFrontend(
   slug: string,
   vmPath: string,
   connectorName: string,
+  customDisplayName: string | null,
 ): Response | undefined {
   if (vmPath.startsWith("/api/") || vmPath === "/api") return undefined;
   if (!existsSync(RELAY_FRONTEND_DIR)) return undefined;
@@ -2468,14 +2224,17 @@ function tryServeFromRelayFrontend(
     .replace(/[+/=]/g, "")
     .slice(0, 22);
 
-  // Tab title from /vm/:slug/<project>-<role>/ segment
+  // Tab title. When the owner has set a custom display name (via Settings →
+  // Browser Tab Title), that wins over the auto-computed project-role label.
+  // Otherwise fall back to compacting the /vm/:slug/<project>-<role>/ segment.
   const afterSlug = vmPath.replace(/^\//, "").replace(/\/$/, "");
   const segment = afterSlug.split("/")[0] || "";
   const lastHyphen = segment.lastIndexOf("-");
   const project = lastHyphen > 0 ? segment.slice(0, lastHyphen) : segment;
   const role = lastHyphen > 0 ? segment.slice(lastHyphen + 1) : "";
   let tabTitle: string;
-  if (project && role) tabTitle = serverCompactName(project, role);
+  if (customDisplayName) tabTitle = customDisplayName;
+  else if (project && role) tabTitle = serverCompactName(project, role);
   else if (project) tabTitle = serverAbbreviate(project, 8);
   else tabTitle = connectorName;
 
@@ -2519,6 +2278,13 @@ function tryServeFromRelayFrontend(
   //   img-src 'self' data: blob:      — favicon, embedded SVG icons, blob previews
   //   font-src 'self' data:           — bundled fonts + base64 fallbacks
   //   connect-src 'self' ws: wss:     — fetch + WebSocket back to the relay
+  //   worker-src 'self' blob:         — Monaco language workers. Vite ?worker
+  //                                     imports are served from /assets/<hash>.js
+  //                                     (same-origin, covered by 'self'). blob:
+  //                                     covers any future inline-worker fallbacks
+  //                                     (e.g. mermaid). Without this, Monaco
+  //                                     falls back to jsdelivr and the file
+  //                                     editor hangs on "Loading..." forever.
   //   frame-ancestors 'none'          — overlap with X-Frame-Options DENY
   //   form-action 'self'              — no third-party form posting
   //   base-uri 'none'                 — block <base href> hijacks
@@ -2531,6 +2297,7 @@ function tryServeFromRelayFrontend(
     "img-src 'self' data: blob:",
     "font-src 'self' data:",
     "connect-src 'self' ws: wss:",
+    "worker-src 'self' blob:",
     "frame-ancestors 'none'",
     "form-action 'self'",
     "base-uri 'none'",
@@ -2687,6 +2454,56 @@ app.get("/vm/:slug/api/__relay/fleet", async (c) => {
   return c.json({ connectors: allConns });
 });
 
+// Read the current connector's id, name, and custom display name. The chat
+// UI uses this to populate the "Browser tab title" editor in the settings
+// modal — we can't just send the connector name because the owner may have
+// set a human-friendly override via the old pencil / fleet dashboard.
+app.get("/vm/:slug/api/__relay/self", async (c) => {
+  const auth = await vmAuth(c);
+  if (auth instanceof Response) return auth;
+  const { user, connector, role } = auth;
+  return c.json({
+    id: connector.id,
+    name: connector.name,
+    displayName: connectorDisplayName(connector),
+    // Raw column — distinguishes "user set an override" from "fell back to
+    // connector name". The modal pre-fills the input with this value so the
+    // user can clear it to revert to the default.
+    customDisplayName: connector.display_name ?? null,
+    role,
+    ownerLogin: user.github_login,
+  });
+});
+
+// Update the current connector's custom display name. Owner-only — the
+// underlying helper silently no-ops if user.id is not the owner. The chat UI
+// shows this field as "Browser tab title" in the project/role settings
+// modal; it drives the tab title on the relay's served SPA bundle (see
+// `tryServeFromRelayFrontend` which calls `connectorDisplayName`).
+app.put("/vm/:slug/api/__relay/self/display-name", async (c) => {
+  const auth = await vmAuth(c);
+  if (auth instanceof Response) return auth;
+  const { user, connector, role } = auth;
+  if (role !== "owner") {
+    return c.json({ error: "Only the owner can edit the tab title" }, 403);
+  }
+  const body = await c
+    .req.json<{ displayName?: string | null }>()
+    .catch(() => null);
+  if (!body || !("displayName" in body)) {
+    return c.json({ error: "displayName field required" }, 400);
+  }
+  const next = body.displayName?.trim() || null;
+  if (next && next.length > 100) {
+    return c.json({ error: "Display name max 100 chars" }, 400);
+  }
+  const updated = updateConnectorDisplayName(connector.id, user.id, next);
+  if (!updated) {
+    return c.json({ error: "Connector not found" }, 404);
+  }
+  return c.json({ ok: true, displayName: next });
+});
+
 // Save last-used agent URL for post-auth redirect
 app.put("/vm/:slug/api/__relay/last-agent", async (c) => {
   const auth = await vmAuth(c);
@@ -2804,7 +2621,8 @@ ${FAVICON}
       c,
       slug,
       vmPath,
-      connector.display_name || connector.name,
+      connector.name,
+      connector.display_name,
     );
     if (localResp) return localResp;
   }
@@ -2936,6 +2754,7 @@ ${FAVICON}
         "img-src 'self' data: blob:",
         "font-src 'self' data:",
         "connect-src 'self' ws: wss:",
+        "worker-src 'self' blob:",
         "frame-ancestors 'none'",
         "form-action 'self'",
         "base-uri 'none'",

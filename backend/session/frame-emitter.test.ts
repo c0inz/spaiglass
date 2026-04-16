@@ -261,7 +261,7 @@ describe("FrameEmitter", () => {
               },
             ],
           },
-          toolUseResult: {
+          tool_use_result: {
             stdout: "file1\nfile2",
             stderr: "",
             interrupted: false,
@@ -491,6 +491,75 @@ describe("FrameEmitter", () => {
       const f = frames[0] as UserMessageFrame;
       expect(f.content).toHaveLength(2);
       expect(f.content[0]).toEqual({ type: "text", text: "part one" });
+    });
+
+    it("silently drops image content blocks but preserves siblings", () => {
+      // History replay contract: an SDK user message carrying an image
+      // block alongside a text block must never crash the emitter. We
+      // drop the image (no frame-level image support for input yet) and
+      // still emit a clean text-only user_message frame. This keeps the
+      // image turn visible in replay rather than disappearing entirely.
+      const frames = emitter.emitFromSdkMessage(
+        {
+          type: "user",
+          message: {
+            content: [
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: "image/png",
+                  data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABAQMAAAAlPW0iAAAABlBMVEUAAAD///+l2Z/dAAAACklEQVR4nGNgAAAAAgABc3UBGAAAAABJRU5ErkJggg==",
+                },
+              },
+              { type: "text", text: "what is in this screenshot?" },
+            ],
+          },
+        },
+        makeCtx(1, 1000),
+      );
+      expect(frames).toHaveLength(1);
+      const f = frames[0] as UserMessageFrame;
+      expect(f.type).toBe("user_message");
+      // Exactly one block — the text survived, the image was dropped.
+      expect(f.content).toEqual([
+        { type: "text", text: "what is in this screenshot?" },
+      ]);
+      // The emitted content must match the Phase B UserContentBlock union
+      // exactly. No stray Anthropic-shape fields leak through.
+      for (const block of f.content) {
+        expect(["text", "image", "file"]).toContain(block.type);
+        if (block.type === "text") {
+          expect(typeof block.text).toBe("string");
+        }
+      }
+    });
+
+    it("produces no user_message frame when only image blocks are present", () => {
+      // Degenerate case: no text block at all. Rather than emitting an
+      // empty-content frame (which the renderer would flag as malformed),
+      // emitUser skips the message entirely. Safe fallback — in practice
+      // the chat handler always appends a text block, so this path is
+      // only hit if someone bypasses the handler.
+      const frames = emitter.emitFromSdkMessage(
+        {
+          type: "user",
+          message: {
+            content: [
+              {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: "image/png",
+                  data: "iVBORw0KGgo=",
+                },
+              },
+            ],
+          },
+        },
+        makeCtx(1, 1000),
+      );
+      expect(frames).toHaveLength(0);
     });
   });
 

@@ -92,8 +92,8 @@ export interface SdkMessageLike {
     cache_read_input_tokens?: number;
     cache_creation_input_tokens?: number;
   };
-  // Tool-result correlation payload
-  toolUseResult?: unknown;
+  // Tool-result correlation payload (SDK uses snake_case)
+  tool_use_result?: unknown;
   // Sub-type for result messages
   // e.g. "success" | "error_max_turns" | ...
   // unused by the emitter directly but kept so the adapter can branch on it
@@ -327,7 +327,7 @@ export class FrameEmitter {
           // to hide the card in favor of the specialized frame.
           const startFrame: ToolCallStartFrame = {
             id: shortId(),
-            seq: ctx.nextSeq(),
+            seq: 0, // assigned below after assistant_message seq
             ts: ctx.ts,
             type: "tool_call_start",
             toolCallId: item.id,
@@ -346,7 +346,7 @@ export class FrameEmitter {
                 : undefined) ?? "";
             const planFrame: PlanFrame = {
               id: shortId(),
-              seq: ctx.nextSeq(),
+              seq: 0, // assigned below after assistant_message seq
               ts: ctx.ts,
               type: "plan",
               toolCallId: item.id,
@@ -358,7 +358,7 @@ export class FrameEmitter {
             if (todos) {
               const todoFrame: TodoFrame = {
                 id: shortId(),
-                seq: ctx.nextSeq(),
+                seq: 0, // assigned below after assistant_message seq
                 ts: ctx.ts,
                 type: "todo",
                 toolCallId: item.id,
@@ -374,9 +374,19 @@ export class FrameEmitter {
       }
     }
 
+    // IMPORTANT: The assistant_message must get a seq BEFORE the
+    // tool_call_start frames so that when they're pushed in this order
+    // (assistant first, tool calls second) the seq numbers are monotonically
+    // increasing. The frontend's dedup check drops any frame whose seq <=
+    // lastSeq, so broadcasting a higher-seq frame before a lower-seq one
+    // causes the lower-seq frame to be silently discarded.
+    const assistantSeq = ctx.nextSeq();
+    for (const tcf of toolCallFrames) {
+      (tcf as { seq: number }).seq = ctx.nextSeq();
+    }
     const assistantFrame: AssistantMessageFrame = {
       id: messageId,
-      seq: ctx.nextSeq(),
+      seq: assistantSeq,
       ts: ctx.ts,
       type: "assistant_message",
       messageId,
@@ -392,7 +402,7 @@ export class FrameEmitter {
   private emitUser(sdk: SdkMessageLike, ctx: EmitContext): Frame[] {
     const frames: Frame[] = [];
     const rawContent = sdk.message?.content;
-    const toolUseResult = sdk.toolUseResult;
+    const toolUseResult = sdk.tool_use_result;
 
     // User messages can be either a plain string (from the browser) or
     // a content array (from the SDK echoing tool_result entries back to

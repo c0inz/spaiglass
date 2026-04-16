@@ -246,7 +246,22 @@ export interface TodoFrame extends BaseFrame {
 
 export interface ErrorFrame extends BaseFrame {
   type: "error";
-  category: "stream_error" | "tool_error" | "session_error" | "auth_error";
+  /**
+   * Category of the frame:
+   *   - stream_error / tool_error / session_error / auth_error: real errors
+   *     rendered as a red error card.
+   *   - notice: client-synthesized informational notice (e.g. permission-mode
+   *     announcement, "/reset started", viewer read-only hint). Rendered as
+   *     a neutral notice card — same row type so the reducer stays simple,
+   *     different visual so the user doesn't see a red error for a benign
+   *     status message.
+   */
+  category:
+    | "stream_error"
+    | "tool_error"
+    | "session_error"
+    | "auth_error"
+    | "notice";
   message: string;
   /**
    * Optional scope. If set, the renderer badges the specific row instead

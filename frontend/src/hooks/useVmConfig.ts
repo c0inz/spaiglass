@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
 
-interface VmConfig {
+export interface VmConfig {
   role: string;
   vmName: string;
+  ipv4?: string | null;
 }
 
 export function useVmConfig() {

@@ -48,6 +48,7 @@ import {
   handleCreateRole,
   handleUpdateRole,
 } from "./handlers/roles.ts";
+import { handleRegisterProject } from "./handlers/register.ts";
 import { createAuthMiddleware } from "./middleware/auth.ts";
 import { readBinaryFile } from "./utils/fs.ts";
 
@@ -147,6 +148,9 @@ export function createApp(
   app.get("/api/roles", (c) => handleGetRoles(c));
   app.post("/api/roles", (c) => handleCreateRole(c));
   app.put("/api/roles/:name", (c) => handleUpdateRole(c));
+
+  // Project registration — one-shot create project + role + register with Claude
+  app.post("/api/projects/register", (c) => handleRegisterProject(c));
 
   // Static file serving (assets only — SPA fallback added separately via finalizeSpa)
   const serveStatic = runtime.createStaticFileMiddleware({

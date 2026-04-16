@@ -35,6 +35,13 @@ const localSockets = new Map<string, WebSocket>();
 let relayWs: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let authenticated = false;
+// Keepalive. Upstream TLS proxies (DO droplet nginx, Caddy, etc.) idle-
+// terminate WebSockets after ~60s of no traffic. Without this ping, a
+// VM that sits idle gets silently disconnected from the relay, and the
+// next browser reconnect sees "VM is offline" until the 3s backoff
+// re-registers. Application-level pings work through any proxy.
+let pingTimer: ReturnType<typeof setInterval> | null = null;
+const RELAY_PING_INTERVAL_MS = 25_000;
 
 function log(msg: string) {
   console.log(`[connector] ${new Date().toISOString()} ${msg}`);
@@ -76,11 +83,17 @@ function connectToRelay() {
     if (msg.type === "auth_ok") {
       authenticated = true;
       log(`Authenticated as connector: ${msg.name} (${msg.connectorId})`);
+      startPingTimer();
       return;
     }
 
     if (msg.type === "error") {
       log(`Relay error: ${msg.message}`);
+      return;
+    }
+
+    // Keepalive — relay replies to our pings; we just consume pongs.
+    if (msg.type === "pong") {
       return;
     }
 
@@ -102,6 +115,7 @@ function connectToRelay() {
   relayWs.on("close", () => {
     log("Disconnected from relay");
     authenticated = false;
+    stopPingTimer();
     scheduleReconnect();
   });
 
@@ -109,6 +123,27 @@ function connectToRelay() {
     log(`Relay WebSocket error: ${err.message}`);
     authenticated = false;
   });
+}
+
+function startPingTimer() {
+  stopPingTimer();
+  pingTimer = setInterval(() => {
+    if (!relayWs || relayWs.readyState !== WebSocket.OPEN || !authenticated) {
+      return;
+    }
+    try {
+      relayWs.send(JSON.stringify({ type: "ping" }));
+    } catch {
+      // Send failure → the close handler will clean up and reconnect.
+    }
+  }, RELAY_PING_INTERVAL_MS);
+}
+
+function stopPingTimer() {
+  if (pingTimer) {
+    clearInterval(pingTimer);
+    pingTimer = null;
+  }
 }
 
 function scheduleReconnect() {
