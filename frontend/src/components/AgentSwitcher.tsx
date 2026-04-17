@@ -73,6 +73,11 @@ export function AgentSwitcher({
       {/* Recent agent buttons */}
       {recentAgents.map((agent) => {
         const isCurrent = currentUrl && agent.url === currentUrl;
+        // Look up display name from fleet roles so buttons reflect renames
+        const matchedRole = roles.find((r) => r.url === agent.url);
+        const displayLabel = matchedRole
+          ? `${matchedRole.displayName || matchedRole.project}-${matchedRole.roleName}`
+          : agent.label;
         return (
           <a
             key={agent.url}
@@ -82,9 +87,9 @@ export function AgentSwitcher({
                 ? "bg-amber-100 dark:bg-amber-900/40 border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-300"
                 : "bg-white/80 dark:bg-slate-800/80 border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-white dark:hover:bg-slate-700 hover:border-slate-300 dark:hover:border-slate-500"
             }`}
-            title={`${agent.connectorName}: ${agent.project}/${agent.role}`}
+            title={`${agent.connectorName}: ${matchedRole?.displayName || agent.project}/${agent.role}`}
           >
-            {compactLabel(agent.label)}
+            {compactLabel(displayLabel)}
           </a>
         );
       })}

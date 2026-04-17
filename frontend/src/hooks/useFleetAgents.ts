@@ -92,7 +92,9 @@ export function useFleetAgents() {
           // Skip connector
         }
       }
-      allRoles.sort((a, b) => a.project.localeCompare(b.project));
+      allRoles.sort((a, b) =>
+        (a.displayName || a.project).localeCompare(b.displayName || b.project),
+      );
       setRoles(allRoles);
     } catch {
       // Failed to fetch fleet
