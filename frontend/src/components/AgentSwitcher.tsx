@@ -12,7 +12,6 @@ import type {
   FleetRole,
   FleetConnector,
 } from "../hooks/useFleetAgents";
-
 interface AgentSwitcherProps {
   recentAgents: RecentAgent[];
   roles: FleetRole[];
@@ -125,7 +124,7 @@ export function AgentSwitcher({
                     onClick={() => setShowDropdown(false)}
                   >
                     <div className="text-sm">
-                      <span className="font-bold text-blue-500 dark:text-blue-400">{role.project}</span>
+                      <span className="font-bold text-blue-500 dark:text-blue-400">{role.displayName || role.project}</span>
                       <span className="inline-block w-[5ch]" />
                       <span className="text-[11px] text-emerald-500 dark:text-emerald-400">{role.roleName}</span>
                     </div>
@@ -214,7 +213,7 @@ export function AgentPickerFullPage({
               className="block px-4 py-2 border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
             >
               <div className="text-sm">
-                <span className="font-bold text-blue-500 dark:text-blue-400">{role.project}</span>
+                <span className="font-bold text-blue-500 dark:text-blue-400">{role.displayName || role.project}</span>
                 <span className="inline-block w-[5ch]" />
                 <span className="text-[11px] text-emerald-500 dark:text-emerald-400">{role.roleName}</span>
               </div>

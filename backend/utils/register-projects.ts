@@ -86,7 +86,7 @@ export function registerProjects(): void {
   }
 
   for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
+    if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
     const projDir = join(projectsRoot, entry.name);
     // Check native .claude/agents/ first, then legacy agents/
     if (!existsSync(join(projDir, ".claude", "agents")) &&

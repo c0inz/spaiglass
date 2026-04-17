@@ -15,6 +15,7 @@ export interface FleetConnector {
 
 export interface FleetRole {
   project: string;
+  displayName: string | null;
   projectPath: string;
   roleFile: string;
   roleName: string;
@@ -91,6 +92,7 @@ export function useFleetAgents() {
           // Skip connector
         }
       }
+      allRoles.sort((a, b) => a.project.localeCompare(b.project));
       setRoles(allRoles);
     } catch {
       // Failed to fetch fleet

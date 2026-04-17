@@ -49,6 +49,10 @@ import {
   handleUpdateRole,
 } from "./handlers/roles.ts";
 import { handleRegisterProject } from "./handlers/register.ts";
+import {
+  handleGetProjectDisplayNames,
+  handleSetProjectDisplayName,
+} from "./handlers/project-display-names.ts";
 import { createAuthMiddleware } from "./middleware/auth.ts";
 import { readBinaryFile } from "./utils/fs.ts";
 
@@ -151,6 +155,14 @@ export function createApp(
 
   // Project registration — one-shot create project + role + register with Claude
   app.post("/api/projects/register", (c) => handleRegisterProject(c));
+
+  // Project display names — cosmetic labels for the UI
+  app.get("/api/settings/project-display-names", (c) =>
+    handleGetProjectDisplayNames(c),
+  );
+  app.put("/api/settings/project-display-name", (c) =>
+    handleSetProjectDisplayName(c),
+  );
 
   // Static file serving (assets only — SPA fallback added separately via finalizeSpa)
   const serveStatic = runtime.createStaticFileMiddleware({

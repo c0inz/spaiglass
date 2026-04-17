@@ -34,21 +34,41 @@ export function RoleResolver() {
     }
 
     try {
+      // Try /api/projects first (projects with history in ~/.claude.json)
+      let resolvedPath: string | null = null;
+
       const res = await fetch(getProjectsUrl());
-      if (!res.ok) {
-        setError("Failed to load projects");
-        return;
+      if (res.ok) {
+        const data: ProjectsResponse = await res.json();
+        const match = data.projects.find((p) => {
+          const basename = p.path.split("/").filter(Boolean).pop() || "";
+          return basename.toLowerCase() === sg.project!.toLowerCase();
+        });
+        if (match) resolvedPath = match.path;
       }
 
-      const data: ProjectsResponse = await res.json();
+      // Fallback: /api/discover scans ~/projects/ for directories with
+      // agent role files. Projects that haven't been used yet won't appear
+      // in /api/projects (no history directory), but /api/discover finds
+      // them by scanning the filesystem.
+      if (!resolvedPath) {
+        const discoverRes = await fetch(
+          `/api/discover?projectsDir=${encodeURIComponent("~/projects")}`,
+        );
+        if (discoverRes.ok) {
+          const discoverData = await discoverRes.json();
+          const allEntries = [
+            ...(discoverData.projects || []),
+            ...(discoverData.unassigned || []),
+          ];
+          const match = allEntries.find((p: { name: string; path: string }) =>
+            p.name.toLowerCase() === sg.project!.toLowerCase(),
+          );
+          if (match) resolvedPath = match.path;
+        }
+      }
 
-      // Find project whose path basename matches (case-insensitive)
-      const match = data.projects.find((p) => {
-        const basename = p.path.split("/").filter(Boolean).pop() || "";
-        return basename.toLowerCase() === sg.project!.toLowerCase();
-      });
-
-      if (!match) {
+      if (!resolvedPath) {
         setError(`Project "${sg.project}" not found`);
         return;
       }
@@ -59,7 +79,7 @@ export function RoleResolver() {
           __SG_RESOLVED?: { path: string; role: string | null };
         }
       ).__SG_RESOLVED = {
-        path: match.path,
+        path: resolvedPath,
         role: sg.role ? `${sg.role}.md` : null,
       };
 

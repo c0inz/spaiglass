@@ -2542,12 +2542,22 @@ app.get("/vm/:slug/api/__relay/fleet/:targetSlug/roles", async (c) => {
 
     const roles: Array<{
       project: string;
+      displayName: string | null;
       projectPath: string;
       roleFile: string;
       roleName: string;
       segment: string;
       url: string;
     }> = [];
+
+    // Fetch project display names (one call per VM, not per project)
+    const dnRes = await proxyGetJson(
+      cm,
+      targetConn.id,
+      "/api/settings/project-display-names",
+    );
+    const displayNames: Record<string, string> =
+      dnRes?.displayNames || {};
 
     for (const proj of projRes.projects) {
       const ctxRes = await proxyGetJson(
@@ -2563,6 +2573,7 @@ app.get("/vm/:slug/api/__relay/fleet/:targetSlug/roles", async (c) => {
         const segment = `${projBase}-${roleBase}`;
         roles.push({
           project: projBase,
+          displayName: displayNames[projBase] || null,
           projectPath: proj.path,
           roleFile: ctx.filename,
           roleName: ctx.name,

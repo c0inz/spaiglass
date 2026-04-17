@@ -94,7 +94,7 @@ export function SettingsModal({ isOpen, onClose, projectPath, onRoleCreated }: S
             {activeTab === "roles" && (
               <RolesSettings projectPath={projectPath} onRoleCreated={onRoleCreated} />
             )}
-            {activeTab === "settings" && <GeneralSettings />}
+            {activeTab === "settings" && <GeneralSettings projectPath={projectPath} />}
             {activeTab === "theme" && <ThemeSettings />}
           </div>
         </div>

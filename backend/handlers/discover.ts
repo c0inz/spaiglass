@@ -33,7 +33,7 @@ export async function handleDiscoverRequest(c: Context) {
   try {
     const entries = await readdir(resolved, { withFileTypes: true });
     for (const entry of entries) {
-      if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+      if ((!entry.isDirectory() && !entry.isSymbolicLink()) || entry.name.startsWith(".")) continue;
 
       const projectPath = join(resolved, entry.name);
       // Check .claude/agents/ first (native), then agents/ (legacy)

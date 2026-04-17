@@ -32,6 +32,10 @@ import { getProjectsUrl } from "../config/api";
 import { KEYBOARD_SHORTCUTS } from "../utils/constants";
 import { normalizeWindowsPath } from "../utils/pathUtils";
 import { useVmConfig } from "../hooks/useVmConfig";
+// Project display names are fetched from the VM backend (server-side
+// storage so all browsers see the same labels). The localStorage
+// utility is kept only as a migration fallback during the transition.
+import { getProjectDisplayName as getLocalDisplayName } from "../utils/projectDisplayName";
 
 export function ChatPage() {
   const location = useLocation();
@@ -93,6 +97,20 @@ export function ChatPage() {
 
   // Fleet agent switcher — fetches connectors + roles from relay
   const fleet = useFleetAgents();
+
+  // Project display names — fetched from VM backend so all browsers agree.
+  // Falls back to localStorage (legacy) then directory basename.
+  const [projectDisplayNames, setProjectDisplayNames] = useState<
+    Record<string, string>
+  >({});
+  useEffect(() => {
+    fetch("/api/settings/project-display-names")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.displayNames) setProjectDisplayNames(data.displayNames);
+      })
+      .catch(() => {});
+  }, []);
 
   // Extract working directory: prefer relay-resolved context, fall back to URL
   const workingDirectory = (() => {
@@ -841,7 +859,7 @@ export function ChatPage() {
                         className="text-blue-500 dark:text-blue-400 truncate"
                         title={workingDirectory || projectBase}
                       >
-                        {projectBase}
+                        {projectDisplayNames[projectBase] || getLocalDisplayName(projectBase) || projectBase}
                       </span>
                     )}
                     {projectBase && roleLabel && (
@@ -873,9 +891,9 @@ export function ChatPage() {
                     )}
                   </span>
                 )}
-                {sessionId && (
+                {(currentSessionId || sessionId) && (
                   <span className="ml-2 text-slate-400">
-                    {sessionId}
+                    {currentSessionId || sessionId}
                   </span>
                 )}
               </div>

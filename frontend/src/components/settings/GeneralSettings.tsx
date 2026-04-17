@@ -3,8 +3,10 @@ import {
   CommandLineIcon,
   KeyIcon,
   BookmarkIcon,
+  TagIcon,
 } from "@heroicons/react/24/outline";
 import { useSettings } from "../../hooks/useSettings";
+import { getProjectDisplayName as getLocalDisplayName } from "../../utils/projectDisplayName";
 
 type KeyStatus =
   | { state: "loading" }
@@ -23,8 +25,37 @@ interface SelfConnector {
   ownerLogin: string;
 }
 
-export function GeneralSettings() {
+export function GeneralSettings({ projectPath }: { projectPath?: string }) {
   const { enterBehavior, toggleEnterBehavior } = useSettings();
+
+  // Project display name — editable label stored on the VM backend
+  const projectBasename = projectPath
+    ? projectPath.replace(/\/+$/, "").split(/[\\/]/).filter(Boolean).pop() || null
+    : null;
+  const [projDisplayInput, setProjDisplayInput] = useState("");
+  const [projDisplaySaved, setProjDisplaySaved] = useState<string | null>(null);
+  const [projDisplayMessage, setProjDisplayMessage] = useState<string | null>(null);
+  const [projDisplayBusy, setProjDisplayBusy] = useState(false);
+
+  // Load current display name from API (fall back to localStorage for migration)
+  useEffect(() => {
+    if (!projectBasename) return;
+    let cancelled = false;
+    fetch("/api/settings/project-display-names")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled) return;
+        const apiName = data?.displayNames?.[projectBasename] || null;
+        const localName = getLocalDisplayName(projectBasename);
+        const resolved = apiName || localName || projectBasename;
+        setProjDisplayInput(resolved);
+        setProjDisplaySaved(apiName || localName || null);
+      })
+      .catch(() => {
+        if (!cancelled) setProjDisplayInput(projectBasename);
+      });
+    return () => { cancelled = true; };
+  }, [projectBasename]);
 
   const [keyStatus, setKeyStatus] = useState<KeyStatus>({ state: "loading" });
   const [keyInput, setKeyInput] = useState("");
@@ -259,6 +290,88 @@ export function GeneralSettings() {
           <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
             Sets the browser tab title for this agent and the label used in the
             agent switcher. Clear the field to revert to the default.
+          </div>
+        </div>
+      )}
+
+      {/* Project Display Name */}
+      {projectBasename && (
+        <div>
+          <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2 block">
+            Project Display Name
+          </label>
+          <div className="flex items-center gap-3 px-4 py-3 bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 rounded-lg">
+            <TagIcon className="w-5 h-5 text-slate-600 dark:text-slate-400 flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+              <div className="text-xs text-slate-500 dark:text-slate-400">
+                Project:{" "}
+                <span className="font-mono text-slate-700 dark:text-slate-300">
+                  {projectBasename}
+                </span>
+              </div>
+            </div>
+          </div>
+          <div className="mt-3 flex gap-2">
+            <input
+              type="text"
+              value={projDisplayInput}
+              onChange={(e) => setProjDisplayInput(e.target.value)}
+              placeholder={projectBasename}
+              maxLength={100}
+              className="flex-1 px-3 py-2 text-sm bg-white/80 dark:bg-slate-800/80 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent backdrop-blur-sm shadow-sm transition-all duration-200"
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <button
+              type="button"
+              onClick={async () => {
+                if (!projectBasename) return;
+                setProjDisplayBusy(true);
+                setProjDisplayMessage(null);
+                const next = projDisplayInput.trim();
+                const displayName = (!next || next === projectBasename) ? null : next;
+                try {
+                  const res = await fetch("/api/settings/project-display-name", {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ project: projectBasename, displayName }),
+                  });
+                  if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    setProjDisplayMessage(data?.error ?? `Failed (${res.status})`);
+                    return;
+                  }
+                  setProjDisplaySaved(displayName);
+                  if (!displayName) {
+                    setProjDisplayInput(projectBasename);
+                    setProjDisplayMessage("Display name cleared — using default.");
+                  } else {
+                    setProjDisplayMessage("Display name saved.");
+                  }
+                } catch (err) {
+                  setProjDisplayMessage(err instanceof Error ? err.message : String(err));
+                } finally {
+                  setProjDisplayBusy(false);
+                }
+              }}
+              disabled={
+                projDisplayBusy ||
+                projDisplayInput.trim() ===
+                  (projDisplaySaved ?? projectBasename)
+              }
+              className="px-4 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow-sm hover:shadow-md transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {projDisplayBusy ? "Saving\u2026" : "Save"}
+            </button>
+          </div>
+          {projDisplayMessage && (
+            <div className="mt-2 text-xs text-emerald-600 dark:text-emerald-400">
+              {projDisplayMessage}
+            </div>
+          )}
+          <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+            Custom label shown in the page header and fleet dropdown. Clear to
+            revert to the directory name.
           </div>
         </div>
       )}
