@@ -2535,10 +2535,19 @@ app.get("/vm/:slug/api/__relay/fleet/:targetSlug/roles", async (c) => {
   const cm = getChannelManager();
   if (!cm.isOnline(targetConn.id)) return c.json({ roles: [] });
 
-  // Proxy /api/projects and /api/projects/contexts to the target VM
+  // Discover projects by scanning the filesystem for role files.
+  // This replaces the old /api/projects approach which read from
+  // .claude.json — that file is managed by Claude Code and accumulates
+  // stale entries from ad-hoc sessions, renamed directories, etc.
+  // /api/discover scans ~/projects for directories with actual role
+  // files on disk, so the fleet dropdown only shows real projects.
   try {
-    const projRes = await proxyGetJson(cm, targetConn.id, "/api/projects");
-    if (!projRes?.projects) return c.json({ roles: [] });
+    const discoverRes = await proxyGetJson(
+      cm,
+      targetConn.id,
+      "/api/discover?projectsDir=~/projects",
+    );
+    if (!discoverRes?.projects) return c.json({ roles: [] });
 
     const roles: Array<{
       project: string;
@@ -2559,24 +2568,16 @@ app.get("/vm/:slug/api/__relay/fleet/:targetSlug/roles", async (c) => {
     const displayNames: Record<string, string> =
       dnRes?.displayNames || {};
 
-    for (const proj of projRes.projects) {
-      const ctxRes = await proxyGetJson(
-        cm,
-        targetConn.id,
-        `/api/projects/contexts?path=${encodeURIComponent(proj.path)}`,
-      );
-      if (!ctxRes?.contexts) continue;
-      const projBase =
-        proj.path.split("/").filter(Boolean).pop() || proj.encodedName;
-      for (const ctx of ctxRes.contexts) {
-        const roleBase = ctx.filename.replace(/\.md$/, "");
-        const segment = `${projBase}-${roleBase}`;
+    for (const proj of discoverRes.projects) {
+      for (const role of proj.roles || []) {
+        const roleBase = role.filename.replace(/\.md$/, "");
+        const segment = `${proj.name}-${roleBase}`;
         roles.push({
-          project: projBase,
-          displayName: displayNames[projBase] || null,
+          project: proj.name,
+          displayName: displayNames[proj.name] || null,
           projectPath: proj.path,
-          roleFile: ctx.filename,
-          roleName: ctx.name,
+          roleFile: role.filename,
+          roleName: role.name,
           segment,
           url: `/vm/${targetSlug}/${segment}/`,
         });

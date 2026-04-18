@@ -80,11 +80,12 @@ export function connectorRoutes(): Hono<RelayEnv> {
     }
 
     const connector = createConnector(user.id, body.name.trim());
+    // rawToken is the plaintext token shown once — the DB stores only the hash
     return c.json({
       id: connector.id,
       name: connector.name,
       displayName: connectorDisplayName(connector),
-      token: connector.token,
+      token: connector.rawToken,
       createdAt: connector.created_at,
     }, 201);
   });
@@ -125,7 +126,10 @@ export function connectorRoutes(): Hono<RelayEnv> {
     return c.json({ ok: true, displayName: displayName || undefined });
   });
 
-  // Download .env config for a connector
+  // Download .env config for a connector.
+  // The connector token is hashed at rest — the raw token was shown once at
+  // creation time. This config omits the token; the user must supply it from
+  // their records or delete + recreate the connector to get a new one.
   app.get("/api/connectors/:id/config", (c) => {
     const user = c.get("user")!;
     const id = c.req.param("id");
@@ -142,6 +146,10 @@ export function connectorRoutes(): Hono<RelayEnv> {
       `# Relay: ${publicUrl}`,
       `# Source: https://github.com/c0inz/spaiglass (MIT License)`,
       `#`,
+      `# SECURITY NOTE: The connector token is hashed at rest on the relay.`,
+      `# The raw token was shown once when the connector was created.`,
+      `# If you lost it, delete this connector and create a new one.`,
+      `#`,
       `# SETUP INSTRUCTIONS (for humans and LLM agents):`,
       `#`,
       `# 1. Install prerequisites on the VM:`,
@@ -153,7 +161,7 @@ export function connectorRoutes(): Hono<RelayEnv> {
       `#      cd /opt/spaiglass/backend && npm install`,
       `#      ln -sf /opt/spaiglass/frontend/dist /opt/spaiglass/backend/static`,
       `#`,
-      `# 3. Copy this file to /opt/spaiglass/backend/.env`,
+      `# 3. Copy this file to /opt/spaiglass/backend/.env and fill in your token`,
       `#`,
       `# 4. Start the backend (local web UI + Claude Code bridge):`,
       `#      cd /opt/spaiglass/backend && npx tsx cli/node.ts --host 0.0.0.0 --port 8080`,
@@ -169,7 +177,7 @@ export function connectorRoutes(): Hono<RelayEnv> {
       `# For full setup docs: curl ${publicUrl}/setup`,
       ``,
       `RELAY_URL=${publicUrl}`,
-      `CONNECTOR_TOKEN=${connector.token}`,
+      `CONNECTOR_TOKEN=<paste your token here>`,
       `CONNECTOR_ID=${connector.id}`,
       ``,
       `# SpAIglass backend settings`,

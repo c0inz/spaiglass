@@ -353,9 +353,10 @@ Returns all connectors the authenticated user owns or has access to.
 #### `GET /api/__relay/fleet/{connectorName}/roles`
 
 Returns all project roles available on a specific connector (VM). The
-relay proxies `/api/projects`, `/api/projects/contexts`, and
+relay proxies `/api/discover?projectsDir=~/projects` and
 `/api/settings/project-display-names` to the target VM and assembles
-the result.
+the result. Uses filesystem discovery (not `.claude.json`) so only
+projects with actual role files on disk appear in the fleet dropdown.
 
 **Response:**
 ```json
@@ -421,3 +422,44 @@ Sets the browser tab title for this connector.
 ```
 
 Set to `null` or `""` to clear and revert to the default.
+
+---
+
+## Security: Connector Token Hashing
+
+Connector tokens authenticate the WebSocket tunnel between each VM and
+the relay. Tokens are **hashed at rest** using SHA-256 — the relay
+database never stores plaintext tokens.
+
+### How it works
+
+1. When a connector is created (`POST /api/connectors`), the relay
+   generates a random UUID token, stores the SHA-256 hash in the
+   `connectors.token` column, and returns the raw token **once** in the
+   response.
+
+2. The raw token is saved in the VM's `.env` file as
+   `CONNECTOR_TOKEN=<uuid>` by the installer.
+
+3. When the VM connects, it sends the raw token. The relay hashes it
+   and compares against the stored hash. If they match, the connection
+   is authenticated.
+
+4. If the relay database is compromised, the attacker gets SHA-256
+   hashes — not usable tokens. They cannot impersonate a VM connector.
+
+### Token lifecycle
+
+| Event | What happens |
+|-------|-------------|
+| `POST /api/connectors` | Raw token shown once, hash stored |
+| VM connects via WebSocket | Raw token hashed and compared |
+| `GET /api/connectors/:id/config` | Token is **not** included (hash only in DB) |
+| Token lost | Delete the connector, create a new one |
+
+### Migration
+
+Existing plaintext tokens (UUID format, 36 chars) are automatically
+migrated to SHA-256 hashes (64 hex chars) on relay startup. The
+migration is idempotent — already-hashed tokens are skipped. VMs do
+not need any changes; their `.env` files keep the raw token.

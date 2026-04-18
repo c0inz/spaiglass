@@ -4,7 +4,12 @@
  */
 
 import Database from "better-sqlite3";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
+
+/** SHA-256 hash a raw connector token for at-rest storage. */
+export function hashConnectorToken(raw: string): string {
+  return createHash("sha256").update(raw).digest("hex");
+}
 
 let db: Database.Database;
 
@@ -111,6 +116,23 @@ export function initDb(path = "./relay.db"): Database.Database {
     // Column already exists — ignore.
   }
 
+  // Migration: hash any plaintext connector tokens (UUID format → SHA-256 hex).
+  // Plaintext tokens are 36 chars with dashes; hashed tokens are 64 hex chars.
+  // This is idempotent — already-hashed tokens won't match the UUID pattern.
+  const unhashed = db
+    .prepare("SELECT id, token FROM connectors WHERE LENGTH(token) = 36 AND token LIKE '%-%'")
+    .all() as { id: string; token: string }[];
+  if (unhashed.length > 0) {
+    const update = db.prepare("UPDATE connectors SET token = ? WHERE id = ?");
+    const migrate = db.transaction(() => {
+      for (const row of unhashed) {
+        update.run(hashConnectorToken(row.token), row.id);
+      }
+    });
+    migrate();
+    console.log(`[db] Migrated ${unhashed.length} connector token(s) to SHA-256 hashes`);
+  }
+
   return db;
 }
 
@@ -202,12 +224,14 @@ export function connectorDisplayName(c: { name: string; display_name: string | n
   return c.display_name || c.name;
 }
 
-export function createConnector(userId: string, name: string): Connector {
+export function createConnector(userId: string, name: string): Connector & { rawToken: string } {
   const id = randomUUID();
-  const token = randomUUID();
+  const rawToken = randomUUID();
+  const tokenHash = hashConnectorToken(rawToken);
   getDb().prepare("INSERT INTO connectors (id, user_id, name, token) VALUES (?, ?, ?, ?)")
-    .run(id, userId, name, token);
-  return { id, user_id: userId, name, display_name: null, token, vm_host: null, vm_port: 8080, last_seen: null, created_at: new Date().toISOString() };
+    .run(id, userId, name, tokenHash);
+  // token column now stores the hash; rawToken is returned once for display
+  return { id, user_id: userId, name, display_name: null, token: tokenHash, rawToken, vm_host: null, vm_port: 8080, last_seen: null, created_at: new Date().toISOString() };
 }
 
 /** Update the user-editable display name. Null clears it (falls back to name). */
@@ -226,8 +250,9 @@ export function getConnectorById(id: string): Connector | undefined {
   return getDb().prepare("SELECT * FROM connectors WHERE id = ?").get(id) as Connector | undefined;
 }
 
-export function getConnectorByToken(token: string): Connector | undefined {
-  return getDb().prepare("SELECT * FROM connectors WHERE token = ?").get(token) as Connector | undefined;
+export function getConnectorByToken(rawToken: string): Connector | undefined {
+  const hash = hashConnectorToken(rawToken);
+  return getDb().prepare("SELECT * FROM connectors WHERE token = ?").get(hash) as Connector | undefined;
 }
 
 export function getConnectorByName(name: string): Connector | undefined {

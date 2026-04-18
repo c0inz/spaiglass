@@ -21,6 +21,7 @@ import { FileSidebar } from "./FileSidebar";
 import { FileEditor } from "./FileEditor";
 import { FileMention } from "./FileMention";
 import { NewSessionDialog } from "./NewSessionDialog";
+import { SessionPickerModal } from "./SessionPickerModal";
 import { StaleContextBanner } from "./StaleContextBanner";
 import { ArchitectureViewer } from "./ArchitectureViewer";
 import { MobileTabBar, type MobileTab } from "./MobileTabBar";
@@ -68,6 +69,7 @@ export function ChatPage() {
   const [staleFiles, setStaleFiles] = useState<string[]>([]);
   const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0);
   const [showArchViewer, setShowArchViewer] = useState(false);
+  const [showSessionPicker, setShowSessionPicker] = useState(false);
   const [showAgents, setShowAgents] = useState(false);
   const [pendingImages, setPendingImages] = useState<
     { file: File; preview: string }[]
@@ -947,10 +949,10 @@ export function ChatPage() {
             </>
           )}
           <button
-            onClick={handleNewSession}
+            onClick={() => setShowSessionPicker(true)}
             className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-800/80 text-slate-600 dark:text-slate-400 hover:bg-white dark:hover:bg-slate-800 transition-all duration-200"
-            title="New session"
-            aria-label="New session"
+            title="Sessions"
+            aria-label="Sessions"
           >
             <PlusCircleIcon className="w-5 h-5" />
           </button>
@@ -1166,6 +1168,22 @@ export function ChatPage() {
 
       {/* Settings Modal */}
       <SettingsModal isOpen={isSettingsOpen} onClose={handleSettingsClose} projectPath={workingDirectory || undefined} onRoleCreated={fleet.fetchFleet} />
+
+      {/* Session Picker Modal */}
+      <SessionPickerModal
+        open={showSessionPicker}
+        onClose={() => setShowSessionPicker(false)}
+        onNewSession={handleNewSession}
+        onSelectSession={(sid) => {
+          const params = new URLSearchParams();
+          params.set("sessionId", sid);
+          if (roleFile) params.set("role", roleFile);
+          navigate({ search: params.toString() });
+          window.location.reload();
+        }}
+        encodedName={getEncodedName()}
+        currentSessionId={currentSessionId}
+      />
 
       {/* Context Picker Dialog */}
       {showContextPicker && workingDirectory && (
