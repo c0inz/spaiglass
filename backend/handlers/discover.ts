@@ -1,5 +1,6 @@
 import type { Context } from "hono";
 import { readdir } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 interface RoleInfo {
@@ -26,7 +27,13 @@ export async function handleDiscoverRequest(c: Context) {
     return c.json({ error: "projectsDir parameter required" }, 400);
   }
 
-  const resolved = resolve(projectsDir);
+  const expanded =
+    projectsDir === "~"
+      ? homedir()
+      : projectsDir.startsWith("~/")
+        ? join(homedir(), projectsDir.slice(2))
+        : projectsDir;
+  const resolved = resolve(expanded);
   const projects: ProjectInfo[] = [];
   const unassigned: { name: string; path: string }[] = [];
 
