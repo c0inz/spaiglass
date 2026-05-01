@@ -178,14 +178,22 @@ for TARGET in "${TARGETS[@]}"; do
   echo "==> Copying frontend static files"
   cp -r "$FRONTEND_DIST" "$OUTDIR/static"
 
-  # VERSION file — read from the generated dist/version.json if present, else
-  # fall back to today's date in the spaiglass YYYY.MM.DD format.
-  if [[ -f dist/version.json ]]; then
+  # VERSION file — precedence:
+  #   1. SPAIGLASS_VERSION env var (matches pack.sh — set by deploy-relay.sh
+  #      so all artifacts in a release stamp consistently).
+  #   2. dist/version.json (legacy — never written by current pipeline but
+  #      kept for forward compat).
+  #   3. UTC date YYYY.MM.DD (matches pack.sh fallback — was previously
+  #      local-tz date here, which diverged from the slim tarball on every
+  #      machine whose local clock disagreed with UTC).
+  if [[ -n "${SPAIGLASS_VERSION:-}" ]]; then
+    printf '%s' "$SPAIGLASS_VERSION" > "$OUTDIR/VERSION"
+  elif [[ -f dist/version.json ]]; then
     node -e 'process.stdout.write(require("./dist/version.json").version || "")' \
       > "$OUTDIR/VERSION" 2>/dev/null || true
   fi
   if [[ ! -s "$OUTDIR/VERSION" ]]; then
-    date +%Y.%m.%d > "$OUTDIR/VERSION"
+    date -u +%Y.%m.%d > "$OUTDIR/VERSION"
   fi
 
   # Tarball: <outdir>.tar.gz with the spaiglass-host-<target>/ top-level dir

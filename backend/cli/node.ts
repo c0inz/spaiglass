@@ -120,14 +120,21 @@ async function main(runtime: NodeRuntime) {
 // We can't use a `import.meta.url === argv[1]` check here because under
 // `bun build --compile`, every bundled module sees the same import.meta.url
 // (the binary path), which makes that check spuriously true for non-entry
-// modules. Instead, skip auto-run entirely when running inside the compiled
-// binary — there, cli/spaiglass-host.ts is the unique entry point and it
-// imports runNodeBackend() explicitly.
-const __dirname_check =
-  import.meta.dirname ?? dirname(fileURLToPath(import.meta.url));
-const isCompiledBundle = __dirname_check.startsWith("/$bunfs");
+// modules. We also can't path-check `import.meta.dirname` against `$bunfs`
+// — that prefix is unix-only; on Windows the bun virtual FS uses
+// `B:/~BUN/...`, which let the auto-run path fire INSIDE the compiled
+// binary, double-initialising the backend (Commander duplicate-flag crash
+// on `.version()` re-registration) — see issue 2026-05-01.
+//
+// The reliable signal: when running via legacy `node …`, process.execPath
+// is the node binary; when running via the bun-compiled spaiglass-host,
+// process.execPath is the binary itself. Skip auto-run unless execPath
+// looks like node — that path is the *only* place we want auto-init.
+const execName =
+  process.execPath.replace(/\\/g, "/").split("/").pop()?.toLowerCase() ?? "";
+const isLegacyNodeRun = execName === "node" || execName === "node.exe";
 
-if (!isCompiledBundle) {
+if (isLegacyNodeRun) {
   const runtime = new NodeRuntime();
   main(runtime).catch((error) => {
     console.error("Failed to start server:", error);
