@@ -14,6 +14,7 @@ import {
 } from "./middleware/config.ts";
 import { handleProjectsRequest } from "./handlers/projects.ts";
 import { handleHistoriesRequest } from "./handlers/histories.ts";
+import { handleClaudeSessionsRequest } from "./handlers/claude-sessions.ts";
 import { handleConversationRequest } from "./handlers/conversations.ts";
 import { handleChatRequest } from "./handlers/chat.ts";
 import { handleAbortRequest } from "./handlers/abort.ts";
@@ -109,6 +110,11 @@ export function createApp(
   // API routes
   app.get("/api/config", (c) => handleConfigRequest(c));
   app.get("/api/projects", (c) => handleProjectsRequest(c));
+
+  // Flat list of every Claude session on this VM, regardless of project.
+  // Each row tagged with source ("spaiglass" | "claude-cli") so the picker
+  // can badge them differently — see handlers/claude-sessions.ts.
+  app.get("/api/claude-sessions", (c) => handleClaudeSessionsRequest(c));
 
   app.get("/api/projects/:encodedProjectName/histories", (c) =>
     handleHistoriesRequest(c),

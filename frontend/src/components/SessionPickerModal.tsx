@@ -1,14 +1,23 @@
 import { useState, useEffect, useRef } from "react";
-import { PlusIcon } from "@heroicons/react/24/outline";
-import type { ConversationSummary } from "../../../shared/types";
-import { getHistoriesUrl } from "../config/api";
+import { PlusIcon, CommandLineIcon, FolderIcon } from "@heroicons/react/24/outline";
+import type { ClaudeSessionRow } from "../../../shared/types";
+import { getClaudeSessionsUrl } from "../config/api";
 
 interface SessionPickerModalProps {
   open: boolean;
   onClose: () => void;
   onNewSession: () => void;
+  /**
+   * Resume a session in the *current* project context. ChatPage handles the
+   * URL search-param + reload — used when the picked session lives in the
+   * same project the user is already on, or when no project mapping exists.
+   */
   onSelectSession: (sessionId: string) => void;
-  encodedName: string | null;
+  /**
+   * Resume a session in a *different* project. The picker computes the
+   * target URL (path-level navigate) so the cwd / role context follows.
+   */
+  onSelectSessionInProject?: (sessionId: string, targetUrl: string) => void;
   currentSessionId: string | null;
 }
 
@@ -21,32 +30,17 @@ function formatTimestamp(iso: string): string {
   return `${mo}-${day} ${hr}:${min}`;
 }
 
-function truncateId(id: string): string {
-  return id.length > 8 ? id.slice(0, 8) : id;
-}
-
-function formatDuration(ms?: number): string | null {
-  if (!ms || ms < 0) return null;
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s`;
-  const m = Math.round(s / 60);
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  const mm = m % 60;
-  return mm ? `${h}h${mm}m` : `${h}h`;
+function basename(path: string): string {
+  const trimmed = path.replace(/\/+$/, "");
+  const i = trimmed.lastIndexOf("/");
+  return i >= 0 ? trimmed.slice(i + 1) : trimmed;
 }
 
 function shortModel(model?: string): string | null {
   if (!model) return null;
-  // "claude-opus-4-6-20241022" → "opus-4-6"
   const m = model.match(/claude-([a-z0-9-]+?)(?:-\d{8})?$/i);
   if (m) return m[1];
   return model.length > 16 ? model.slice(0, 16) : model;
-}
-
-function basename(path: string): string {
-  const i = path.lastIndexOf("/");
-  return i >= 0 ? path.slice(i + 1) : path;
 }
 
 export function SessionPickerModal({
@@ -54,22 +48,22 @@ export function SessionPickerModal({
   onClose,
   onNewSession,
   onSelectSession,
-  encodedName,
+  onSelectSessionInProject,
   currentSessionId,
 }: SessionPickerModalProps) {
-  const [sessions, setSessions] = useState<ConversationSummary[]>([]);
+  const [sessions, setSessions] = useState<ClaudeSessionRow[]>([]);
   const [loading, setLoading] = useState(false);
   const backdropRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!open || !encodedName) return;
+    if (!open) return;
     setLoading(true);
-    fetch(getHistoriesUrl(encodedName))
+    fetch(getClaudeSessionsUrl())
       .then((r) => (r.ok ? r.json() : null))
-      .then((data) => setSessions(data?.conversations || []))
+      .then((data) => setSessions(data?.sessions || []))
       .catch(() => setSessions([]))
       .finally(() => setLoading(false));
-  }, [open, encodedName]);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -81,6 +75,35 @@ export function SessionPickerModal({
   }, [open, onClose]);
 
   if (!open) return null;
+
+  // The current connector slug + project segment come from the relay-injected
+  // __SG context. We use them to construct cross-project navigation URLs so
+  // picking a session in a different project teleports the user to that
+  // project's context (matching the cwd / role file the SDK will resume into).
+  const sg = (window as Window & {
+    __SG?: { slug?: string; segment?: string; project?: string };
+  }).__SG;
+  const connectorSlug = sg?.slug;
+  const currentSegment = sg?.segment;
+
+  function handlePick(row: ClaudeSessionRow) {
+    // Project segment used by the relay's URL router is the directory's
+    // basename. e.g. /home/foo/projects/OCMarketplace → "OCMarketplace".
+    const targetSegment = basename(row.projectPath);
+    const sameProject =
+      !targetSegment || !currentSegment || targetSegment === currentSegment;
+
+    if (sameProject || !connectorSlug || !onSelectSessionInProject) {
+      onSelectSession(row.sessionId);
+    } else {
+      // Cross-project resume: hard-navigate so ChatPage re-resolves the
+      // working directory + role from the new URL segment. We do NOT carry
+      // the role across — the destination project owns its role mapping.
+      const url = `/vm/${connectorSlug}/${encodeURIComponent(targetSegment)}/?sessionId=${encodeURIComponent(row.sessionId)}`;
+      onSelectSessionInProject(row.sessionId, url);
+    }
+    onClose();
+  }
 
   return (
     <div
@@ -115,86 +138,73 @@ export function SessionPickerModal({
             </div>
           ) : sessions.length === 0 ? (
             <div className="px-4 py-6 text-center text-sm text-slate-400">
-              No past sessions
+              No past sessions on this VM
             </div>
           ) : (
             sessions.map((s) => {
               const isCurrent = currentSessionId === s.sessionId;
-              const intent = s.firstUserMessage || s.lastMessagePreview || "No preview";
-              const lastUser = s.lastUserMessage;
-              const showLastUser = lastUser && lastUser !== s.firstUserMessage;
-              const duration = formatDuration(s.durationMs);
+              // Match `claude --resume`: lead with the LAST user message —
+              // it's the most likely cue for "what was I working on?".
+              const preview =
+                s.lastUserMessage || s.firstUserMessage || s.lastMessagePreview || "(no preview)";
+              const projectLabel = basename(s.projectPath) || s.projectPath;
+              const isSpaiglass = s.source === "spaiglass";
               const model = shortModel(s.model);
               const turns =
                 typeof s.userTurnCount === "number"
                   ? `${s.userTurnCount}↔${s.assistantTurnCount ?? 0}`
                   : `${s.messageCount}msg`;
-              const files = s.filesTouched || [];
               return (
                 <button
                   key={s.sessionId}
-                  onClick={() => {
-                    onSelectSession(s.sessionId);
-                    onClose();
-                  }}
+                  onClick={() => handlePick(s)}
                   className={`w-full text-left px-4 py-3 border-b border-slate-100 dark:border-slate-800 transition-colors ${
                     isCurrent
                       ? "bg-amber-50 dark:bg-amber-900/20"
                       : "hover:bg-slate-50 dark:hover:bg-slate-800/50"
                   }`}
                 >
-                  {/* Row 1: intent (first user message) + last-activity timestamp */}
-                  <div className="flex items-baseline gap-2 min-w-0">
-                    <span className="text-[11px] font-mono text-slate-400 dark:text-slate-500 flex-shrink-0">
-                      {truncateId(s.sessionId)}
-                    </span>
-                    <span className="text-sm font-medium text-slate-800 dark:text-slate-100 truncate flex-1 min-w-0">
-                      {intent}
-                    </span>
-                    <span className="text-[11px] text-slate-400 dark:text-slate-500 flex-shrink-0 whitespace-nowrap">
+                  {/* Row 1: source badge + project + timestamp */}
+                  <div className="flex items-center gap-2 mb-1">
+                    {isSpaiglass ? (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300">
+                        <FolderIcon className="w-3 h-3" />
+                        SpAIglass · {projectLabel}
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300">
+                        <CommandLineIcon className="w-3 h-3" />
+                        Claude CLI
+                      </span>
+                    )}
+                    <span className="text-[11px] text-slate-400 dark:text-slate-500 ml-auto whitespace-nowrap">
                       {formatTimestamp(s.lastTime)}
                     </span>
                   </div>
 
-                  {/* Row 2: metadata badges (turns · duration · model · file count) */}
+                  {/* Row 2: last user message preview */}
+                  <div className="text-sm text-slate-800 dark:text-slate-100 line-clamp-2">
+                    {preview}
+                  </div>
+
+                  {/* Row 3: metadata + cwd */}
                   <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400 flex-wrap">
                     <span className="font-mono">{turns} turns</span>
-                    {duration && (
-                      <>
-                        <span className="text-slate-300 dark:text-slate-600">·</span>
-                        <span>{duration}</span>
-                      </>
-                    )}
                     {model && (
                       <>
                         <span className="text-slate-300 dark:text-slate-600">·</span>
                         <span className="font-mono">{model}</span>
                       </>
                     )}
-                    {files.length > 0 && (
+                    {!isSpaiglass && (
                       <>
                         <span className="text-slate-300 dark:text-slate-600">·</span>
-                        <span title={files.join("\n")}>
-                          {files.length} file{files.length === 1 ? "" : "s"}
+                        <span className="font-mono truncate" title={s.projectPath}>
+                          {s.projectPath}
                         </span>
                       </>
                     )}
                   </div>
-
-                  {/* Row 3: top file paths (small) */}
-                  {files.length > 0 && (
-                    <div className="mt-1 text-[11px] font-mono text-slate-400 dark:text-slate-500 truncate">
-                      {files.slice(0, 3).map(basename).join(" · ")}
-                      {files.length > 3 && ` +${files.length - 3}`}
-                    </div>
-                  )}
-
-                  {/* Row 4: last user message (if different from first) */}
-                  {showLastUser && (
-                    <div className="mt-1 text-[12px] text-slate-500 dark:text-slate-400 truncate italic">
-                      last: {lastUser}
-                    </div>
-                  )}
                 </button>
               );
             })
@@ -204,3 +214,4 @@ export function SessionPickerModal({
     </div>
   );
 }
+

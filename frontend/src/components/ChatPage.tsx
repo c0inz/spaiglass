@@ -1292,13 +1292,19 @@ export function ChatPage() {
         onClose={() => setShowSessionPicker(false)}
         onNewSession={handleNewSession}
         onSelectSession={(sid) => {
+          // Same-project resume — keep the URL path, just swap sessionId.
           const params = new URLSearchParams();
           params.set("sessionId", sid);
           if (roleFile) params.set("role", roleFile);
           navigate({ search: params.toString() });
           window.location.reload();
         }}
-        encodedName={getEncodedName()}
+        onSelectSessionInProject={(_sid, targetUrl) => {
+          // Cross-project resume — full path-level navigation so the new
+          // working directory + role context flow through ChatPage's
+          // initial __SG resolution.
+          window.location.href = targetUrl;
+        }}
         currentSessionId={currentSessionId}
       />
 

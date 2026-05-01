@@ -61,6 +61,22 @@ export interface HistoryListResponse {
   conversations: ConversationSummary[];
 }
 
+// Flat picker list — see backend/handlers/claude-sessions.ts.
+// Each session is tagged with its origin and (for spaiglass-tracked sessions)
+// the working directory + role file so the UI can navigate the user back into
+// the right project context on resume.
+export interface ClaudeSessionRow extends ConversationSummary {
+  source: "spaiglass" | "claude-cli";
+  encodedProject: string; // e.g. "-home-foo-projects-bar"
+  projectPath: string;    // decoded display value, e.g. "/home/foo/projects/bar"
+  spaiglassWorkingDirectory?: string;
+  spaiglassRoleFile?: string;
+}
+
+export interface ClaudeSessionsResponse {
+  sessions: ClaudeSessionRow[];
+}
+
 // Conversation history types
 // Phase B: history endpoint returns pre-replayed Frame[] (frame-native renderer).
 // The backend runs the stored JSONL through a headless FrameEmitter so the

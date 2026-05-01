@@ -36,6 +36,10 @@ export const getHistoriesUrl = (projectPath: string) => {
   return `${API_CONFIG.ENDPOINTS.HISTORIES}/${encodedPath}/histories`;
 };
 
+// Flat global list of every Claude session on this VM (terminal + spaiglass).
+// Used by the session picker — see SessionPickerModal.
+export const getClaudeSessionsUrl = () => "/api/claude-sessions";
+
 // Helper function to get conversation URL
 export const getConversationUrl = (
   encodedProjectName: string,
