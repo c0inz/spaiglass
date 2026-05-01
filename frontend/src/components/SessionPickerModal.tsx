@@ -8,16 +8,12 @@ interface SessionPickerModalProps {
   onClose: () => void;
   onNewSession: () => void;
   /**
-   * Resume a session in the *current* project context. ChatPage handles the
-   * URL search-param + reload — used when the picked session lives in the
-   * same project the user is already on, or when no project mapping exists.
+   * Resume the picked session. The picker always builds a target URL
+   * carrying both `sessionId` and `cwd` — ChatPage uses `cwd` from the URL
+   * as the authoritative working directory regardless of the URL segment,
+   * so resume always lands in the session's recorded directory.
    */
-  onSelectSession: (sessionId: string) => void;
-  /**
-   * Resume a session in a *different* project. The picker computes the
-   * target URL (path-level navigate) so the cwd / role context follows.
-   */
-  onSelectSessionInProject?: (sessionId: string, targetUrl: string) => void;
+  onResumeWithCwd: (targetUrl: string) => void;
   currentSessionId: string | null;
 }
 
@@ -47,8 +43,7 @@ export function SessionPickerModal({
   open,
   onClose,
   onNewSession,
-  onSelectSession,
-  onSelectSessionInProject,
+  onResumeWithCwd,
   currentSessionId,
 }: SessionPickerModalProps) {
   const [sessions, setSessions] = useState<ClaudeSessionRow[]>([]);
@@ -76,10 +71,6 @@ export function SessionPickerModal({
 
   if (!open) return null;
 
-  // The current connector slug + project segment come from the relay-injected
-  // __SG context. We use them to construct cross-project navigation URLs so
-  // picking a session in a different project teleports the user to that
-  // project's context (matching the cwd / role file the SDK will resume into).
   const sg = (window as Window & {
     __SG?: { slug?: string; segment?: string; project?: string };
   }).__SG;
@@ -87,21 +78,32 @@ export function SessionPickerModal({
   const currentSegment = sg?.segment;
 
   function handlePick(row: ClaudeSessionRow) {
-    // Project segment used by the relay's URL router is the directory's
-    // basename. e.g. /home/foo/projects/OCMarketplace → "OCMarketplace".
-    const targetSegment = basename(row.projectPath);
-    const sameProject =
-      !targetSegment || !currentSegment || targetSegment === currentSegment;
-
-    if (sameProject || !connectorSlug || !onSelectSessionInProject) {
-      onSelectSession(row.sessionId);
-    } else {
-      // Cross-project resume: hard-navigate so ChatPage re-resolves the
-      // working directory + role from the new URL segment. We do NOT carry
-      // the role across — the destination project owns its role mapping.
-      const url = `/vm/${connectorSlug}/${encodeURIComponent(targetSegment)}/?sessionId=${encodeURIComponent(row.sessionId)}`;
-      onSelectSessionInProject(row.sessionId, url);
+    // Always carry cwd in the URL — ChatPage uses it as the authoritative
+    // working directory, so the resume lands in whatever directory the
+    // session was recorded in (regardless of which segment we route under).
+    //
+    // Segment selection: SpaiGlass-tracked sessions navigate to the project
+    // segment derived from their cwd (URL matches reality). Claude CLI
+    // sessions stay on the current segment — we don't guess at a project
+    // entry that may not exist. Either way, ChatPage's cwd-from-URL logic
+    // makes workingDirectory authoritative.
+    const sessionCwd = row.spaiglassWorkingDirectory || row.projectPath;
+    const targetSegment =
+      row.source === "spaiglass" && sessionCwd
+        ? basename(sessionCwd)
+        : currentSegment || basename(sessionCwd) || "";
+    const slug = connectorSlug || "";
+    const params = new URLSearchParams({
+      sessionId: row.sessionId,
+      cwd: sessionCwd,
+    });
+    if (row.source === "spaiglass" && row.spaiglassRoleFile) {
+      params.set("role", row.spaiglassRoleFile);
     }
+    const url = slug
+      ? `/vm/${slug}/${encodeURIComponent(targetSegment)}/?${params.toString()}`
+      : `?${params.toString()}`;
+    onResumeWithCwd(url);
     onClose();
   }
 
@@ -187,21 +189,23 @@ export function SessionPickerModal({
                     {preview}
                   </div>
 
-                  {/* Row 3: metadata + cwd */}
+                  {/* Row 3: cwd — shown for every row so the user knows where
+                       picking will land them. Title attr exposes the full path
+                       on hover even when the cell is truncated. */}
+                  <div
+                    className="mt-1 text-[11px] font-mono text-slate-500 dark:text-slate-400 truncate"
+                    title={s.spaiglassWorkingDirectory || s.projectPath}
+                  >
+                    cwd: {s.spaiglassWorkingDirectory || s.projectPath}
+                  </div>
+
+                  {/* Row 4: metadata badges */}
                   <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400 flex-wrap">
                     <span className="font-mono">{turns} turns</span>
                     {model && (
                       <>
                         <span className="text-slate-300 dark:text-slate-600">·</span>
                         <span className="font-mono">{model}</span>
-                      </>
-                    )}
-                    {!isSpaiglass && (
-                      <>
-                        <span className="text-slate-300 dark:text-slate-600">·</span>
-                        <span className="font-mono truncate" title={s.projectPath}>
-                          {s.projectPath}
-                        </span>
                       </>
                     )}
                   </div>

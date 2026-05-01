@@ -132,8 +132,18 @@ export function ChatPage() {
       .catch(() => {});
   }, []);
 
-  // Extract working directory: prefer relay-resolved context, fall back to URL
+  // Extract working directory. Precedence:
+  //   1. ?cwd= URL search param — set by the session picker when resuming a
+  //      session whose recorded cwd doesn't match the URL's project segment
+  //      (Claude CLI sessions, or stale SpaiGlass projects). The session's
+  //      own cwd is authoritative; URL segment is just where we landed.
+  //   2. relay-resolved __SG_RESOLVED.path — normal segment → cwd lookup.
+  //   3. raw pathname fallback.
   const workingDirectory = (() => {
+    const params = new URLSearchParams(window.location.search);
+    const urlCwd = params.get("cwd");
+    if (urlCwd) return normalizeWindowsPath(decodeURIComponent(urlCwd));
+
     const sgResolved = (
       window as Window & { __SG_RESOLVED?: { path?: string; role?: string } }
     ).__SG_RESOLVED;
@@ -1291,18 +1301,10 @@ export function ChatPage() {
         open={showSessionPicker}
         onClose={() => setShowSessionPicker(false)}
         onNewSession={handleNewSession}
-        onSelectSession={(sid) => {
-          // Same-project resume — keep the URL path, just swap sessionId.
-          const params = new URLSearchParams();
-          params.set("sessionId", sid);
-          if (roleFile) params.set("role", roleFile);
-          navigate({ search: params.toString() });
-          window.location.reload();
-        }}
-        onSelectSessionInProject={(_sid, targetUrl) => {
-          // Cross-project resume — full path-level navigation so the new
-          // working directory + role context flow through ChatPage's
-          // initial __SG resolution.
+        onResumeWithCwd={(targetUrl) => {
+          // Hard-navigate. The target URL carries `cwd` so ChatPage on the
+          // next page load uses the session's recorded directory as the
+          // authoritative workingDirectory, regardless of URL segment.
           window.location.href = targetUrl;
         }}
         currentSessionId={currentSessionId}
