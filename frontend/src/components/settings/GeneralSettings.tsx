@@ -4,6 +4,7 @@ import {
   KeyIcon,
   BookmarkIcon,
   TagIcon,
+  WindowIcon,
 } from "@heroicons/react/24/outline";
 import { useSettings } from "../../hooks/useSettings";
 import { getProjectDisplayName as getLocalDisplayName } from "../../utils/projectDisplayName";
@@ -28,16 +29,16 @@ interface SelfConnector {
 export function GeneralSettings({ projectPath }: { projectPath?: string }) {
   const { enterBehavior, toggleEnterBehavior } = useSettings();
 
-  // Project display name — editable label stored on the VM backend
   const projectBasename = projectPath
     ? projectPath.replace(/\/+$/, "").split(/[\\/]/).filter(Boolean).pop() || null
     : null;
+
+  // ── Project Directory Display Name ────────────────────────────────────
   const [projDisplayInput, setProjDisplayInput] = useState("");
   const [projDisplaySaved, setProjDisplaySaved] = useState<string | null>(null);
   const [projDisplayMessage, setProjDisplayMessage] = useState<string | null>(null);
   const [projDisplayBusy, setProjDisplayBusy] = useState(false);
 
-  // Load current display name from API (fall back to localStorage for migration)
   useEffect(() => {
     if (!projectBasename) return;
     let cancelled = false;
@@ -57,28 +58,42 @@ export function GeneralSettings({ projectPath }: { projectPath?: string }) {
     return () => { cancelled = true; };
   }, [projectBasename]);
 
+  // ── Project Directory Tab Name ─────────────────────────────────────────
+  const [tabNameInput, setTabNameInput] = useState("");
+  const [tabNameSaved, setTabNameSaved] = useState<string | null>(null);
+  const [tabNameMessage, setTabNameMessage] = useState<string | null>(null);
+  const [tabNameBusy, setTabNameBusy] = useState(false);
+
+  useEffect(() => {
+    if (!projectBasename) return;
+    let cancelled = false;
+    fetch("/api/settings/project-directory-tab-names")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled) return;
+        const apiName = data?.tabNames?.[projectBasename] || null;
+        setTabNameInput(apiName || "");
+        setTabNameSaved(apiName);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [projectBasename]);
+
   const [keyStatus, setKeyStatus] = useState<KeyStatus>({ state: "loading" });
   const [keyInput, setKeyInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
   const [keyMessage, setKeyMessage] = useState<string | null>(null);
 
-  // Browser tab title editor — only surfaced when running inside the relay
-  // (i.e. window.__SG is set). In standalone VM mode there's no connector to
-  // edit, so the whole section stays hidden.
+  // ── Server Display Name ────────────────────────────────────────────────
   const isRelay =
     typeof window !== "undefined" &&
     !!(window as Window & { __SG?: unknown }).__SG;
   const [self, setSelf] = useState<SelfConnector | null>(null);
-  const [titleInput, setTitleInput] = useState("");
-  const [titleBusy, setTitleBusy] = useState(false);
-  const [titleError, setTitleError] = useState<string | null>(null);
-  const [titleMessage, setTitleMessage] = useState<string | null>(null);
-  // Capture the relay's server-rendered <title> before React touches it.
-  // This is the auto-computed compact name (e.g. "Spglss-LdDv") that the
-  // relay set at page-serve time — we show it as the placeholder/default so
-  // the user knows what the tab actually says when no custom name is set.
-  const [relayTitle] = useState(() => document.title);
+  const [serverNameInput, setServerNameInput] = useState("");
+  const [serverNameBusy, setServerNameBusy] = useState(false);
+  const [serverNameError, setServerNameError] = useState<string | null>(null);
+  const [serverNameMessage, setServerNameMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isRelay) return;
@@ -88,13 +103,7 @@ export function GeneralSettings({ projectPath }: { projectPath?: string }) {
       .then((data: SelfConnector | null) => {
         if (cancelled || !data) return;
         setSelf(data);
-        setTitleInput(data.customDisplayName ?? "");
-        // Only sync document.title if a custom name is set. When empty,
-        // the relay already server-rendered the correct compact title —
-        // overwriting it with the raw connector name was the original bug.
-        if (data.customDisplayName) {
-          document.title = data.customDisplayName;
-        }
+        setServerNameInput(data.customDisplayName ?? "");
       })
       .catch(() => {});
     return () => {
@@ -102,12 +111,12 @@ export function GeneralSettings({ projectPath }: { projectPath?: string }) {
     };
   }, [isRelay]);
 
-  async function saveTitle() {
-    setTitleBusy(true);
-    setTitleError(null);
-    setTitleMessage(null);
+  async function saveServerName() {
+    setServerNameBusy(true);
+    setServerNameError(null);
+    setServerNameMessage(null);
     try {
-      const next = titleInput.trim();
+      const next = serverNameInput.trim();
       const res = await fetch("/api/__relay/self/display-name", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -115,11 +124,9 @@ export function GeneralSettings({ projectPath }: { projectPath?: string }) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setTitleError(data?.error ?? `Failed (${res.status})`);
+        setServerNameError(data?.error ?? `Failed (${res.status})`);
         return;
       }
-      // Optimistically update local state + the live document title so the
-      // user sees the change immediately without a hard refresh.
       setSelf((prev) =>
         prev
           ? {
@@ -129,19 +136,51 @@ export function GeneralSettings({ projectPath }: { projectPath?: string }) {
             }
           : prev,
       );
-      if (next) {
-        document.title = next;
-      } else {
-        // Restore the relay's auto-computed title (compact project:role).
-        document.title = relayTitle || self?.name || "SpAIglass";
-      }
-      setTitleMessage(
-        next ? "Tab title saved." : "Tab title cleared — using default.",
+      setServerNameMessage(
+        next
+          ? "Server Display Name saved."
+          : "Server Display Name cleared — using slug.",
       );
     } catch (err) {
-      setTitleError(err instanceof Error ? err.message : String(err));
+      setServerNameError(err instanceof Error ? err.message : String(err));
     } finally {
-      setTitleBusy(false);
+      setServerNameBusy(false);
+    }
+  }
+
+  async function saveTabName() {
+    if (!projectBasename) return;
+    setTabNameBusy(true);
+    setTabNameMessage(null);
+    try {
+      const next = tabNameInput.trim();
+      const tabName = next || null;
+      const res = await fetch("/api/settings/project-directory-tab-name", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project: projectBasename, tabName }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setTabNameMessage(data?.error ?? `Failed (${res.status})`);
+        return;
+      }
+      setTabNameSaved(tabName);
+      // Live-update the browser tab so the user sees the change immediately.
+      const effective =
+        tabName ||
+        projDisplaySaved ||
+        projectBasename;
+      document.title = effective;
+      setTabNameMessage(
+        tabName
+          ? "Tab Name saved."
+          : "Tab Name cleared — using Project Directory Display Name.",
+      );
+    } catch (err) {
+      setTabNameMessage(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTabNameBusy(false);
     }
   }
 
@@ -227,21 +266,24 @@ export function GeneralSettings({ projectPath }: { projectPath?: string }) {
 
   return (
     <div className="space-y-4">
-      {/* Browser Tab Title — relay-only. Owner of this connector can set a
-          custom label that shows up in the browser tab + fleet agent switcher
-          entries. Clearing the field falls back to the connector name. */}
+      {/* Server Display Name — relay-only. Cosmetic label shown for this
+          connector in the page header, Server dropdown, last-used buttons,
+          and mobile picker. */}
       {isRelay && self && self.role === "owner" && (
         <div>
           <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2 block">
-            Browser Tab Title
+            Server Display Name
           </label>
           <div className="flex items-center gap-3 px-4 py-3 bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 rounded-lg">
             <BookmarkIcon className="w-5 h-5 text-slate-600 dark:text-slate-400 flex-shrink-0" />
             <div className="flex-1 min-w-0">
               <div className="text-xs text-slate-500 dark:text-slate-400">
-                Current tab title:{" "}
+                URL slug:{" "}
+                <span className="font-mono text-slate-700 dark:text-slate-300">{self.name}</span>
+                {" · "}
+                Shown as:{" "}
                 <span className="font-mono text-slate-700 dark:text-slate-300">
-                  {self.customDisplayName || relayTitle || self.name}
+                  {self.customDisplayName || self.name}
                 </span>
               </div>
             </div>
@@ -249,17 +291,10 @@ export function GeneralSettings({ projectPath }: { projectPath?: string }) {
           <div className="mt-3 flex gap-2">
             <input
               type="text"
-              value={titleInput}
-              onChange={(e) => {
-                setTitleInput(e.target.value);
-                // Live preview: update browser tab as user types.
-                // Fall back to the relay's computed title, not the raw
-                // connector name.
-                document.title =
-                  e.target.value.trim() || relayTitle || self?.name || "SpAIglass";
-              }}
-              placeholder={relayTitle || self.name}
-              disabled={titleBusy}
+              value={serverNameInput}
+              onChange={(e) => setServerNameInput(e.target.value)}
+              placeholder={self.name}
+              disabled={serverNameBusy}
               maxLength={100}
               className="flex-1 px-3 py-2 text-sm bg-white/80 dark:bg-slate-800/80 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent backdrop-blur-sm shadow-sm disabled:opacity-50 transition-all duration-200"
               autoComplete="off"
@@ -267,44 +302,46 @@ export function GeneralSettings({ projectPath }: { projectPath?: string }) {
             />
             <button
               type="button"
-              onClick={saveTitle}
+              onClick={saveServerName}
               disabled={
-                titleBusy ||
-                titleInput.trim() === (self.customDisplayName ?? "")
+                serverNameBusy ||
+                serverNameInput.trim() === (self.customDisplayName ?? "")
               }
               className="px-4 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow-sm hover:shadow-md transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {titleBusy ? "Saving\u2026" : "Save"}
+              {serverNameBusy ? "Saving\u2026" : "Save"}
             </button>
           </div>
-          {titleError && (
+          {serverNameError && (
             <div className="mt-2 text-xs text-red-600 dark:text-red-400">
-              {titleError}
+              {serverNameError}
             </div>
           )}
-          {titleMessage && !titleError && (
+          {serverNameMessage && !serverNameError && (
             <div className="mt-2 text-xs text-emerald-600 dark:text-emerald-400">
-              {titleMessage}
+              {serverNameMessage}
             </div>
           )}
           <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-            Sets the browser tab title for this agent and the label used in the
-            agent switcher. Clear the field to revert to the default.
+            Top-left server name on the chat page, Server dropdown entries,
+            "last used" quick-switch buttons, and the mobile Agent Picker.
+            The URL slug (<code>{self.name}</code>) is immutable — only the
+            label changes. Clear to fall back to the slug.
           </div>
         </div>
       )}
 
-      {/* Project Display Name */}
+      {/* Project Directory Display Name — per-directory cosmetic label */}
       {projectBasename && (
         <div>
           <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2 block">
-            Project Display Name
+            Project Directory Display Name
           </label>
           <div className="flex items-center gap-3 px-4 py-3 bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 rounded-lg">
             <TagIcon className="w-5 h-5 text-slate-600 dark:text-slate-400 flex-shrink-0" />
             <div className="flex-1 min-w-0">
               <div className="text-xs text-slate-500 dark:text-slate-400">
-                Project:{" "}
+                Directory:{" "}
                 <span className="font-mono text-slate-700 dark:text-slate-300">
                   {projectBasename}
                 </span>
@@ -344,9 +381,9 @@ export function GeneralSettings({ projectPath }: { projectPath?: string }) {
                   setProjDisplaySaved(displayName);
                   if (!displayName) {
                     setProjDisplayInput(projectBasename);
-                    setProjDisplayMessage("Display name cleared — using default.");
+                    setProjDisplayMessage("Display Name cleared — using directory name.");
                   } else {
-                    setProjDisplayMessage("Display name saved.");
+                    setProjDisplayMessage("Display Name saved.");
                   }
                 } catch (err) {
                   setProjDisplayMessage(err instanceof Error ? err.message : String(err));
@@ -370,8 +407,64 @@ export function GeneralSettings({ projectPath }: { projectPath?: string }) {
             </div>
           )}
           <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-            Custom label shown in the page header and fleet dropdown. Clear to
-            revert to the directory name.
+            Top-left project label on the chat page, Directory dropdown
+            entries, "last used" buttons, and the mobile Agent Picker. The
+            real working directory path is not renamed — only the label.
+            Clear to revert to the directory name.
+          </div>
+        </div>
+      )}
+
+      {/* Project Directory Tab Name — per-directory browser tab title */}
+      {projectBasename && (
+        <div>
+          <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2 block">
+            Project Directory Tab Name
+          </label>
+          <div className="flex items-center gap-3 px-4 py-3 bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 rounded-lg">
+            <WindowIcon className="w-5 h-5 text-slate-600 dark:text-slate-400 flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+              <div className="text-xs text-slate-500 dark:text-slate-400">
+                Browser tab currently shows:{" "}
+                <span className="font-mono text-slate-700 dark:text-slate-300">
+                  {tabNameSaved || projDisplaySaved || projectBasename}
+                </span>
+              </div>
+            </div>
+          </div>
+          <div className="mt-3 flex gap-2">
+            <input
+              type="text"
+              value={tabNameInput}
+              onChange={(e) => setTabNameInput(e.target.value)}
+              placeholder={projDisplaySaved || projectBasename}
+              disabled={tabNameBusy}
+              maxLength={100}
+              className="flex-1 px-3 py-2 text-sm bg-white/80 dark:bg-slate-800/80 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent backdrop-blur-sm shadow-sm disabled:opacity-50 transition-all duration-200"
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <button
+              type="button"
+              onClick={saveTabName}
+              disabled={
+                tabNameBusy ||
+                tabNameInput.trim() === (tabNameSaved ?? "")
+              }
+              className="px-4 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow-sm hover:shadow-md transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {tabNameBusy ? "Saving\u2026" : "Save"}
+            </button>
+          </div>
+          {tabNameMessage && (
+            <div className="mt-2 text-xs text-emerald-600 dark:text-emerald-400">
+              {tabNameMessage}
+            </div>
+          )}
+          <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+            Browser tab title only (also used when you bookmark the page).
+            Falls back to Project Directory Display Name, then to the
+            directory name. Nothing else in-app uses this string.
           </div>
         </div>
       )}

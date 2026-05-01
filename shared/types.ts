@@ -45,6 +45,16 @@ export interface ConversationSummary {
   lastTime: string;
   messageCount: number;
   lastMessagePreview: string;
+  // Richer context for the session picker. Optional so older callers
+  // and legacy history files that lack the signal still decode cleanly.
+  firstUserMessage?: string;   // first user text message (truncated)
+  lastUserMessage?: string;    // most recent user text message (truncated)
+  userTurnCount?: number;      // distinct user turns (better "length" than raw line count)
+  assistantTurnCount?: number; // distinct assistant turns
+  filesTouched?: string[];     // top files from Write/Edit tool_use, sorted by touch count
+  model?: string;              // last-seen model id
+  cwd?: string;                // cwd recorded in the session
+  durationMs?: number;         // lastTime - startTime
 }
 
 export interface HistoryListResponse {

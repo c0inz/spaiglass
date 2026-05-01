@@ -242,6 +242,23 @@ export function updateConnectorDisplayName(id: string, userId: string, displayNa
   return result.changes > 0;
 }
 
+/**
+ * Rename the connector slug (the `name` column — what appears in /vm/<login>.<name>/ URLs).
+ * Preserves id and token so the VM-side connector keeps working without reconfig.
+ * Returns: 'ok' | 'not_found' | 'conflict' (another connector owned by this user already has that name).
+ */
+export function updateConnectorName(id: string, userId: string, newName: string): "ok" | "not_found" | "conflict" {
+  const db = getDb();
+  const owned = db.prepare("SELECT id FROM connectors WHERE id = ? AND user_id = ?").get(id, userId);
+  if (!owned) return "not_found";
+  const clash = db.prepare(
+    "SELECT id FROM connectors WHERE user_id = ? AND LOWER(name) = LOWER(?) AND id != ?",
+  ).get(userId, newName, id);
+  if (clash) return "conflict";
+  db.prepare("UPDATE connectors SET name = ? WHERE id = ? AND user_id = ?").run(newName, id, userId);
+  return "ok";
+}
+
 export function getConnectorsByUser(userId: string): Connector[] {
   return getDb().prepare("SELECT * FROM connectors WHERE user_id = ? ORDER BY created_at DESC").all(userId) as Connector[];
 }

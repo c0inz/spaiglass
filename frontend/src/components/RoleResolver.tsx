@@ -23,54 +23,123 @@ export function RoleResolver() {
   async function resolveProject() {
     const sg = (
       window as Window & {
-        __SG?: { project?: string; role?: string };
+        __SG?: {
+          project?: string;
+          role?: string;
+          segment?: string;
+        };
       }
     ).__SG;
 
-    if (!sg?.project) {
+    if (!sg?.project && !sg?.segment) {
       // No project context — just render ChatPage as-is
       setReady(true);
       return;
     }
 
     try {
-      // Try /api/projects first (projects with history in ~/.claude.json)
+      // Basename matching strategy:
+      //   1. Try `sg.segment` (the raw URL segment, e.g. "AgentEPC-origin").
+      //      This wins for directories that contain hyphens, which the
+      //      inject script would otherwise split into project+role.
+      //   2. Fall back to `sg.project` (the hyphen-split value) so legacy
+      //      `<project>-<role>/` URLs still resolve.
+      //
+      // A segment match means the URL was role-less: don't treat `sg.role`
+      // as the role file, let the role-probe below pick a default.
       let resolvedPath: string | null = null;
+      let segmentMatched = false;
 
+      const candidates = [sg.segment, sg.project].filter(
+        (v): v is string => !!v,
+      );
+
+      // Try /api/projects first (projects with history in ~/.claude.json)
       const res = await fetch(getProjectsUrl());
-      if (res.ok) {
-        const data: ProjectsResponse = await res.json();
-        const match = data.projects.find((p) => {
-          const basename = p.path.split("/").filter(Boolean).pop() || "";
-          return basename.toLowerCase() === sg.project!.toLowerCase();
-        });
-        if (match) resolvedPath = match.path;
-      }
+      const projectsData: ProjectsResponse | null = res.ok
+        ? await res.json()
+        : null;
 
-      // Fallback: /api/discover scans ~/projects/ for directories with
-      // agent role files. Projects that haven't been used yet won't appear
-      // in /api/projects (no history directory), but /api/discover finds
-      // them by scanning the filesystem.
-      if (!resolvedPath) {
-        const discoverRes = await fetch(
-          `/api/discover?projectsDir=${encodeURIComponent("~/projects")}`,
+      // Try /api/discover as a second source (projects that haven't been
+      // used yet won't appear in /api/projects).
+      const discoverRes = await fetch(
+        `/api/discover?projectsDir=${encodeURIComponent("~/projects")}`,
+      );
+      const discoverData = discoverRes.ok ? await discoverRes.json() : null;
+      const discoverEntries: Array<{ name: string; path: string }> =
+        discoverData
+          ? [
+              ...(discoverData.projects || []),
+              ...(discoverData.unassigned || []),
+            ]
+          : [];
+
+      for (let i = 0; i < candidates.length; i++) {
+        const candidate = candidates[i];
+        const lower = candidate.toLowerCase();
+
+        if (projectsData) {
+          const match = projectsData.projects.find((p) => {
+            const basename = p.path.split("/").filter(Boolean).pop() || "";
+            return basename.toLowerCase() === lower;
+          });
+          if (match) {
+            resolvedPath = match.path;
+            segmentMatched = i === 0 && candidate === sg.segment;
+            break;
+          }
+        }
+
+        const discoverMatch = discoverEntries.find(
+          (p) => p.name.toLowerCase() === lower,
         );
-        if (discoverRes.ok) {
-          const discoverData = await discoverRes.json();
-          const allEntries = [
-            ...(discoverData.projects || []),
-            ...(discoverData.unassigned || []),
-          ];
-          const match = allEntries.find((p: { name: string; path: string }) =>
-            p.name.toLowerCase() === sg.project!.toLowerCase(),
-          );
-          if (match) resolvedPath = match.path;
+        if (discoverMatch) {
+          resolvedPath = discoverMatch.path;
+          segmentMatched = i === 0 && candidate === sg.segment;
+          break;
         }
       }
 
       if (!resolvedPath) {
-        setError(`Project "${sg.project}" not found`);
+        // URL references a project/directory that no longer exists on this
+        // server (e.g. left over in recents after a registry cleanup).
+        // Bounce to the server root so the user lands on the Server+Directory
+        // picker. `skip_last_used=1` prevents the relay's `/` handler from
+        // redirecting right back to the same stale last-used URL (which
+        // would form an infinite loop — the relay only validates that the
+        // connector exists and is online, not that the directory is real).
+        window.location.replace("/?skip_last_used=1");
         return;
+      }
+
+      // Role resolution:
+      //   - Segment matched (new role-less URL, e.g. /vm/<slug>/<dir>/) →
+      //     probe /api/roles and pick developer.md (or first available).
+      //     `sg.role` here is noise from the inject script's hyphen-split
+      //     of a hyphenated directory name ("AgentEPC-origin" → role="origin").
+      //   - Legacy match (<project>-<role>/) → `sg.role` is real; use it.
+      //   - No role known → probe for a default.
+      //
+      // Backend session dir is keyed by (projectPath, roleFile) so a
+      // roleFile is required; without one, session_start never fires.
+      let resolvedRole: string | null =
+        !segmentMatched && sg.role ? `${sg.role}.md` : null;
+      if (!resolvedRole) {
+        try {
+          const rolesRes = await fetch(
+            `/api/roles?path=${encodeURIComponent(resolvedPath)}`,
+          );
+          if (rolesRes.ok) {
+            const rolesData = (await rolesRes.json()) as {
+              roles?: Array<{ filename: string }>;
+            };
+            const list = rolesData.roles || [];
+            const dev = list.find((r) => r.filename === "developer.md");
+            resolvedRole = dev?.filename || list[0]?.filename || null;
+          }
+        } catch {
+          // Leave resolvedRole null; ChatPage will surface a role picker.
+        }
       }
 
       // Store resolved context for ChatPage to read
@@ -80,7 +149,7 @@ export function RoleResolver() {
         }
       ).__SG_RESOLVED = {
         path: resolvedPath,
-        role: sg.role ? `${sg.role}.md` : null,
+        role: resolvedRole,
       };
 
       setReady(true);

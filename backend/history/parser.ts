@@ -36,6 +36,32 @@ export interface ConversationFile {
   lastTime: string;
   messageCount: number;
   lastMessagePreview: string;
+  firstUserMessage?: string;
+  lastUserMessage?: string;
+  userTurnCount: number;
+  assistantTurnCount: number;
+  filesTouched: string[];
+  model?: string;
+  cwd?: string;
+}
+
+// Pull plain text out of a message.content which can be a string or an
+// array of typed blocks (text, tool_use, tool_result, image, etc).
+function extractText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  const parts: string[] = [];
+  for (const item of content) {
+    if (
+      item &&
+      typeof item === "object" &&
+      (item as { type?: unknown }).type === "text" &&
+      typeof (item as { text?: unknown }).text === "string"
+    ) {
+      parts.push((item as { text: string }).text);
+    }
+  }
+  return parts.join(" ").trim();
 }
 
 /**
@@ -51,7 +77,15 @@ async function parseHistoryFile(
     let startTime = "";
     let lastTime = "";
     let lastMessagePreview = "";
+    let firstUserMessage = "";
+    let lastUserMessage = "";
+    let userTurnCount = 0;
+    let assistantTurnCount = 0;
+    let model: string | undefined;
+    let cwd: string | undefined;
     let messageCount = 0;
+    // tracks how many times each file path appears in Write/Edit tool_use
+    const fileTouchCounts = new Map<string, number>();
 
     // Parse line-by-line without keeping all parsed objects in memory.
     // Only metadata and messageIds are retained for the listing endpoint.
@@ -67,10 +101,18 @@ async function parseHistoryFile(
         const parsed = JSON.parse(line) as RawHistoryLine;
         messageCount++;
 
+        // Capture cwd from any line that has it (they usually agree)
+        if (!cwd && typeof parsed.cwd === "string" && parsed.cwd) {
+          cwd = parsed.cwd;
+        }
+
         // Track message IDs from assistant messages
         const msg = parsed.message as unknown as Record<string, unknown>;
         if (msg?.role === "assistant" && msg?.id) {
           messageIds.add(msg.id as string);
+        }
+        if (msg?.role === "assistant" && typeof msg?.model === "string") {
+          model = msg.model as string;
         }
 
         // Track timestamps
@@ -81,18 +123,49 @@ async function parseHistoryFile(
           lastTime = parsed.timestamp;
         }
 
-        // Extract last message preview (from assistant messages)
-        if (parsed.message?.role === "assistant" && parsed.message?.content) {
+        // Skip sidechain (subagent) messages for turn counting + previews —
+        // they're the agent's internal work, not the outer user↔assistant
+        // dialogue that the picker summarizes.
+        const isSidechain = parsed.isSidechain === true;
+
+        if (parsed.message?.role === "user" && !isSidechain) {
+          const text = extractText(parsed.message.content);
+          // Ignore tool-result-only user turns (no plain text).
+          if (text) {
+            userTurnCount++;
+            if (!firstUserMessage) firstUserMessage = text.slice(0, 160);
+            lastUserMessage = text.slice(0, 160);
+          }
+        }
+
+        if (parsed.message?.role === "assistant" && !isSidechain) {
+          assistantTurnCount++;
           const msgContent = parsed.message.content;
           if (Array.isArray(msgContent)) {
             for (const item of msgContent) {
-              if (typeof item === "object" && item && "text" in item) {
-                lastMessagePreview = String(item.text).substring(0, 100);
-                break;
+              if (!item || typeof item !== "object") continue;
+              const itype = (item as { type?: unknown }).type;
+              if (itype === "text" && typeof (item as { text?: unknown }).text === "string") {
+                if (!lastMessagePreview) {
+                  lastMessagePreview = String((item as { text: string }).text).slice(0, 100);
+                }
+                // Update to newest text block we see on later assistant turns
+                lastMessagePreview = String((item as { text: string }).text).slice(0, 100);
+              } else if (itype === "tool_use") {
+                const toolName = (item as { name?: unknown }).name;
+                const input = (item as { input?: Record<string, unknown> }).input;
+                if (
+                  (toolName === "Write" || toolName === "Edit" || toolName === "MultiEdit") &&
+                  input &&
+                  typeof input.file_path === "string"
+                ) {
+                  const fp = input.file_path;
+                  fileTouchCounts.set(fp, (fileTouchCounts.get(fp) || 0) + 1);
+                }
               }
             }
           } else if (typeof msgContent === "string") {
-            lastMessagePreview = msgContent.substring(0, 100);
+            lastMessagePreview = msgContent.slice(0, 100);
           }
         }
       } catch (parseError) {
@@ -110,15 +183,28 @@ async function parseHistoryFile(
     const fileName = filePath.split("/").pop() || "";
     const sessionId = fileName.replace(".jsonl", "");
 
+    // Top 5 files by touch count, ties broken by first-seen (Map preserves insertion)
+    const filesTouched = [...fileTouchCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([path]) => path);
+
     return {
       sessionId,
       filePath,
-      messages: [], // Not populated for listing — use conversationLoader for full content
+      messages: [],
       messageIds,
       startTime,
       lastTime,
       messageCount,
       lastMessagePreview: lastMessagePreview || "No preview available",
+      firstUserMessage: firstUserMessage || undefined,
+      lastUserMessage: lastUserMessage || undefined,
+      userTurnCount,
+      assistantTurnCount,
+      filesTouched,
+      model,
+      cwd,
     };
   } catch (error) {
     logger.history.error(`Failed to read history file ${filePath}: {error}`, {

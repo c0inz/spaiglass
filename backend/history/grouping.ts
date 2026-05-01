@@ -58,12 +58,25 @@ export function groupConversations(
 function createConversationSummary(
   conversationFile: ConversationFile,
 ): ConversationSummary {
+  const startMs = new Date(conversationFile.startTime).getTime();
+  const lastMs = new Date(conversationFile.lastTime).getTime();
+  const durationMs = Number.isFinite(startMs) && Number.isFinite(lastMs) && lastMs > startMs
+    ? lastMs - startMs
+    : undefined;
   return {
     sessionId: conversationFile.sessionId,
     startTime: conversationFile.startTime,
     lastTime: conversationFile.lastTime,
     messageCount: conversationFile.messageCount,
     lastMessagePreview: conversationFile.lastMessagePreview,
+    firstUserMessage: conversationFile.firstUserMessage,
+    lastUserMessage: conversationFile.lastUserMessage,
+    userTurnCount: conversationFile.userTurnCount,
+    assistantTurnCount: conversationFile.assistantTurnCount,
+    filesTouched: conversationFile.filesTouched.length ? conversationFile.filesTouched : undefined,
+    model: conversationFile.model,
+    cwd: conversationFile.cwd,
+    durationMs,
   };
 }
 

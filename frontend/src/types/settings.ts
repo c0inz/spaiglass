@@ -2,6 +2,7 @@ export type Theme =
   | "light"
   | "dark"
   | "glass"
+  | "black-glass"
   | "plain"
   | "70s-light"
   | "70s-dark";
@@ -12,6 +13,7 @@ export const THEME_OPTIONS: Theme[] = [
   "light",
   "dark",
   "glass",
+  "black-glass",
   "plain",
   "70s-light",
   "70s-dark",
@@ -51,7 +53,7 @@ export interface SettingsContextType {
 
 // Default settings
 export const DEFAULT_SETTINGS: AppSettings = {
-  theme: "glass",
+  theme: "black-glass",
   phosphor: "green",
   enterBehavior: "send",
   version: 2,

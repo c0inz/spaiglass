@@ -75,10 +75,10 @@ export function setSettings(settings: AppSettings): void {
 }
 
 function migrateLegacySettings(): AppSettings {
-  // SpAIglass defaults to "glass" for new installs. Existing users who had a
-  // legacy theme key get their previous choice preserved below; only first-time
-  // visitors with no localStorage at all land on glass.
-  const defaultTheme: Theme = "glass";
+  // SpAIglass defaults to "black-glass" for new installs. Existing users who
+  // had a legacy theme key get their previous choice preserved below; only
+  // first-time visitors with no localStorage at all land on black-glass.
+  const defaultTheme: Theme = "black-glass";
 
   // Load legacy settings
   const legacyTheme = getStorageItem<Theme>(STORAGE_KEYS.THEME, defaultTheme);

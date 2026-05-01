@@ -37,6 +37,13 @@ const THEME_CHOICES: {
     iconColor: "text-cyan-400",
   },
   {
+    id: "black-glass",
+    label: "Black Glass",
+    description: "True black, white text, Claude terminal palette",
+    Icon: SparklesIcon,
+    iconColor: "text-white",
+  },
+  {
     id: "plain",
     label: "Plain",
     description: "Boring corporate, won't offend",

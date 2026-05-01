@@ -4,7 +4,7 @@ import { join, resolve, relative } from "node:path";
 import { homedir } from "node:os";
 import { logger } from "../utils/logger.ts";
 
-const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
+const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB — HAR exports from a full browsing session routinely exceed 20MB
 
 /**
  * POST /api/upload

@@ -41,10 +41,12 @@ import type {
   InteractivePromptFrame,
   InteractiveResolvedFrame,
   FileDeliveryFrame,
+  ContextFileFrame,
   PlanFrame,
   TodoFrame,
   TodoItemShape,
   ErrorFrame,
+  SystemNoticeFrame,
 } from "../../shared/frames.ts";
 
 // ---------------------------------------------------------------------------
@@ -98,6 +100,15 @@ export interface SdkMessageLike {
   // e.g. "success" | "error_max_turns" | ...
   // unused by the emitter directly but kept so the adapter can branch on it
   is_error?: boolean;
+  // System-subtype side-channel fields (compact_boundary, status, hook output…)
+  compact_metadata?: {
+    trigger?: "manual" | "auto";
+    pre_tokens?: number;
+  };
+  status?: string;
+  // Generic free-text surface for future subtypes (hook stdout, notices…)
+  text?: string;
+  content?: unknown;
 }
 
 // ---------------------------------------------------------------------------
@@ -106,6 +117,59 @@ export interface SdkMessageLike {
 
 function shortId(): string {
   return randomBytes(8).toString("hex");
+}
+
+// `SessionManager.sendMessage` inlines attached-file bodies into the user
+// message so Claude can read them — fenced as `[Attached file: NAME]\n```
+// \n...body...\n``` `. That full body also comes back through the SDK's
+// user-message echo, which means the browser would otherwise render the
+// entire file inline in the chat transcript. Collapse the fenced body to a
+// single filename chip for display; Claude still sees the real content
+// because it's the SDK echo, not the upstream message, that's being edited.
+const ATTACHED_FILE_RE =
+  /\[Attached file: ([^\]]+)\]\n```\n[\s\S]*?\n```/g;
+function stripAttachedFileBody(text: string): string {
+  return text.replace(ATTACHED_FILE_RE, "[$1]");
+}
+
+/**
+ * Translate an SDK system message (non-init) into the text + level that
+ * should be shown to the user. Returns null if the subtype carries no
+ * meaningful surface (rare — the caller still drops it cleanly).
+ */
+function buildSystemNotice(
+  sdk: SdkMessageLike,
+): { subtype: string; text: string; level: "info" | "warning" } | null {
+  const subtype = sdk.subtype ?? "unknown";
+  // Known subtypes first — they have well-typed fields the generic fallback
+  // would stringify less gracefully.
+  if (subtype === "compact_boundary") {
+    const trigger = sdk.compact_metadata?.trigger ?? "auto";
+    const pre = sdk.compact_metadata?.pre_tokens;
+    const preStr =
+      typeof pre === "number" && pre > 0
+        ? ` at ${(pre / 1000).toFixed(1)}k tokens`
+        : "";
+    const label = trigger === "manual" ? "manual compact" : "auto-compact";
+    return {
+      subtype,
+      text: `context compacted (${label}${preStr})`,
+      level: "info",
+    };
+  }
+  if (subtype === "status") {
+    const status = sdk.status ?? "updated";
+    return { subtype, text: `status: ${status}`, level: "info" };
+  }
+  // Generic fallback — pull the first string-shaped field we can find.
+  const text =
+    (typeof sdk.text === "string" && sdk.text) ||
+    (typeof sdk.content === "string" && sdk.content) ||
+    (typeof (sdk.message as { text?: unknown } | undefined)?.text ===
+      "string" && (sdk.message as { text: string }).text) ||
+    null;
+  if (!text) return null;
+  return { subtype, text, level: "info" };
 }
 
 function coerceInput(raw: unknown): Json {
@@ -252,26 +316,40 @@ export class FrameEmitter {
   // -------------------------------------------------------------------------
 
   private emitSystem(sdk: SdkMessageLike, ctx: EmitContext): Frame[] {
-    // Only `init` system messages translate to SessionInitFrame today.
-    // Other system sub-types are swallowed — callers that need them
-    // should route through emitError / emitSessionEnd explicitly.
-    if (sdk.subtype !== "init") return [];
+    if (sdk.subtype === "init") {
+      const frame: SessionInitFrame = {
+        id: shortId(),
+        seq: ctx.nextSeq(),
+        ts: ctx.ts,
+        type: "session_init",
+        sessionId: sdk.session_id ?? "",
+        model: sdk.model ?? "",
+        permissionMode: this.normalizePermissionMode(sdk.permission_mode),
+        // Role file is not on the SDK init message — populated later by
+        // SessionManager via emitSessionInitExt() if it needs to override.
+        roleFile: null,
+        workingDirectory: "",
+        slashCommands: Array.isArray(sdk.slash_commands)
+          ? [...sdk.slash_commands]
+          : [],
+      };
+      return [frame];
+    }
 
-    const frame: SessionInitFrame = {
+    // Every other system subtype (compact_boundary, status, and anything the
+    // SDK adds later) becomes a SystemNoticeFrame. The goal is that a user
+    // sees *something* for each Claude-Code-style notice ("※ recap", compact
+    // boundary, hook output) instead of the message being silently swallowed.
+    const notice = buildSystemNotice(sdk);
+    if (!notice) return [];
+    const frame: SystemNoticeFrame = {
       id: shortId(),
       seq: ctx.nextSeq(),
       ts: ctx.ts,
-      type: "session_init",
-      sessionId: sdk.session_id ?? "",
-      model: sdk.model ?? "",
-      permissionMode: this.normalizePermissionMode(sdk.permission_mode),
-      // Role file is not on the SDK init message — populated later by
-      // SessionManager via emitSessionInitExt() if it needs to override.
-      roleFile: null,
-      workingDirectory: "",
-      slashCommands: Array.isArray(sdk.slash_commands)
-        ? [...sdk.slash_commands]
-        : [],
+      type: "system_notice",
+      subtype: notice.subtype,
+      text: notice.text,
+      level: notice.level,
     };
     return [frame];
   }
@@ -414,7 +492,7 @@ export class FrameEmitter {
         seq: ctx.nextSeq(),
         ts: ctx.ts,
         type: "user_message",
-        content: [{ type: "text", text: rawContent }],
+        content: [{ type: "text", text: stripAttachedFileBody(rawContent) }],
       };
       frames.push(frame);
       return frames;
@@ -431,7 +509,7 @@ export class FrameEmitter {
 
     for (const item of rawContent) {
       if (isTextItem(item)) {
-        userBlocks.push({ type: "text", text: item.text });
+        userBlocks.push({ type: "text", text: stripAttachedFileBody(item.text) });
       } else if (isToolResultItem(item)) {
         const endFrame = this.toolResultToEndFrame(item, toolUseResult, ctx);
         if (endFrame) toolEndFrames.push(endFrame);
@@ -598,6 +676,27 @@ export class FrameEmitter {
       seq: ctx.nextSeq(),
       ts: ctx.ts,
       type: "file_delivery",
+      ...data,
+    };
+  }
+
+  public emitContextFile(
+    data: {
+      path: string;
+      filename: string;
+      action: "read" | "write";
+      reads: number;
+      writes: number;
+      firstSeen: number;
+      lastTouched: number;
+    },
+    ctx: EmitContext,
+  ): ContextFileFrame {
+    return {
+      id: shortId(),
+      seq: ctx.nextSeq(),
+      ts: ctx.ts,
+      type: "context_file",
       ...data,
     };
   }

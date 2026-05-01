@@ -32,6 +32,10 @@ import { handleUploadRequest } from "./handlers/upload.ts";
 import {
   handleSessionSaveRequest,
   handleSessionLastRequest,
+  handleSessionContextFilesRequest,
+  handleSessionQueueListRequest,
+  handleSessionQueueAddRequest,
+  handleSessionQueueDeleteRequest,
 } from "./handlers/session.ts";
 import {
   handleGetAnthropicKey,
@@ -47,11 +51,16 @@ import {
   handleGetRoles,
   handleCreateRole,
   handleUpdateRole,
+  handleDeleteRole,
 } from "./handlers/roles.ts";
 import { handleRegisterProject } from "./handlers/register.ts";
+import { handleUnregisterProject } from "./handlers/unregister.ts";
+import { handleDoctorRequest } from "./handlers/doctor.ts";
 import {
   handleGetProjectDisplayNames,
   handleSetProjectDisplayName,
+  handleGetProjectDirectoryTabNames,
+  handleSetProjectDirectoryTabName,
 } from "./handlers/project-display-names.ts";
 import { createAuthMiddleware } from "./middleware/auth.ts";
 import { readBinaryFile } from "./utils/fs.ts";
@@ -137,6 +146,16 @@ export function createApp(
   // Session persistence
   app.post("/api/session/save", (c) => handleSessionSaveRequest(c));
   app.get("/api/session/last", (c) => handleSessionLastRequest(c));
+  app.get("/api/session/context-files", (c) =>
+    handleSessionContextFilesRequest(c),
+  );
+
+  // Queue — per-project prompt scratchpad
+  app.get("/api/session/queue", (c) => handleSessionQueueListRequest(c));
+  app.post("/api/session/queue", (c) => handleSessionQueueAddRequest(c));
+  app.delete("/api/session/queue/:id", (c) =>
+    handleSessionQueueDeleteRequest(c),
+  );
 
   // Phase 4: BYO Anthropic API key — host-local, never proxied through relay
   app.get("/api/settings/anthropic-key", (c) => handleGetAnthropicKey(c));
@@ -152,9 +171,11 @@ export function createApp(
   app.get("/api/roles", (c) => handleGetRoles(c));
   app.post("/api/roles", (c) => handleCreateRole(c));
   app.put("/api/roles/:name", (c) => handleUpdateRole(c));
+  app.delete("/api/roles/:name", (c) => handleDeleteRole(c));
 
   // Project registration — one-shot create project + role + register with Claude
   app.post("/api/projects/register", (c) => handleRegisterProject(c));
+  app.post("/api/projects/unregister", (c) => handleUnregisterProject(c));
 
   // Project display names — cosmetic labels for the UI
   app.get("/api/settings/project-display-names", (c) =>
@@ -163,6 +184,15 @@ export function createApp(
   app.put("/api/settings/project-display-name", (c) =>
     handleSetProjectDisplayName(c),
   );
+  app.get("/api/settings/project-directory-tab-names", (c) =>
+    handleGetProjectDirectoryTabNames(c),
+  );
+  app.put("/api/settings/project-directory-tab-name", (c) =>
+    handleSetProjectDirectoryTabName(c),
+  );
+
+  // SpAIglass doctor — read-only audit of local configuration
+  app.get("/api/doctor", (c) => handleDoctorRequest(c));
 
   // Static file serving (assets only — SPA fallback added separately via finalizeSpa)
   const serveStatic = runtime.createStaticFileMiddleware({

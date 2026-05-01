@@ -222,6 +222,23 @@ export interface FileDeliveryFrame extends BaseFrame {
   toolCallId?: string;
 }
 
+/**
+ * Incremental update for the Context tab's file list. One is emitted each
+ * time the session reads or writes a file inside the project directory.
+ * The full list is also available via GET /api/session/context-files.
+ */
+export interface ContextFileFrame extends BaseFrame {
+  type: "context_file";
+  path: string;
+  filename: string;
+  /** "read" or "write" — the most recent touch. */
+  action: "read" | "write";
+  reads: number;
+  writes: number;
+  firstSeen: number;
+  lastTouched: number;
+}
+
 export interface PlanFrame extends BaseFrame {
   type: "plan";
   toolCallId: string;
@@ -272,6 +289,26 @@ export interface ErrorFrame extends BaseFrame {
 }
 
 // ---------------------------------------------------------------------------
+// System notices (pass-through for SDK system subtypes other than `init`)
+// ---------------------------------------------------------------------------
+
+/**
+ * Informational banner emitted for SDK `system` messages whose subtype isn't
+ * `init` — auto-compact boundaries, status updates, hook stdout, etc. Kept as
+ * a distinct frame from ErrorFrame/notice because the source (SDK) and the
+ * render treatment (dim inline, ※ glyph) are different.
+ */
+export interface SystemNoticeFrame extends BaseFrame {
+  type: "system_notice";
+  /** SDK system subtype ("compact_boundary", "status", …) — raw identifier. */
+  subtype: string;
+  /** Human-readable text. Derived by the emitter from subtype-specific fields. */
+  text: string;
+  /** Visual severity. Compact/status default to "info"; unknown errors bump to "warning". */
+  level: "info" | "warning";
+}
+
+// ---------------------------------------------------------------------------
 // Discriminated union
 // ---------------------------------------------------------------------------
 
@@ -288,9 +325,11 @@ export type Frame =
   | InteractivePromptFrame
   | InteractiveResolvedFrame
   | FileDeliveryFrame
+  | ContextFileFrame
   | PlanFrame
   | TodoFrame
-  | ErrorFrame;
+  | ErrorFrame
+  | SystemNoticeFrame;
 
 export type FrameType = Frame["type"];
 
@@ -320,6 +359,7 @@ export function isRowAnchorFrame(frame: Frame): boolean {
     case "plan":
     case "todo":
     case "error":
+    case "system_notice":
       return true;
     // These patch existing rows rather than introducing new ones.
     case "assistant_message_delta":
@@ -329,6 +369,7 @@ export function isRowAnchorFrame(frame: Frame): boolean {
     case "session_init":
     case "session_meta":
     case "session_end":
+    case "context_file":
       return false;
   }
 }

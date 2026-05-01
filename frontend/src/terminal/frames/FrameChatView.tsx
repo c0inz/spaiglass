@@ -179,6 +179,45 @@ export function FrameChatView({
     scrollToEnd("smooth");
   }, [rows, currentStatus, scrollToEnd]);
 
+  // Desktop keyboard scrolling: PageUp/PageDown/Home/End should page through
+  // the chat transcript even when the cursor is parked in the input. The
+  // textarea is single-row most of the time; users expect the same keys that
+  // work in a terminal to work here. Ctrl+Home/Ctrl+End jump to the edges.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.altKey || e.metaKey) return;
+      const el = containerRef.current;
+      if (!el) return;
+      const page = Math.max(el.clientHeight - 48, 40);
+      let delta: number | null = null;
+      let jumpTo: number | null = null;
+      switch (e.key) {
+        case "PageUp":
+          delta = -page;
+          break;
+        case "PageDown":
+          delta = page;
+          break;
+        case "Home":
+          if (e.ctrlKey) jumpTo = 0;
+          break;
+        case "End":
+          if (e.ctrlKey) jumpTo = el.scrollHeight;
+          break;
+      }
+      if (delta === null && jumpTo === null) return;
+      e.preventDefault();
+      lastUserScrollRef.current = Date.now();
+      if (jumpTo !== null) {
+        el.scrollTo({ top: jumpTo, behavior: "smooth" });
+      } else {
+        el.scrollBy({ top: delta ?? 0, behavior: "smooth" });
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   return (
     <div
       ref={containerRef}

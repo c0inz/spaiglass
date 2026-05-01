@@ -42,6 +42,11 @@ let authenticated = false;
 // re-registers. Application-level pings work through any proxy.
 let pingTimer: ReturnType<typeof setInterval> | null = null;
 const RELAY_PING_INTERVAL_MS = 25_000;
+// Watchdog: relay replies to every ping with a pong. If we send pings but
+// stop receiving pongs, the WS is half-open (TCP intact, application-layer
+// dead) — force a reconnect so the relay re-registers our channel.
+let lastPongAt = 0;
+const RELAY_PONG_TIMEOUT_MS = 90_000;
 
 function log(msg: string) {
   console.log(`[connector] ${new Date().toISOString()} ${msg}`);
@@ -82,6 +87,7 @@ function connectToRelay() {
     // Auth response
     if (msg.type === "auth_ok") {
       authenticated = true;
+      lastPongAt = Date.now();
       log(`Authenticated as connector: ${msg.name} (${msg.connectorId})`);
       startPingTimer();
       return;
@@ -92,8 +98,10 @@ function connectToRelay() {
       return;
     }
 
-    // Keepalive — relay replies to our pings; we just consume pongs.
+    // Keepalive — relay replies to our pings; track the timestamp so the
+    // watchdog can detect a half-open WS (TCP up, relay no longer routing).
     if (msg.type === "pong") {
+      lastPongAt = Date.now();
       return;
     }
 
@@ -129,6 +137,14 @@ function startPingTimer() {
   stopPingTimer();
   pingTimer = setInterval(() => {
     if (!relayWs || relayWs.readyState !== WebSocket.OPEN || !authenticated) {
+      return;
+    }
+    // If the relay stopped responding with pongs, the socket is half-open.
+    // Close it explicitly so the on("close") handler triggers reconnect.
+    if (lastPongAt && Date.now() - lastPongAt > RELAY_PONG_TIMEOUT_MS) {
+      const silentSec = Math.round((Date.now() - lastPongAt) / 1000);
+      log(`No pong from relay for ${silentSec}s, forcing reconnect`);
+      try { relayWs.close(); } catch { /* ignore */ }
       return;
     }
     try {

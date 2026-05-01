@@ -3,6 +3,43 @@
 
 @variant dark (.dark &);
 
+/* Native <select> dropdown options. On Windows + Chromium the OS draws the
+ * highlighted option with the system Highlight color (a very light blue with
+ * white text), which is unreadable against our dark dropdowns. Force a dark
+ * surface + light text for the option list so the highlight stays legible. */
+select option {
+  background-color: #0f172a;
+  color: #f1f5f9;
+}
+select option:checked,
+select option:hover {
+  background-color: #1e293b;
+  color: #ffffff;
+}
+
+/* Help "?" popover — must stay fully opaque on every theme. The glass /
+ * black-glass theme overrides sweep any class matching bg-slate-800/900* and
+ * force a translucent 4% white surface, which lets chat text bleed through
+ * the dialog. We use a dedicated .help-popover class (not in the wildcard
+ * selector) and pin a solid background with !important so the popover
+ * remains readable regardless of theme. */
+.help-popover {
+  background-color: #ffffff !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+html.dark .help-popover,
+html.glass .help-popover,
+html.black-glass .help-popover,
+html.seventies-dark .help-popover {
+  background-color: #1e293b !important;
+  color: #e2e8f0 !important;
+}
+html.seventies-light .help-popover {
+  background-color: #f4ecd8 !important;
+  color: #2d1810 !important;
+}
+
 /* ============================================================================
  * GLOBAL OVERFLOW GUARD — mobile horizontal scroll fix.
  * Any descendant that spills past the viewport (long paths, wide code blocks,
@@ -122,6 +159,92 @@ html.glass .bg-blue-600,
 html.glass .bg-blue-700 {
   background: linear-gradient(135deg, #00bcd4, #7c4dff) !important;
   box-shadow: 0 4px 16px rgba(0, 188, 212, 0.35) !important;
+}
+
+/* ============================================================================
+ * BLACK GLASS THEME — true black ground, white text, Claude Code palette.
+ *   - Body: pure black with faint vignette
+ *   - Text: white primary, neutral gray secondary
+ *   - Surfaces: translucent black glass with blur
+ *   - Accents: Claude Code terminal colors (cyan, emerald, amber, etc.)
+ * ============================================================================ */
+html.black-glass body,
+html.black-glass {
+  background: #000000 !important;
+  background-image:
+    radial-gradient(
+      ellipse at top left,
+      rgba(255, 255, 255, 0.03),
+      transparent 50%
+    ),
+    radial-gradient(
+      ellipse at bottom right,
+      rgba(255, 255, 255, 0.02),
+      transparent 50%
+    ) !important;
+  background-attachment: fixed !important;
+  color: #f0f0f0;
+  font-family: "Satoshi", system-ui, sans-serif;
+}
+
+html.black-glass h1,
+html.black-glass h2,
+html.black-glass h3 {
+  font-family: "Clash Display", system-ui, sans-serif;
+  font-weight: 600;
+  color: #ffffff !important;
+}
+
+html.black-glass [class*="bg-slate-700"],
+html.black-glass [class*="bg-slate-800"],
+html.black-glass [class*="bg-slate-900"],
+html.black-glass [class*="bg-slate-950"] {
+  background: rgba(255, 255, 255, 0.03) !important;
+  backdrop-filter: blur(16px) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+html.black-glass [class*="bg-slate-50"],
+html.black-glass [class*="bg-slate-100"] {
+  background: rgba(255, 255, 255, 0.03) !important;
+  backdrop-filter: blur(16px) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+}
+
+html.black-glass header,
+html.black-glass [class*="border-slate-700"],
+html.black-glass [class*="border-slate-800"] {
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+html.black-glass input,
+html.black-glass textarea,
+html.black-glass select {
+  background: rgba(0, 0, 0, 0.5) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  color: #ffffff !important;
+}
+
+/* Claude Code teal accent buttons */
+html.black-glass .bg-blue-500,
+html.black-glass .bg-blue-600,
+html.black-glass .bg-blue-700 {
+  background: linear-gradient(135deg, #0891b2, #06b6d4) !important;
+  box-shadow: 0 2px 12px rgba(6, 182, 212, 0.25) !important;
+}
+
+/* White text hierarchy */
+html.black-glass [class*="text-slate-100"] { color: #ffffff !important; }
+html.black-glass [class*="text-slate-200"] { color: #e5e5e5 !important; }
+html.black-glass [class*="text-slate-300"] { color: #d4d4d4 !important; }
+html.black-glass [class*="text-slate-400"] { color: #a3a3a3 !important; }
+html.black-glass [class*="text-slate-500"] { color: #737373 !important; }
+
+/* Code blocks — darker ground for contrast */
+html.black-glass pre[class*="bg-"],
+html.black-glass code[class*="bg-slate"] {
+  background: rgba(0, 0, 0, 0.6) !important;
 }
 
 /* ============================================================================

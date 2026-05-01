@@ -71,11 +71,30 @@ interface ConnectorChannel {
   ws: WSContext;
   browsers: Map<string, WSContext>; // browserId -> browser WS
   spaiglassVersion: string; // version reported by VM on auth, e.g. "2026.04.10"
+  lastPingAt: number; // Date.now() of last ping received from this connector
 }
 
 class ChannelManager {
   private channels = new Map<string, ConnectorChannel>(); // connectorId -> channel
   private httpPending = new Map<string, PendingHttpRequest>();
+
+  constructor() {
+    // Half-open WSS detection. Connectors ping every 25s; if 90s pass without
+    // one, the channel is desynced (e.g. a duplicate-auth race deleted the
+    // channel without closing the WS, leaving the connector unaware it must
+    // re-auth and the user stuck on "VM offline"). Drop the channel and close
+    // the WS so the connector's reconnect path fires.
+    setInterval(() => {
+      const now = Date.now();
+      for (const [id, ch] of this.channels) {
+        if (now - ch.lastPingAt > 90_000) {
+          const silentSec = Math.round((now - ch.lastPingAt) / 1000);
+          console.log(`[watchdog] connector ${id} silent for ${silentSec}s, dropping channel`);
+          this.disconnect(id);
+        }
+      }
+    }, 30_000);
+  }
 
   /** Register a VM connector */
   register(connectorId: string, userId: string, ws: WSContext, spaiglassVersion: string): void {
@@ -87,6 +106,7 @@ class ChannelManager {
       ws,
       browsers: new Map(),
       spaiglassVersion,
+      lastPingAt: Date.now(),
     });
   }
 
@@ -107,6 +127,10 @@ class ChannelManager {
         browserWs.close();
       } catch { /* ignore */ }
     }
+    // Close the connector WS too — without this, a half-open socket persists
+    // and the connector won't try to re-auth, leaving the channel permanently
+    // missing on the relay side and the VM reading as offline forever.
+    try { channel.ws.close(1000, "channel reset"); } catch { /* ignore */ }
     this.channels.delete(connectorId);
   }
 
@@ -327,6 +351,11 @@ export function handleConnectorWs() {
       // proxies will idle-terminate a silent WS in ~60s, causing
       // "VM is offline" errors on the next browser reconnect.
       if (msg.type === "ping") {
+        const channelId = connectorWsMap.get(ws);
+        if (channelId) {
+          const ch = cm.getChannel(channelId);
+          if (ch) ch.lastPingAt = Date.now();
+        }
         try { ws.send(JSON.stringify({ type: "pong" })); } catch { /* ignore */ }
         return;
       }

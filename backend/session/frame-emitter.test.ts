@@ -70,9 +70,43 @@ describe("FrameEmitter", () => {
       expect(f.ts).toBe(1000);
     });
 
-    it("drops non-init system messages", () => {
+    it("emits a system_notice frame for compact_boundary subtype", () => {
       const frames = emitter.emitFromSdkMessage(
-        { type: "system", subtype: "abort" },
+        {
+          type: "system",
+          subtype: "compact_boundary",
+          compact_metadata: { trigger: "auto", pre_tokens: 12300 },
+        },
+        makeCtx(1, 1000),
+      );
+      expect(frames).toHaveLength(1);
+      const f = frames[0] as {
+        type: string;
+        subtype: string;
+        text: string;
+        level: string;
+      };
+      expect(f.type).toBe("system_notice");
+      expect(f.subtype).toBe("compact_boundary");
+      expect(f.text).toContain("auto-compact");
+      expect(f.text).toContain("12.3k");
+      expect(f.level).toBe("info");
+    });
+
+    it("emits a system_notice for status subtype", () => {
+      const frames = emitter.emitFromSdkMessage(
+        { type: "system", subtype: "status", status: "idle" },
+        makeCtx(1, 1000),
+      );
+      expect(frames).toHaveLength(1);
+      const f = frames[0] as { type: string; text: string };
+      expect(f.type).toBe("system_notice");
+      expect(f.text).toContain("idle");
+    });
+
+    it("drops a system message with no extractable text", () => {
+      const frames = emitter.emitFromSdkMessage(
+        { type: "system", subtype: "weird_future_type" },
         makeCtx(1, 1000),
       );
       expect(frames).toEqual([]);
@@ -473,6 +507,23 @@ describe("FrameEmitter", () => {
       const f = frames[0] as UserMessageFrame;
       expect(f.type).toBe("user_message");
       expect(f.content).toEqual([{ type: "text", text: "hello there" }]);
+    });
+
+    it("collapses inlined attached-file bodies to just the filename chip", () => {
+      // `SessionManager.sendMessage` inlines file attachments as fenced code
+      // blocks so Claude can read them; when the SDK echoes that message
+      // back, we strip the body so the browser renders a chip, not the
+      // whole file.
+      const body = "x".repeat(5000);
+      const prompt = `[Attached file: big.har]\n\`\`\`\n${body}\n\`\`\`\n\nwhat is this?`;
+      const frames = emitter.emitFromSdkMessage(
+        { type: "user", message: { content: prompt } },
+        makeCtx(1, 1000),
+      );
+      const f = frames[0] as UserMessageFrame;
+      expect(f.content).toEqual([
+        { type: "text", text: "[big.har]\n\nwhat is this?" },
+      ]);
     });
 
     it("emits a user_message frame for array text content", () => {

@@ -46,7 +46,10 @@ describe("App Routing", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("SpAIglass")).toBeInTheDocument();
+      // Brand component splits into spans: Sp + <span>ai</span> + Glass
+      expect(
+        screen.getByText((_, node) => node?.textContent === "SpaiGlass"),
+      ).toBeInTheDocument();
       expect(screen.getAllByText("/test-path").length).toBeGreaterThan(0);
     });
   });

@@ -15,6 +15,7 @@ import {
   removeCollaborator,
   updateCollaboratorRole,
   updateConnectorDisplayName,
+  updateConnectorName,
   connectorDisplayName,
   findUserByLogin,
   appendAuditLog,
@@ -25,6 +26,13 @@ import {
 import { requireAuth } from "./middleware.ts";
 import { getChannelManager } from "./tunnel.ts";
 import type { RelayEnv } from "./types.ts";
+import {
+  validateConnectorName,
+  validateDisplayName,
+  validateUuidParam,
+  parseJsonBody,
+  rejectUnknownKeys,
+} from "./validation.ts";
 
 export function connectorRoutes(): Hono<RelayEnv> {
   const app = new Hono<RelayEnv>();
@@ -73,13 +81,30 @@ export function connectorRoutes(): Hono<RelayEnv> {
   // Register a new connector
   app.post("/api/connectors", async (c) => {
     const user = c.get("user")!;
-    const body = await c.req.json<{ name: string }>();
+    const parsed = await parseJsonBody(c.req);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const reject = rejectUnknownKeys(parsed.body, ["name"]);
+    if (reject) return c.json({ error: reject.error }, reject.status);
 
-    if (!body.name || typeof body.name !== "string" || body.name.length > 100) {
-      return c.json({ error: "Name is required (max 100 chars)" }, 400);
+    const nameCheck = validateConnectorName(parsed.body.name);
+    if (!nameCheck.ok) return c.json({ error: nameCheck.error }, nameCheck.status);
+
+    // Reject duplicates up-front — the unique-per-user check saves a round-
+    // trip for an agent that forgets to list existing connectors first.
+    const existing = getConnectorsByUser(user.id).find(
+      (conn) => conn.name.toLowerCase() === nameCheck.value.toLowerCase(),
+    );
+    if (existing) {
+      return c.json(
+        {
+          error: `You already have a connector named '${nameCheck.value}' (id: ${existing.id}). Use it instead of creating a duplicate, or PATCH it to rename.`,
+          existingId: existing.id,
+        },
+        409,
+      );
     }
 
-    const connector = createConnector(user.id, body.name.trim());
+    const connector = createConnector(user.id, nameCheck.value);
     // rawToken is the plaintext token shown once — the DB stores only the hash
     return c.json({
       id: connector.id,
@@ -93,37 +118,64 @@ export function connectorRoutes(): Hono<RelayEnv> {
   // Delete a connector
   app.delete("/api/connectors/:id", (c) => {
     const user = c.get("user")!;
-    const id = c.req.param("id");
-    const deleted = deleteConnector(id, user.id);
+    const idCheck = validateUuidParam(c.req.param("id"));
+    if (!idCheck.ok) return c.json({ error: idCheck.error }, idCheck.status);
+
+    const deleted = deleteConnector(idCheck.value, user.id);
     if (!deleted) {
       return c.json({ error: "Connector not found" }, 404);
     }
     // Disconnect if online
-    getChannelManager().disconnect(id);
+    getChannelManager().disconnect(idCheck.value);
     return c.json({ ok: true });
   });
 
-  // Update connector display name. Owner only.
+  // Update connector. Owner only.
+  // Accepts `displayName` (free-form label) and/or `name` (slug; URL identity).
+  // Renaming preserves the connector id + token so the VM-side connector keeps
+  // working — the customer agent does not need to reconfigure the .env.
   app.patch("/api/connectors/:id", async (c) => {
     const user = c.get("user")!;
-    const id = c.req.param("id");
-    const body = await c.req.json<{ displayName?: string | null }>();
+    const idCheck = validateUuidParam(c.req.param("id"));
+    if (!idCheck.ok) return c.json({ error: idCheck.error }, idCheck.status);
+    const id = idCheck.value;
 
-    if (!("displayName" in body)) {
-      return c.json({ error: "displayName field required" }, 400);
+    const parsed = await parseJsonBody(c.req);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const body = parsed.body;
+    const reject = rejectUnknownKeys(body, ["displayName", "name"]);
+    if (reject) return c.json({ error: reject.error }, reject.status);
+
+    if (!("displayName" in body) && !("name" in body)) {
+      return c.json({ error: "At least one of {displayName, name} required" }, 400);
     }
 
-    const displayName = body.displayName?.trim() || null;
-    if (displayName && displayName.length > 100) {
-      return c.json({ error: "Display name max 100 chars" }, 400);
+    // Slug rename (identity — changes /vm/<login>.<name>/ URL). Same rules as create.
+    if ("name" in body) {
+      const nameCheck = validateConnectorName(body.name);
+      if (!nameCheck.ok) return c.json({ error: nameCheck.error }, nameCheck.status);
+      const result = updateConnectorName(id, user.id, nameCheck.value);
+      if (result === "not_found") return c.json({ error: "Connector not found" }, 404);
+      if (result === "conflict")
+        return c.json({ error: `You already have a connector named '${nameCheck.value}'` }, 409);
     }
 
-    const updated = updateConnectorDisplayName(id, user.id, displayName);
-    if (!updated) {
-      return c.json({ error: "Connector not found" }, 404);
+    // Display-name update (free-form, URL-irrelevant).
+    if ("displayName" in body) {
+      const dnCheck = validateDisplayName(body.displayName);
+      if (!dnCheck.ok) return c.json({ error: dnCheck.error }, dnCheck.status);
+      const ok = updateConnectorDisplayName(id, user.id, dnCheck.value);
+      if (!ok) return c.json({ error: "Connector not found" }, 404);
     }
 
-    return c.json({ ok: true, displayName: displayName || undefined });
+    const fresh = getConnectorById(id);
+    if (!fresh) return c.json({ error: "Connector not found" }, 404);
+    return c.json({
+      ok: true,
+      id,
+      name: fresh.name,
+      displayName: connectorDisplayName(fresh),
+    });
   });
 
   // Download .env config for a connector.
@@ -132,8 +184,9 @@ export function connectorRoutes(): Hono<RelayEnv> {
   // their records or delete + recreate the connector to get a new one.
   app.get("/api/connectors/:id/config", (c) => {
     const user = c.get("user")!;
-    const id = c.req.param("id");
-    const connector = getConnectorById(id);
+    const idCheck = validateUuidParam(c.req.param("id"));
+    if (!idCheck.ok) return c.json({ error: idCheck.error }, idCheck.status);
+    const connector = getConnectorById(idCheck.value);
 
     if (!connector || connector.user_id !== user.id) {
       return c.json({ error: "Connector not found" }, 404);
@@ -196,29 +249,47 @@ export function connectorRoutes(): Hono<RelayEnv> {
   // Get all custom role labels for a connector.
   app.get("/api/connectors/:id/labels", (c) => {
     const user = c.get("user")!;
-    const id = c.req.param("id");
-    const role = getConnectorAccess(id, user.id);
+    const idCheck = validateUuidParam(c.req.param("id"));
+    if (!idCheck.ok) return c.json({ error: idCheck.error }, idCheck.status);
+    const role = getConnectorAccess(idCheck.value, user.id);
     if (!role) return c.json({ error: "Connector not found" }, 404);
-    return c.json(getRoleLabels(id));
+    return c.json(getRoleLabels(idCheck.value));
   });
 
   // Set or clear a role label. Owner only.
   app.put("/api/connectors/:id/labels", async (c) => {
     const user = c.get("user")!;
-    const id = c.req.param("id");
+    const idCheck = validateUuidParam(c.req.param("id"));
+    if (!idCheck.ok) return c.json({ error: idCheck.error }, idCheck.status);
+    const id = idCheck.value;
     const role = getConnectorAccess(id, user.id);
     if (role !== "owner") {
       return c.json({ error: "Only the owner can edit labels" }, 403);
     }
-    const body = await c.req.json<{
-      projBase?: string;
-      roleFile?: string;
-      label?: string;
-    }>();
-    if (!body.projBase || !body.roleFile) {
-      return c.json({ error: "projBase and roleFile are required" }, 400);
+    const parsed = await parseJsonBody(c.req);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const reject = rejectUnknownKeys(parsed.body, ["projBase", "roleFile", "label"]);
+    if (reject) return c.json({ error: reject.error }, reject.status);
+    const body = parsed.body as { projBase?: unknown; roleFile?: unknown; label?: unknown };
+    if (typeof body.projBase !== "string" || !body.projBase.trim()) {
+      return c.json({ error: "projBase is required (string)" }, 400);
     }
-    setRoleLabel(id, body.projBase, body.roleFile, body.label ?? null);
+    if (typeof body.roleFile !== "string" || !body.roleFile.trim()) {
+      return c.json({ error: "roleFile is required (string)" }, 400);
+    }
+    const label =
+      body.label === null || body.label === undefined
+        ? null
+        : typeof body.label === "string"
+          ? body.label
+          : undefined;
+    if (label === undefined) {
+      return c.json({ error: "label must be a string or null" }, 400);
+    }
+    if (label && label.length > 200) {
+      return c.json({ error: "label max 200 chars" }, 400);
+    }
+    setRoleLabel(id, body.projBase.trim(), body.roleFile.trim(), label);
     return c.json({ ok: true });
   });
 
@@ -228,7 +299,9 @@ export function connectorRoutes(): Hono<RelayEnv> {
   // has access (transparency — viewers should know who's watching with them).
   app.get("/api/connectors/:id/collaborators", (c) => {
     const user = c.get("user")!;
-    const id = c.req.param("id");
+    const idCheck = validateUuidParam(c.req.param("id"));
+    if (!idCheck.ok) return c.json({ error: idCheck.error }, idCheck.status);
+    const id = idCheck.value;
     const role = getConnectorAccess(id, user.id);
     if (!role) return c.json({ error: "Connector not found" }, 404);
 
@@ -253,18 +326,29 @@ export function connectorRoutes(): Hono<RelayEnv> {
   // Invite a collaborator by GitHub login. Owner only.
   app.post("/api/connectors/:id/collaborators", async (c) => {
     const user = c.get("user")!;
-    const id = c.req.param("id");
+    const idCheck = validateUuidParam(c.req.param("id"));
+    if (!idCheck.ok) return c.json({ error: idCheck.error }, idCheck.status);
+    const id = idCheck.value;
     const role = getConnectorAccess(id, user.id);
     if (role !== "owner") {
       return c.json({ error: "Only the owner can manage collaborators" }, 403);
     }
 
-    const body = await c.req.json<{ login?: string; role?: string }>();
-    const targetLogin = (body.login || "").trim();
+    const parsed = await parseJsonBody(c.req);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const reject = rejectUnknownKeys(parsed.body, ["login", "role"]);
+    if (reject) return c.json({ error: reject.error }, reject.status);
+    const body = parsed.body as { login?: unknown; role?: unknown };
+    const targetLogin = typeof body.login === "string" ? body.login.trim() : "";
     const targetRole = body.role;
 
     if (!targetLogin) {
-      return c.json({ error: "GitHub login is required" }, 400);
+      return c.json({ error: "GitHub login is required (string)" }, 400);
+    }
+    // GitHub logins: alphanumeric and single hyphens, max 39 chars — the
+    // cheapest way to reject SQL-ish junk before we hit findUserByLogin.
+    if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/.test(targetLogin)) {
+      return c.json({ error: "GitHub login has invalid format" }, 400);
     }
     if (targetRole !== "editor" && targetRole !== "viewer") {
       return c.json({ error: "role must be 'editor' or 'viewer'" }, 400);
@@ -320,14 +404,22 @@ export function connectorRoutes(): Hono<RelayEnv> {
   // Change a collaborator's role. Owner only.
   app.patch("/api/connectors/:id/collaborators/:userId", async (c) => {
     const user = c.get("user")!;
-    const id = c.req.param("id");
-    const targetUserId = c.req.param("userId");
+    const idCheck = validateUuidParam(c.req.param("id"));
+    if (!idCheck.ok) return c.json({ error: idCheck.error }, idCheck.status);
+    const userIdCheck = validateUuidParam(c.req.param("userId"));
+    if (!userIdCheck.ok) return c.json({ error: userIdCheck.error }, userIdCheck.status);
+    const id = idCheck.value;
+    const targetUserId = userIdCheck.value;
     const role = getConnectorAccess(id, user.id);
     if (role !== "owner") {
       return c.json({ error: "Only the owner can manage collaborators" }, 403);
     }
 
-    const body = await c.req.json<{ role?: string }>();
+    const parsed = await parseJsonBody(c.req);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const reject = rejectUnknownKeys(parsed.body, ["role"]);
+    if (reject) return c.json({ error: reject.error }, reject.status);
+    const body = parsed.body as { role?: unknown };
     if (body.role !== "editor" && body.role !== "viewer") {
       return c.json({ error: "role must be 'editor' or 'viewer'" }, 400);
     }
@@ -347,8 +439,12 @@ export function connectorRoutes(): Hono<RelayEnv> {
   // Remove a collaborator. Owner only.
   app.delete("/api/connectors/:id/collaborators/:userId", (c) => {
     const user = c.get("user")!;
-    const id = c.req.param("id");
-    const targetUserId = c.req.param("userId");
+    const idCheck = validateUuidParam(c.req.param("id"));
+    if (!idCheck.ok) return c.json({ error: idCheck.error }, idCheck.status);
+    const userIdCheck = validateUuidParam(c.req.param("userId"));
+    if (!userIdCheck.ok) return c.json({ error: userIdCheck.error }, userIdCheck.status);
+    const id = idCheck.value;
+    const targetUserId = userIdCheck.value;
     const role = getConnectorAccess(id, user.id);
     if (role !== "owner") {
       return c.json({ error: "Only the owner can manage collaborators" }, 403);
@@ -366,7 +462,9 @@ export function connectorRoutes(): Hono<RelayEnv> {
   // Audit log for a VM. Owner only — collaborators do not see the log.
   app.get("/api/connectors/:id/audit", (c) => {
     const user = c.get("user")!;
-    const id = c.req.param("id");
+    const idCheck = validateUuidParam(c.req.param("id"));
+    if (!idCheck.ok) return c.json({ error: idCheck.error }, idCheck.status);
+    const id = idCheck.value;
     const role = getConnectorAccess(id, user.id);
     if (role !== "owner") {
       return c.json({ error: "Only the owner can view the audit log" }, 403);

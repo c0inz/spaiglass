@@ -102,13 +102,6 @@ export function ChatInput({
   // bumped by ChatPage on layout-state changes (arch viewer / file editor /
   // file sidebar / settings modal) so the cursor returns to the textarea
   // after the chat panel reshapes.
-  //
-  // We defer the focus call to the next animation frame so any in-flight
-  // layout reflow (sidebar slide, modal close, body overflow restore) has
-  // settled first — focusing mid-reflow leaves the caret at the textarea's
-  // OLD position, which can render visually behind the chat scrollback.
-  // `preventScroll: true` stops the focus from triggering a scroll-into-view
-  // walk that would jolt any ancestor scrollable.
   useEffect(() => {
     if (isLoading || showPermissions) return;
     const raf = requestAnimationFrame(() => {
@@ -116,6 +109,42 @@ export function ChatInput({
     });
     return () => cancelAnimationFrame(raf);
   }, [isLoading, showPermissions, focusTrigger]);
+
+  // Universal refocus: when focus falls to <body> (e.g. a modal unmounts,
+  // a dialog closes, a dropdown disappears), automatically return focus to
+  // the textarea. Skip when the user just clicked a non-focusable control
+  // (tabs, icon buttons) — stealing focus back swallows their keystrokes.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    let lastPointerDown = 0;
+    const handlePointerDown = () => {
+      lastPointerDown = Date.now();
+    };
+    const handleFocusOut = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        const active = document.activeElement;
+        const recentClick = Date.now() - lastPointerDown < 300;
+        if (
+          document.hasFocus() &&
+          (active === document.body ||
+            active === document.documentElement) &&
+          !isLoading &&
+          !showPermissions &&
+          !recentClick
+        ) {
+          inputRef.current?.focus({ preventScroll: true });
+        }
+      }, 80);
+    };
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("focusout", handleFocusOut);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("focusout", handleFocusOut);
+      clearTimeout(timer);
+    };
+  }, [isLoading, showPermissions]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -422,6 +451,39 @@ export function ChatInput({
             }
           }}
           onKeyDown={handleKeyDown}
+          onPaste={(e) => {
+            // Intercept clipboard images (screenshots from the OS snip tool,
+            // copied-from-browser images, etc.) so they flow through the
+            // same file-upload path as the paperclip button. Without this,
+            // the textarea silently drops image clipboard items and the
+            // user's screenshot never reaches disk or the backend.
+            if (!onImageAdd) return;
+            const files: File[] = [];
+            for (const item of Array.from(e.clipboardData.items)) {
+              if (item.kind === "file" && item.type.startsWith("image/")) {
+                const f = item.getAsFile();
+                if (!f) continue;
+                // Browsers sometimes set file.name to "image.png" — fine.
+                // But OS-level screenshot pastes can arrive nameless, which
+                // would save as "{timestamp}-" with no extension and break
+                // the image-content path. Rename based on the MIME subtype.
+                const hasName = f.name && /\.[a-z0-9]+$/i.test(f.name);
+                if (hasName) {
+                  files.push(f);
+                } else {
+                  const ext = (f.type.split("/")[1] || "png").split(";")[0];
+                  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+                  files.push(
+                    new File([f], `pasted-${ts}.${ext}`, { type: f.type }),
+                  );
+                }
+              }
+            }
+            if (files.length > 0) {
+              e.preventDefault();
+              onImageAdd(files);
+            }
+          }}
           onCompositionStart={handleCompositionStart}
           onCompositionEnd={handleCompositionEnd}
           placeholder={

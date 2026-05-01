@@ -81,6 +81,7 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
     roleFile: string;
     workingDirectory: string;
     contextContent?: string;
+    resumeSessionId?: string;
   } | null>(null);
   const [state, setState] = useState<WSSessionState>({
     connected: false,
@@ -260,14 +261,40 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
         }));
         break;
 
-      case "resume_ack":
+      case "resume_ack": {
         offlineSinceRef.current = null;
         if (offlineTimerRef.current) {
           clearTimeout(offlineTimerRef.current);
           offlineTimerRef.current = null;
         }
         setState((s) => ({ ...s, attached: true }));
+        // `stale: true` means the backend replayed scrollback from disk but
+        // has no live CLI session. Auto-start one so the user can keep
+        // chatting without losing their visible history.
+        if (msg.stale) {
+          const params = lastSessionParamsRef.current;
+          const ws = wsRef.current;
+          if (
+            params &&
+            ws &&
+            ws.readyState === WebSocket.OPEN &&
+            roleRef.current !== "viewer"
+          ) {
+            ws.send(
+              JSON.stringify({
+                type: "session_start",
+                roleFile: params.roleFile,
+                workingDirectory: params.workingDirectory,
+                contextContent: params.contextContent,
+                ...(params.resumeSessionId
+                  ? { resumeSessionId: params.resumeSessionId }
+                  : {}),
+              }),
+            );
+          }
+        }
         break;
+      }
 
       case "resume_failed": {
         // Backend has no session for us, or buffer aged out and resume_lost
@@ -291,6 +318,9 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
               roleFile: params.roleFile,
               workingDirectory: params.workingDirectory,
               contextContent: params.contextContent,
+              ...(params.resumeSessionId
+                ? { resumeSessionId: params.resumeSessionId }
+                : {}),
             }),
           );
         }
@@ -467,11 +497,17 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
    * without ChatPage having to call this again.
    */
   const startSession = useCallback(
-    (roleFile: string, workingDirectory: string, contextContent?: string) => {
+    (
+      roleFile: string,
+      workingDirectory: string,
+      contextContent?: string,
+      resumeSessionId?: string,
+    ) => {
       lastSessionParamsRef.current = {
         roleFile,
         workingDirectory,
         contextContent,
+        resumeSessionId,
       };
       const ws = wsRef.current;
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
@@ -482,6 +518,7 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
           roleFile,
           workingDirectory,
           contextContent,
+          ...(resumeSessionId ? { resumeSessionId } : {}),
         }),
       );
     },

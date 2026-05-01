@@ -36,10 +36,12 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     const isDarkBase =
       settings.theme === "dark" ||
       settings.theme === "glass" ||
+      settings.theme === "black-glass" ||
       settings.theme === "70s-dark";
 
     root.classList.toggle("dark", isDarkBase);
     root.classList.toggle("glass", settings.theme === "glass");
+    root.classList.toggle("black-glass", settings.theme === "black-glass");
     root.classList.toggle("plain", settings.theme === "plain");
     root.classList.toggle("seventies", isSeventies);
     root.classList.toggle("seventies-light", settings.theme === "70s-light");
@@ -80,6 +82,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       "light",
       "dark",
       "glass",
+      "black-glass",
       "plain",
       "70s-light",
       "70s-dark",

@@ -24,7 +24,7 @@ const { startup } =
   };
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
-import { basename, extname } from "node:path";
+import { basename, extname, isAbsolute, resolve as resolvePath } from "node:path";
 import { AsyncQueue } from "./queue.ts";
 import {
   pushFrame,
@@ -32,6 +32,16 @@ import {
   framesAfter,
   type BufferState,
 } from "./buffer.ts";
+import {
+  openSessionPersistence,
+  sessionDirFor,
+  readMaxSeq,
+  readFramesAfter,
+  readSessionMeta,
+  touchContextFile,
+  isInsideWorkingDirectory,
+  type SessionPersistence,
+} from "./persistence.ts";
 import { FrameEmitter, type EmitContext } from "./frame-emitter.ts";
 import type { Frame, InteractivePromptFrame } from "../../shared/frames.ts";
 import { logger } from "../utils/logger.ts";
@@ -108,6 +118,9 @@ interface Session {
   pendingToolRequests: Map<string, PendingToolEntry>;
   // --- Phase B: terminal frame protocol emitter ---
   emitter: FrameEmitter;
+  // --- On-disk transcript (frames.jsonl + meta.json). May be null only
+  //     while async open is still in flight; broadcastFrame tolerates that.
+  persist: SessionPersistence | null;
 }
 
 export class SessionManager {
@@ -140,6 +153,7 @@ export class SessionManager {
     roleFile: string,
     consumer: SessionConsumer,
     contextContent?: string,
+    resumeSessionId?: string,
   ): Promise<SessionInfo> {
     const key = this.sessionKey(userId, workingDirectory, roleFile);
 
@@ -154,10 +168,31 @@ export class SessionManager {
         roleFile,
         consumer,
         contextContent,
+        resumeSessionId,
       );
     }
 
     let session = this.sessions.get(key);
+
+    // If the caller wants to resume a specific Claude session ID and the
+    // existing warm session is for a different one, tear it down and spawn
+    // a new Claude process with `resume: <id>`. Matches `claude --resume`:
+    // picking a different session = new CLI process with that session's
+    // history loaded as context.
+    if (
+      session &&
+      session.running &&
+      resumeSessionId &&
+      session.sessionId &&
+      session.sessionId !== resumeSessionId
+    ) {
+      logger.app.info(
+        "Resume mismatch — tearing down {oldId} to resume {newId}",
+        { oldId: session.sessionId, newId: resumeSessionId },
+      );
+      this.destroySession(key);
+      session = undefined;
+    }
 
     if (session && session.running) {
       // Existing session — attach consumer
@@ -193,6 +228,12 @@ export class SessionManager {
     });
     this.sessionLocks.set(key, lockPromise);
 
+    // Continuity across restarts: if we've persisted frames for this tuple
+    // before, pick up nextCursor just above the highest persisted seq so the
+    // new session's cursors stay monotonic across the disk transcript.
+    const diskDir = sessionDirFor(userId, workingDirectory, roleFile);
+    const priorMaxSeq = await readMaxSeq(diskDir);
+
     // Create new session
     session = {
       id: randomUUID(),
@@ -209,15 +250,38 @@ export class SessionManager {
       running: true,
       warmClose: null,
       buffer: { frames: [], bufferedBytes: 0 },
-      nextCursor: 1, // 1-based; clients use lastCursor=0 to mean "send everything"
+      nextCursor: priorMaxSeq + 1,
       pendingToolRequests: new Map(),
       emitter: new FrameEmitter(),
+      persist: null,
     };
 
     this.sessions.set(key, session);
 
+    // Open on-disk transcript. Non-blocking from the caller's perspective:
+    // frames emitted before this resolves are buffered in memory and the
+    // first append will flush cleanly because the Promise chain is
+    // established inside openSessionPersistence.
+    openSessionPersistence({
+      id: session.id,
+      userId,
+      workingDirectory,
+      roleFile,
+      createdAt: session.createdAt,
+      lastActivity: session.lastActivity,
+    })
+      .then((p) => {
+        session!.persist = p;
+      })
+      .catch((err) => {
+        logger.app.error(
+          "Failed to open persistence for session {sessionId}: {msg}",
+          { sessionId: session!.id, msg: String(err) },
+        );
+      });
+
     // Start the SDK session in the background
-    this.startSession(session, workingDirectory, contextContent);
+    this.startSession(session, workingDirectory, contextContent, resumeSessionId);
 
     const info = this.toSessionInfo(session);
 
@@ -245,6 +309,7 @@ export class SessionManager {
     session: Session,
     workingDirectory: string,
     contextContent?: string,
+    resumeSessionId?: string,
   ): Promise<void> {
     try {
       logger.app.info("Starting warm session for {sessionId}...", {
@@ -287,6 +352,11 @@ export class SessionManager {
       // on the host. See backend/cli/validation.ts for how this.cliPath is
       // discovered. If a future Anthropic installer regresses to a JS-based
       // wrapper we'll need to fall back to spawnClaudeCodeProcess.
+      // `resume: <claudeSessionId>` makes the CLI load that session's full
+      // JSONL transcript as conversation history — matches `claude --resume`
+      // behaviour. If the transcript ends on an unanswered user turn, Claude
+      // will answer it on attach; that's the same as the terminal and the
+      // user explicitly signed off on this (2026-04-24).
       const warmSession = await startup({
         options: {
           cwd: workingDirectory,
@@ -294,6 +364,7 @@ export class SessionManager {
           permissionMode: (fm.permissionMode as "bypassPermissions" | undefined) || "bypassPermissions" as const,
           allowDangerouslySkipPermissions: true,
           mcpServers,
+          ...(resumeSessionId ? { resume: resumeSessionId } : {}),
           ...(fm.tools ? { allowedTools: fm.tools } : {}),
           ...(fm.disallowedTools ? { disallowedTools: fm.disallowedTools } : {}),
           ...(fm.model ? { model: fm.model } : {}),
@@ -360,6 +431,9 @@ export class SessionManager {
             session.slashCommands =
               (sdkMessage as { slash_commands: string[] }).slash_commands || [];
           }
+          session.persist?.updateMeta({
+            claudeSessionId: session.sessionId ?? undefined,
+          });
           const initCtx = this.emitContext(session);
           const initFrame = session.emitter.emitSessionInitFromManager(
             {
@@ -411,35 +485,48 @@ export class SessionManager {
           const content = sdkMessage.message.content;
           if (Array.isArray(content)) {
             for (const item of content) {
-              if (
-                item.type === "tool_use" &&
-                (item.name === "Write" || item.name === "Edit")
-              ) {
-                const input = item.input as Record<string, unknown>;
-                const filePath = (input.file_path as string) || "";
-                if (filePath) {
-                  const fdCtx = this.emitContext(session);
-                  const fdFrame = session.emitter.emitFileDelivery(
-                    {
-                      path: filePath,
-                      filename: basename(filePath),
-                      action: item.name === "Write" ? "write" : "edit",
-                      oldString:
-                        item.name === "Edit" &&
-                        typeof input.old_string === "string"
-                          ? input.old_string
-                          : undefined,
-                      newString:
-                        item.name === "Edit" &&
-                        typeof input.new_string === "string"
-                          ? input.new_string
-                          : undefined,
-                      toolCallId: (item as { id?: string }).id,
-                    },
-                    fdCtx,
-                  );
-                  this.broadcastFrame(session, fdFrame);
-                }
+              if (item.type !== "tool_use") continue;
+              const input = item.input as Record<string, unknown>;
+              const rawPath =
+                (typeof input.file_path === "string" && input.file_path) ||
+                (typeof input.notebook_path === "string" &&
+                  input.notebook_path) ||
+                "";
+              if (!rawPath) continue;
+              const filePath = isAbsolute(rawPath)
+                ? rawPath
+                : resolvePath(session.workingDirectory, rawPath);
+
+              const isWrite =
+                item.name === "Write" ||
+                item.name === "Edit" ||
+                item.name === "MultiEdit" ||
+                item.name === "NotebookEdit";
+              if (isWrite) {
+                const fdCtx = this.emitContext(session);
+                const fdFrame = session.emitter.emitFileDelivery(
+                  {
+                    path: filePath,
+                    filename: basename(filePath),
+                    action: item.name === "Write" ? "write" : "edit",
+                    oldString:
+                      item.name === "Edit" &&
+                      typeof input.old_string === "string"
+                        ? input.old_string
+                        : undefined,
+                    newString:
+                      item.name === "Edit" &&
+                      typeof input.new_string === "string"
+                        ? input.new_string
+                        : undefined,
+                    toolCallId: (item as { id?: string }).id,
+                  },
+                  fdCtx,
+                );
+                this.broadcastFrame(session, fdFrame);
+                this.touchContextIfInsideProject(session, filePath, "write");
+              } else if (item.name === "Read") {
+                this.touchContextIfInsideProject(session, filePath, "read");
               }
             }
           }
@@ -515,6 +602,14 @@ export class SessionManager {
         if (IMAGE_EXTENSIONS.has(ext)) {
           try {
             const data = await fs.readFile(filePath);
+            // Tell Claude where the image actually landed on disk. Without
+            // this, the agent only sees inline base64 and truthfully has
+            // no way to answer "where is the file?" — it can't infer the
+            // staging path from the bytes alone.
+            contentBlocks.push({
+              type: "text",
+              text: `[Attached image saved at: ${filePath}]`,
+            });
             contentBlocks.push({
               type: "image",
               source: {
@@ -527,13 +622,28 @@ export class SessionManager {
             textParts.push(`[Could not read image: ${basename(filePath)}]`);
           }
         } else {
+          // Non-image attachments: always surface the on-disk path so the
+          // agent can open the file with Read instead of saying "no such
+          // file". For small text files inline the content as a convenience;
+          // for anything larger skip the inline and let the agent chunk via
+          // Read — avoids blowing up the prompt with multi-MB HAR/log dumps.
+          const INLINE_LIMIT_BYTES = 256 * 1024;
           try {
-            const text = await fs.readFile(filePath, "utf8");
-            textParts.push(
-              `[Attached file: ${basename(filePath)}]\n\`\`\`\n${text}\n\`\`\``,
-            );
+            const stat = await fs.stat(filePath);
+            if (stat.size <= INLINE_LIMIT_BYTES) {
+              const text = await fs.readFile(filePath, "utf8");
+              textParts.push(
+                `[Attached file saved at: ${filePath}]\n\`\`\`\n${text}\n\`\`\``,
+              );
+            } else {
+              textParts.push(
+                `[Attached file saved at: ${filePath} (${stat.size} bytes) — use Read to open it]`,
+              );
+            }
           } catch {
-            textParts.push(`[Could not read file: ${basename(filePath)}]`);
+            textParts.push(
+              `[Attached file saved at: ${filePath} — could not stat; try Read]`,
+            );
           }
         }
       }
@@ -609,21 +719,53 @@ export class SessionManager {
    *
    * `lastCursor === 0` means "I have nothing — replay everything you have".
    */
-  resumeFromCursor(
+  async resumeFromCursor(
     userId: string,
     workingDirectory: string,
     roleFile: string,
     consumer: SessionConsumer,
     lastCursor: number,
-  ): { resumed: true; replayedFrames: number } | { resumed: false } {
+  ): Promise<
+    { resumed: true; replayedFrames: number } | { resumed: false }
+  > {
     const key = this.sessionKey(userId, workingDirectory, roleFile);
     const session = this.sessions.get(key);
 
     if (!session) {
-      // No live session — caller should send session_start to create a new one
       return { resumed: false };
     }
 
+    // Use the on-disk transcript as source of truth. The in-memory ring
+    // buffer is capped (4 MiB / 20K frames) and loses history in long
+    // sessions; disk has everything we've ever emitted for this tuple.
+    // Flush pending async writes so the tail is visible to the read.
+    if (session.persist) {
+      await session.persist.flush();
+      const lines = await readFramesAfter(session.persist.dir, lastCursor);
+      let replayed = 0;
+      for (const line of lines) {
+        try {
+          consumer.send(line);
+          replayed++;
+        } catch {
+          return { resumed: false };
+        }
+      }
+      session.consumers.set(consumer.id, consumer);
+      session.lastActivity = Date.now();
+      logger.app.info(
+        "Consumer {consumerId} resumed session {sessionId} from cursor {lastCursor} ({replayed} frames from disk)",
+        {
+          consumerId: consumer.id,
+          sessionId: session.id,
+          lastCursor,
+          replayed,
+        },
+      );
+      return { resumed: true, replayedFrames: replayed };
+    }
+
+    // No persistence yet (writer still opening) — fall back to memory buffer.
     if (isCursorLost(session.buffer, lastCursor)) {
       const oldest = session.buffer.frames[0];
       try {
@@ -641,7 +783,6 @@ export class SessionManager {
       return { resumed: false };
     }
 
-    // Replay missed frames
     const toReplay = framesAfter(session.buffer, lastCursor);
     let replayed = 0;
     for (const frame of toReplay) {
@@ -649,26 +790,54 @@ export class SessionManager {
         consumer.send(frame.data);
         replayed++;
       } catch {
-        // Consumer dead mid-replay — bail
         return { resumed: false };
       }
     }
-
-    // Attach for live streaming
     session.consumers.set(consumer.id, consumer);
     session.lastActivity = Date.now();
+    return { resumed: true, replayedFrames: replayed };
+  }
+
+  /**
+   * Cold rehydrate: no live in-memory session exists for this tuple, but a
+   * persisted transcript may. Stream history (seq > lastCursor) to the
+   * consumer without attaching them anywhere — the caller should tell the
+   * client this is historical (they need to send `session_start` to chat).
+   *
+   * Returns `{ rehydrated: true, replayedFrames }` if any frames were
+   * streamed, otherwise `{ rehydrated: false }`.
+   */
+  async rehydrateFromDisk(
+    userId: string,
+    workingDirectory: string,
+    roleFile: string,
+    consumer: SessionConsumer,
+    lastCursor: number,
+  ): Promise<
+    { rehydrated: true; replayedFrames: number } | { rehydrated: false }
+  > {
+    const dir = sessionDirFor(userId, workingDirectory, roleFile);
+    const meta = await readSessionMeta(dir);
+    if (!meta) return { rehydrated: false };
+
+    const lines = await readFramesAfter(dir, lastCursor);
+    if (lines.length === 0) return { rehydrated: false };
+
+    let replayed = 0;
+    for (const line of lines) {
+      try {
+        consumer.send(line);
+        replayed++;
+      } catch {
+        return { rehydrated: false };
+      }
+    }
 
     logger.app.info(
-      "Consumer {consumerId} resumed session {sessionId} from cursor {lastCursor} ({replayed} frames replayed)",
-      {
-        consumerId: consumer.id,
-        sessionId: session.id,
-        lastCursor,
-        replayed,
-      },
+      "Consumer {consumerId} cold-rehydrated from disk ({replayed} frames, cursor > {lastCursor})",
+      { consumerId: consumer.id, replayed, lastCursor },
     );
-
-    return { resumed: true, replayedFrames: replayed };
+    return { rehydrated: true, replayedFrames: replayed };
   }
 
   /**
@@ -750,6 +919,13 @@ export class SessionManager {
     // a replacement session. (Not strictly necessary since we discard the
     // whole Session object, but matches the explicit lifecycle in tests.)
     session.emitter.reset();
+
+    // Flush pending transcript writes. Fire-and-forget: destroySession is
+    // sync and callers don't await it; the queued chain inside persist will
+    // resolve on its own.
+    if (session.persist) {
+      session.persist.close().catch(() => {});
+    }
 
     this.sessions.delete(key);
 
@@ -965,11 +1141,52 @@ export class SessionManager {
    * as-is with its `seq` field — clients track the highest seq seen and
    * pass it back on resume as `lastCursor`.
    */
+  /**
+   * Record a file read/write in the persistent context-file index and emit a
+   * live `context_file` frame so every attached client updates its Context
+   * tab in real time. Paths outside the session's workingDirectory are
+   * ignored (e.g. Claude reading its own ~/.claude/ files).
+   */
+  private touchContextIfInsideProject(
+    session: Session,
+    filePath: string,
+    action: "read" | "write",
+  ): void {
+    if (!isInsideWorkingDirectory(filePath, session.workingDirectory)) return;
+
+    const filename = basename(filePath);
+    const dir = sessionDirFor(
+      session.userId,
+      session.workingDirectory,
+      session.roleFile,
+    );
+
+    touchContextFile(dir, filePath, action, filename)
+      .then((entry) => {
+        const ctx = this.emitContext(session);
+        const frame = session.emitter.emitContextFile(
+          { ...entry, action },
+          ctx,
+        );
+        this.broadcastFrame(session, frame);
+      })
+      .catch((err) => {
+        logger.app.error(
+          "Context file update failed: {msg}",
+          { msg: String(err) },
+        );
+      });
+  }
+
   private broadcastFrame(session: Session, frame: Frame): void {
     const data = JSON.stringify(frame);
     const bytes = Buffer.byteLength(data, "utf8");
 
     pushFrame(session.buffer, { cursor: frame.seq, data, bytes });
+
+    // Persist to on-disk transcript (if the writer has opened; early frames
+    // that race the open are rare — init waits on the SDK spawn).
+    session.persist?.append(data);
 
     // Send to live consumers
     for (const consumer of session.consumers.values()) {

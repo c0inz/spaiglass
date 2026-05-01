@@ -151,6 +151,7 @@ async function handleSessionStart(
   const roleFile = msg.roleFile as string;
   const workingDirectory = msg.workingDirectory as string;
   const contextContent = msg.contextContent as string | undefined;
+  const resumeSessionId = msg.resumeSessionId as string | undefined;
 
   if (!roleFile || !workingDirectory) {
     ws.send(
@@ -189,6 +190,7 @@ async function handleSessionStart(
     roleFile,
     consumer,
     contextContent,
+    resumeSessionId,
   );
 
   // Session info is also sent by the manager when it receives the init message,
@@ -311,7 +313,7 @@ async function handleResume(
     },
   };
 
-  const result = sessionManager.resumeFromCursor(
+  const result = await sessionManager.resumeFromCursor(
     state.userId,
     workingDirectory,
     roleFile,
@@ -320,8 +322,30 @@ async function handleResume(
   );
 
   if (!result.resumed) {
-    // Either no session, or buffer aged out (manager already sent resume_lost).
-    // Tell the client so it knows to call session_start next.
+    // No live in-memory session. Try streaming the persisted transcript
+    // from disk so the user's scrollback survives a hard refresh or
+    // backend restart. The client will still need to call session_start
+    // before it can send a new message (signaled by `stale: true`).
+    const disk = await sessionManager.rehydrateFromDisk(
+      state.userId,
+      workingDirectory,
+      roleFile,
+      consumer,
+      lastCursor,
+    );
+
+    if (disk.rehydrated) {
+      ws.send(
+        JSON.stringify({
+          type: "resume_ack",
+          replayedFrames: disk.replayedFrames,
+          stale: true,
+        }),
+      );
+      return;
+    }
+
+    // Nothing in memory and nothing on disk — tell the client to session_start.
     ws.send(
       JSON.stringify({
         type: "resume_failed",
@@ -354,6 +378,15 @@ async function handleMessage(
 
   const content = (msg.content as string) || "";
   const attachments = (msg.attachments as string[]) || undefined;
+
+  logger.app.info(
+    "WS message received: consumer={consumerId} len={len} attachments={count}",
+    {
+      consumerId: state.consumerId,
+      len: content.length,
+      count: attachments?.length || 0,
+    },
+  );
 
   await sessionManager.sendMessage(
     state.userId,

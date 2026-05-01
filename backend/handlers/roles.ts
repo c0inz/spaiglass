@@ -1,15 +1,22 @@
 /**
  * Roles & Plugins API handlers.
  *
- * GET  /api/plugins?path=<project>          — installed plugins + per-role status
- * GET  /api/roles?path=<project>            — all roles with plugin configs
- * POST /api/roles?path=<project>            — create a new role
- * PUT  /api/roles/:name?path=<project>      — update a role's plugin config
+ * GET    /api/plugins?path=<project>         — installed plugins + per-role status
+ * GET    /api/roles?path=<project>           — all roles with plugin configs
+ * POST   /api/roles?path=<project>           — create a new role
+ * PUT    /api/roles/:name?path=<project>     — update a role's plugin config
+ * DELETE /api/roles/:name?path=<project>     — remove a role file
  */
 
 import type { Context } from "hono";
-import { readdir, readFile, writeFile, mkdir } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import {
+  readdir,
+  readFile,
+  writeFile,
+  mkdir,
+  unlink,
+} from "node:fs/promises";
+import { existsSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { parseAgentFile, type AgentFrontmatter } from "../utils/agent-config.ts";
@@ -249,6 +256,14 @@ export async function handleCreateRole(c: Context) {
 
   const filename = `${safeName}.md`;
   const resolved = resolve(projectPath);
+
+  if (!existsSync(resolved) || !statSync(resolved).isDirectory()) {
+    return c.json(
+      { error: `Project directory does not exist: ${resolved}` },
+      400,
+    );
+  }
+
   const agentsDir = join(resolved, ".claude", "agents");
   const rolePath = join(agentsDir, filename);
 
@@ -281,4 +296,43 @@ export async function handleCreateRole(c: Context) {
       preview: body.description.slice(0, 200),
     },
   });
+}
+
+/**
+ * DELETE /api/roles/:name?path=<project>
+ * Remove a role file. Supports the "delete bad record + re-add correctly"
+ * fix path when integrity checks flag a malformed or orphan role.
+ *
+ * :name may be bare ("developer") or include the extension ("developer.md").
+ * Searches both .claude/agents/ (native) and agents/ (legacy); removes the
+ * first match found.
+ */
+export async function handleDeleteRole(c: Context) {
+  const projectPath = c.req.query("path");
+  const roleName = c.req.param("name");
+  if (!projectPath) return c.json({ error: "path parameter required" }, 400);
+  if (!roleName) return c.json({ error: "role name required" }, 400);
+
+  const resolved = resolve(projectPath);
+  const filename = roleName.endsWith(".md") ? roleName : `${roleName}.md`;
+
+  // Reject path traversal — filename must stay within the agents directory.
+  if (filename.includes("/") || filename.includes("\\") || filename.includes("..")) {
+    return c.json({ error: "invalid role name" }, 400);
+  }
+
+  const nativePath = join(resolved, ".claude", "agents", filename);
+  const legacyPath = join(resolved, "agents", filename);
+  const rolePath = existsSync(nativePath)
+    ? nativePath
+    : existsSync(legacyPath)
+      ? legacyPath
+      : null;
+
+  if (!rolePath) {
+    return c.json({ error: `Role file not found: ${filename}` }, 404);
+  }
+
+  await unlink(rolePath);
+  return c.json({ ok: true, removed: rolePath });
 }

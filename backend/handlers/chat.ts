@@ -105,14 +105,32 @@ async function processAttachments(
         textParts.push(`[Could not read image: ${basename(filePath)}]`);
       }
     } else {
-      // Text/code file — inline into prompt string
+      // Non-image attachments: always surface the on-disk path so the agent
+      // can open the file with Read. Inline the content only for small text
+      // files; larger uploads (HAR, logs, etc.) go as a path reference to
+      // keep the prompt from ballooning.
+      const INLINE_LIMIT_BYTES = 256 * 1024;
       try {
-        const text = await fs.readFile(filePath, "utf8");
-        const name = basename(filePath);
-        textParts.push(`[Attached file: ${name}]\n\`\`\`\n${text}\n\`\`\``);
-        logger.chat.info("Text file attached: {path}", { path: filePath });
+        const stat = await fs.stat(filePath);
+        if (stat.size <= INLINE_LIMIT_BYTES) {
+          const text = await fs.readFile(filePath, "utf8");
+          textParts.push(
+            `[Attached file saved at: ${filePath}]\n\`\`\`\n${text}\n\`\`\``,
+          );
+          logger.chat.info("Text file attached: {path}", { path: filePath });
+        } else {
+          textParts.push(
+            `[Attached file saved at: ${filePath} (${stat.size} bytes) — use Read to open it]`,
+          );
+          logger.chat.info(
+            "Large file attached by path only: {path} ({size} bytes)",
+            { path: filePath, size: stat.size },
+          );
+        }
       } catch {
-        textParts.push(`[Could not read file: ${basename(filePath)}]`);
+        textParts.push(
+          `[Attached file saved at: ${filePath} — could not stat; try Read]`,
+        );
       }
     }
   }

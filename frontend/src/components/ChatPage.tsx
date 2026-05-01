@@ -14,13 +14,14 @@ import { usePermissionMode } from "../hooks/chat/usePermissionMode";
 import { useAutoHistoryLoader } from "../hooks/useHistoryLoader";
 import { useWebSocketSession } from "../hooks/useWebSocketSession";
 import { SettingsButton } from "./SettingsButton";
+import { HelpButton } from "./HelpButton";
+import { Brand } from "./Brand";
 import { SettingsModal } from "./SettingsModal";
 import { ChatInput } from "./chat/ChatInput";
 import { FrameChatView } from "../terminal/frames/FrameChatView";
 import { FileSidebar } from "./FileSidebar";
 import { FileEditor } from "./FileEditor";
 import { FileMention } from "./FileMention";
-import { NewSessionDialog } from "./NewSessionDialog";
 import { SessionPickerModal } from "./SessionPickerModal";
 import { StaleContextBanner } from "./StaleContextBanner";
 import { ArchitectureViewer } from "./ArchitectureViewer";
@@ -45,7 +46,14 @@ export function ChatPage() {
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [sessionFocusBump, setSessionFocusBump] = useState(0);
-  const [showSidebar, setShowSidebar] = useState(false);
+  // File tree open by default on desktop (lots of horizontal real estate),
+  // closed by default on mobile (one screen — chat needs to be the landing
+  // surface). Lazy initializer reads viewport once on mount; resize events
+  // don't flip this back, only the user picking a tab does.
+  const [showSidebar, setShowSidebar] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    return window.matchMedia("(min-width: 768px)").matches;
+  });
   const [editingFile, setEditingFile] = useState<{
     path: string;
     name: string;
@@ -60,8 +68,8 @@ export function ChatPage() {
     path: string;
     content?: string;
   } | null>(null);
-  const [showContextPicker, setShowContextPicker] = useState(false);
   const [contextChecked, setContextChecked] = useState(false);
+  const [autoResumeChecked, setAutoResumeChecked] = useState(false);
   const [mentionState, setMentionState] = useState<{
     query: string;
     position: { top: number; left: number };
@@ -105,11 +113,21 @@ export function ChatPage() {
   const [projectDisplayNames, setProjectDisplayNames] = useState<
     Record<string, string>
   >({});
+  // Per-directory browser tab titles. Falls back to Display Name → basename.
+  const [projectTabNames, setProjectTabNames] = useState<
+    Record<string, string>
+  >({});
   useEffect(() => {
     fetch("/api/settings/project-display-names")
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (data?.displayNames) setProjectDisplayNames(data.displayNames);
+      })
+      .catch(() => {});
+    fetch("/api/settings/project-directory-tab-names")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.tabNames) setProjectTabNames(data.tabNames);
       })
       .catch(() => {});
   }, []);
@@ -130,6 +148,25 @@ export function ChatPage() {
     // Normalize Windows paths (remove leading slash from /C:/... format)
     return normalizeWindowsPath(decodedPath);
   })();
+
+  // Per-directory browser tab title. Precedence: Tab Name > Display Name >
+  // directory basename. Runs whenever the resolved directory or the
+  // fetched override maps change.
+  useEffect(() => {
+    if (!workingDirectory) return;
+    const base =
+      workingDirectory
+        .replace(/\/+$/, "")
+        .split(/[\\/]/)
+        .filter(Boolean)
+        .pop() || workingDirectory;
+    const tab =
+      projectTabNames[base] ||
+      projectDisplayNames[base] ||
+      getLocalDisplayName(base) ||
+      base;
+    document.title = tab;
+  }, [workingDirectory, projectTabNames, projectDisplayNames]);
 
   // File change polling — only `setExternallyModified` is read here; the
   // other return values are intentionally unused (the polling fires the
@@ -213,30 +250,33 @@ export function ChatPage() {
     return `/vm/${sg.slug}/${sg.segment}/`;
   })();
 
-  // Record this agent as recently used
+  // Record this agent as recently used. For role-less directory URLs the
+  // label is just the directory name — the legacy "<project>-<role>" shape
+  // was appending "-default" for role-less entries which was misleading.
   useEffect(() => {
     const sg = (window as Window & { __SG?: { slug?: string; segment?: string; project?: string; role?: string } }).__SG;
     if (!sg?.slug || !sg?.segment || !sg?.project) return;
+    const label = sg.role ? `${sg.project}-${sg.role}` : sg.project;
     fleet.recordAgent({
       url: `/vm/${sg.slug}/${sg.segment}/`,
-      label: `${sg.project}-${sg.role || "default"}`,
+      label,
       connectorName: sg.slug,
       project: sg.project,
-      role: sg.role || "default",
+      role: sg.role || "",
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Show context picker for new sessions — skip if role is already set via URL
+  // New-session auto-open deprecated 2026-04-21. Policy is now:
+  //   - session exists for (workingDirectory, roleFile) → auto-resume (below)
+  //   - no session → start fresh immediately, no modal
+  // Users pick/switch sessions explicitly via the Session Picker button in
+  // the header. Mark contextChecked once auto-resume settles so downstream
+  // effects that gate on it (permission broker, WS send) unblock.
   useEffect(() => {
-    if (
-      !sessionId &&
-      workingDirectory &&
-      !contextChecked &&
-      !roleFile
-    ) {
-      setShowContextPicker(true);
+    if (autoResumeChecked && !contextChecked) {
+      setContextChecked(true);
     }
-  }, [sessionId, workingDirectory, contextChecked, roleFile]);
+  }, [autoResumeChecked, contextChecked]);
 
   // Auto-resume last session on page load (no sessionId in URL).
   // ?new=1 skips resume and starts a fresh session.
@@ -246,9 +286,13 @@ export function ChatPage() {
       const params = new URLSearchParams(searchParams);
       params.delete("new");
       navigate({ search: params.toString() }, { replace: true });
+      setAutoResumeChecked(true);
       return; // skip resume — start fresh
     }
-    if (sessionId || !workingDirectory) return;
+    if (sessionId || !workingDirectory) {
+      setAutoResumeChecked(true);
+      return;
+    }
     const lastSessionUrl = new URL("/api/session/last", window.location.origin);
     lastSessionUrl.searchParams.set("projectPath", workingDirectory);
     if (roleFile) {
@@ -266,7 +310,8 @@ export function ChatPage() {
           navigate({ search: params.toString() }, { replace: true });
         }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setAutoResumeChecked(true));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- WebSocket session hook ---
@@ -408,7 +453,37 @@ export function ChatPage() {
   // transient status line) come through their own callbacks.
   useEffect(() => {
     ws.setCallbacks({
-      onFrame: frameChat.addFrame,
+      onFrame: (f: unknown) => {
+        frameChat.addFrame(f as never);
+        // Intercept context_file frames to keep the Context tab's live list
+        // in sync without polling the REST endpoint.
+        if (
+          f &&
+          typeof f === "object" &&
+          (f as { type?: string }).type === "context_file"
+        ) {
+          const cf = f as {
+            path: string;
+            filename: string;
+            lastTouched: number;
+          };
+          setContextFilesList((prev) => {
+            const next = prev.filter((e) => e.path !== cf.path);
+            next.push({
+              path: cf.path,
+              name: cf.filename,
+              touchedAt: cf.lastTouched,
+            });
+            return next;
+          });
+          setContextFiles((prev) => {
+            if (prev.has(cf.path)) return prev;
+            const s = new Set(prev);
+            s.add(cf.path);
+            return s;
+          });
+        }
+      },
       onSessionId: (sid: string) => {
         setCurrentSessionId(sid);
         sessionStatsRef.current = { ...sessionStatsRef.current, sessionId: sid };
@@ -432,12 +507,56 @@ export function ChatPage() {
     updateStatus,
   ]);
 
-  // Start/join session once WS is connected and we have roleFile + workingDirectory
+  // Hydrate the Context tab's list from the persistent index so it survives
+  // hard refresh. Runs once when (workingDirectory, roleFile) are known.
+  useEffect(() => {
+    if (!workingDirectory || !roleFile) return;
+    const url =
+      `/api/session/context-files?workingDirectory=${encodeURIComponent(workingDirectory)}` +
+      `&roleFile=${encodeURIComponent(roleFile)}`;
+    fetch(url)
+      .then((r) => (r.ok ? r.json() : { files: [] }))
+      .then((data: { files?: Array<{ path: string; filename: string; lastTouched: number }> }) => {
+        const files = data.files ?? [];
+        if (files.length === 0) return;
+        setContextFilesList((prev) => {
+          const seen = new Set(prev.map((e) => e.path));
+          const merged = [...prev];
+          for (const f of files) {
+            if (!seen.has(f.path)) {
+              merged.push({
+                path: f.path,
+                name: f.filename,
+                touchedAt: f.lastTouched,
+              });
+            }
+          }
+          return merged;
+        });
+        setContextFiles((prev) => {
+          const s = new Set(prev);
+          for (const f of files) s.add(f.path);
+          return s;
+        });
+      })
+      .catch(() => {});
+  }, [workingDirectory, roleFile]);
+
+  // Start/join session once WS is connected and we have roleFile + workingDirectory.
+  // If the URL carries a sessionId (picked from the Session Picker, or auto-resumed
+  // by /api/session/last), pass it as resumeSessionId so the backend spawns the
+  // Claude CLI with `resume: <id>` — matches `claude --resume` behaviour: full
+  // transcript becomes context, model already knows the conversation.
   useEffect(() => {
     if (!ws.connected || !roleFile || !workingDirectory) return;
     if (!contextChecked) return;
     if (ws.attached) return; // already in a session
-    ws.startSession(roleFile, workingDirectory, activeContext?.content);
+    ws.startSession(
+      roleFile,
+      workingDirectory,
+      activeContext?.content,
+      sessionId || undefined,
+    );
   }, [
     ws.connected,
     ws.attached,
@@ -445,6 +564,7 @@ export function ChatPage() {
     workingDirectory,
     contextChecked,
     activeContext?.content,
+    sessionId,
     ws.startSession,
   ]);
 
@@ -825,22 +945,20 @@ export function ChatPage() {
   );
 
   return (
-    <div className="h-screen flex flex-col bg-slate-50 dark:bg-slate-900 transition-colors duration-300 overflow-hidden">
+    <div className="h-[100dvh] flex flex-col bg-slate-50 dark:bg-slate-900 transition-colors duration-300 overflow-hidden">
       {/* Header — always at top. The back-arrow chevrons that used to sit
           here (one for history view, one for loaded prior conversations) have
           been removed along with the prior-sessions list page. */}
       <div className="flex items-center justify-between px-4 py-3 flex-shrink-0 border-b border-slate-200 dark:border-slate-700 min-w-0 gap-2">
         <div className="flex items-center gap-4 min-w-0 flex-1">
           <div className="min-w-0 flex-1">
-            <div className="flex items-center min-w-0">
-              <span className="text-slate-800 dark:text-slate-100 text-lg sm:text-2xl font-bold tracking-tight px-1 -mx-1 flex-shrink-0">
-                SpAIglass
-              </span>
+            <div className="flex items-center min-w-0 gap-2">
+              <Brand className="text-slate-800 dark:text-slate-100 text-lg sm:text-2xl font-bold tracking-tight px-1 -mx-1 flex-shrink-0" />
+              <HelpButton />
               {(() => {
-                // Big-font project/role display. Project = basename of the
-                // working directory; role = activeContext.name when loaded,
-                // otherwise a humanized fallback from the raw roleFile (e.g.
-                // "dev-ops.md" → "dev ops"). Path lives in the subline below.
+                // Big-font directory display. Role is no longer shown here —
+                // in the Server+Directory model roles are optional/secondary.
+                // Directory basename + display-name overlay, that's it.
                 const projectBase = workingDirectory
                   ? workingDirectory
                       .replace(/\/+$/, "")
@@ -848,32 +966,15 @@ export function ChatPage() {
                       .filter(Boolean)
                       .pop() || workingDirectory
                   : null;
-                const roleLabel =
-                  activeContext?.name ||
-                  (roleFile
-                    ? roleFile.replace(/\.md$/, "").replace(/[-_]/g, " ")
-                    : null);
-                if (!projectBase && !roleLabel) return null;
+                if (!projectBase) return null;
                 return (
                   <span className="ml-3 flex items-center min-w-0 text-lg sm:text-2xl font-bold tracking-tight truncate">
-                    {projectBase && (
-                      <span
-                        className="text-blue-500 dark:text-blue-400 truncate"
-                        title={workingDirectory || projectBase}
-                      >
-                        {projectDisplayNames[projectBase] || getLocalDisplayName(projectBase) || projectBase}
-                      </span>
-                    )}
-                    {projectBase && roleLabel && (
-                      <span className="mx-2 text-slate-400 flex-shrink-0">
-                        /
-                      </span>
-                    )}
-                    {roleLabel && (
-                      <span className="text-emerald-500 dark:text-emerald-400 truncate">
-                        {roleLabel}
-                      </span>
-                    )}
+                    <span
+                      className="text-blue-500 dark:text-blue-400 truncate"
+                      title={workingDirectory || projectBase}
+                    >
+                      {projectDisplayNames[projectBase] || getLocalDisplayName(projectBase) || projectBase}
+                    </span>
                   </span>
                 );
               })()}
@@ -907,6 +1008,7 @@ export function ChatPage() {
           <AgentSwitcher
             recentAgents={fleet.recentAgents}
             roles={fleet.roles}
+            directories={fleet.directories}
             connectors={fleet.connectors}
             loading={fleet.loading}
             isRelay={fleet.isRelay}
@@ -978,6 +1080,12 @@ export function ChatPage() {
                 sessionStats={sessionStats}
                 slashCommands={slashCommands}
                 activeRole={roleFile || undefined}
+                selectedPath={editingFile?.path || null}
+                queueWorkingDirectory={workingDirectory}
+                queueRoleFile={roleFile || undefined}
+                onInjectQueueText={(text) =>
+                  setInput((prev) => (prev ? `${prev}\n${text}` : text))
+                }
               />
             </div>
           )}
@@ -987,6 +1095,7 @@ export function ChatPage() {
           <AgentPickerFullPage
             recentAgents={fleet.recentAgents}
             roles={fleet.roles}
+            directories={fleet.directories}
             connectors={fleet.connectors}
             loading={fleet.loading}
           />
@@ -997,11 +1106,19 @@ export function ChatPage() {
         {showArchViewer &&
         workingDirectory &&
         (!isMobile || mobileTab === "arch") ? (
-          <div className="flex-1 min-w-0 overflow-hidden border-r border-slate-200 dark:border-slate-700">
+          <div
+            className={`${
+              isMobile ? "flex-1" : "flex-1 basis-0"
+            } min-w-0 overflow-hidden border-r border-slate-200 dark:border-slate-700`}
+          >
             <ArchitectureViewer projectPath={workingDirectory} />
           </div>
         ) : editingFile && (!isMobile || mobileTab === "editor") ? (
-          <div className="flex-1 min-w-0 overflow-hidden border-r border-slate-200 dark:border-slate-700">
+          <div
+            className={`${
+              isMobile ? "flex-1" : "flex-1 basis-0"
+            } min-w-0 overflow-hidden border-r border-slate-200 dark:border-slate-700`}
+          >
             <FileEditor
               filePath={editingFile.path}
               fileName={editingFile.name}
@@ -1010,16 +1127,16 @@ export function ChatPage() {
           </div>
         ) : null}
 
-        {/* Chat panel — hidden on mobile when another tab is active */}
+        {/* Chat panel — hidden on mobile when another tab is active.
+            On desktop when the editor/arch viewer is open, chat and editor
+            each claim half of the remaining row (equal flex-1 basis-0). */}
         <div
           className={`${
             isMobile
               ? mobileTab === "chat"
                 ? "flex-1"
                 : "hidden"
-              : editingFile || showArchViewer
-                ? "w-[450px] flex-shrink-0"
-                : "flex-1"
+              : "flex-1 basis-0"
           } min-w-0 flex flex-col overflow-hidden`}
         >
           <div className="flex-1 flex flex-col overflow-hidden p-3 sm:p-4">
@@ -1185,39 +1302,6 @@ export function ChatPage() {
         currentSessionId={currentSessionId}
       />
 
-      {/* Context Picker Dialog */}
-      {showContextPicker && workingDirectory && (
-        <NewSessionDialog
-          projectPath={workingDirectory}
-          onSelect={async (ctx) => {
-            setShowContextPicker(false);
-            setContextChecked(true);
-            if (ctx) {
-              // Load full content
-              try {
-                const res = await fetch(
-                  `/api/files/read?path=${encodeURIComponent(ctx.path)}`,
-                );
-                if (res.ok) {
-                  const data = await res.json();
-                  setActiveContext({ ...ctx, content: data.content });
-                  setContextFiles(new Set([ctx.path]));
-                } else {
-                  setActiveContext(ctx);
-                  setContextFiles(new Set([ctx.path]));
-                }
-              } catch {
-                setActiveContext(ctx);
-                setContextFiles(new Set([ctx.path]));
-              }
-            }
-          }}
-          onCancel={() => {
-            setShowContextPicker(false);
-            setContextChecked(true);
-          }}
-        />
-      )}
     </div>
   );
 }

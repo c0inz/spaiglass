@@ -36,6 +36,7 @@ import type {
   InteractivePromptFrame,
   InteractiveResolvedFrame,
   ErrorFrame,
+  SystemNoticeFrame,
   Json,
 } from "../../../../shared/frames";
 
@@ -95,6 +96,20 @@ export interface ErrorRow extends BaseRow {
   frame: ErrorFrame;
 }
 
+export interface RecapRow extends BaseRow {
+  kind: "recap";
+  turns: number | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  costUsd: number | null;
+  durationMs: number | null;
+}
+
+export interface SystemNoticeRow extends BaseRow {
+  kind: "system_notice";
+  frame: SystemNoticeFrame;
+}
+
 export type Row =
   | UserRow
   | AssistantRow
@@ -102,7 +117,9 @@ export type Row =
   | PlanRow
   | TodoRow
   | InteractiveRow
-  | ErrorRow;
+  | ErrorRow
+  | RecapRow
+  | SystemNoticeRow;
 
 // ---------------------------------------------------------------------------
 // Tool call state (embedded in AssistantRow rendering)
@@ -267,9 +284,37 @@ export function applyFrame(state: FrameState, frame: Frame): FrameState {
         },
       };
 
-    case "session_meta":
+    case "session_meta": {
+      // Only inject a recap row when the preceding assistant turn was long
+      // enough to push the user past ~2 pages of scrolling (~2000 chars).
+      const RECAP_CHAR_THRESHOLD = 2000;
+      let rows = state.rows;
+      const lastAssistant = [...state.rows].reverse().find(
+        (r): r is AssistantRow => r.kind === "assistant",
+      );
+      if (lastAssistant) {
+        let charCount = 0;
+        for (const block of lastAssistant.content) {
+          if (block.type === "text") charCount += block.text.length;
+        }
+        if (charCount >= RECAP_CHAR_THRESHOLD) {
+          const recap: RecapRow = {
+            key: `recap-${frame.id}`,
+            seq: lastSeq,
+            ts: frame.ts,
+            kind: "recap",
+            turns: frame.turns ?? state.session.turns,
+            inputTokens: frame.inputTokens ?? state.session.inputTokens,
+            outputTokens: frame.outputTokens ?? state.session.outputTokens,
+            costUsd: frame.costUsd ?? state.session.costUsd,
+            durationMs: frame.durationMs ?? state.session.durationMs,
+          };
+          rows = [...state.rows, recap];
+        }
+      }
       return {
         ...state,
+        rows,
         lastSeq,
         toolCalls: finalizeRunningTools(state.toolCalls),
         session: {
@@ -285,6 +330,7 @@ export function applyFrame(state: FrameState, frame: Frame): FrameState {
           durationMs: frame.durationMs ?? state.session.durationMs,
         },
       };
+    }
 
     case "session_end":
       return {
@@ -523,6 +569,22 @@ export function applyFrame(state: FrameState, frame: Frame): FrameState {
     case "error": {
       const row: ErrorRow = {
         kind: "error",
+        key: frame.id,
+        seq: frame.seq,
+        ts: frame.ts,
+        frame,
+      };
+      return { ...state, lastSeq, rows: [...state.rows, row] };
+    }
+
+    // context_file is a side-channel frame consumed by ChatPage's Context
+    // tab. It does not produce a scrollback row.
+    case "context_file":
+      return { ...state, lastSeq };
+
+    case "system_notice": {
+      const row: SystemNoticeRow = {
+        kind: "system_notice",
         key: frame.id,
         seq: frame.seq,
         ts: frame.ts,

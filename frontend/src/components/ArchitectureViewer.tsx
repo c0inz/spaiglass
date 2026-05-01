@@ -1044,8 +1044,6 @@ export function ArchitectureViewer({ projectPath }: ArchitectureViewerProps) {
   }
 
   if (error) {
-    const sgBase = (window as Window & { __SG_BASE?: string }).__SG_BASE;
-    const setupUrl = sgBase ? `${window.location.origin}/setup` : "/setup";
     return (
       <div className="p-4 text-slate-500 text-sm">
         <p className="mb-2">
@@ -1056,16 +1054,7 @@ export function ArchitectureViewer({ projectPath }: ArchitectureViewerProps) {
           in this project.
         </p>
         <p>
-          Follow the instructions in the{" "}
-          <a
-            href={setupUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-blue-400 hover:text-blue-300 underline"
-          >
-            setup guide
-          </a>{" "}
-          to create one.
+          Ask your install agent to create one for this project.
         </p>
       </div>
     );

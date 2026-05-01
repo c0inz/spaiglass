@@ -16,6 +16,35 @@ import type { RelayEnv } from "./types.ts";
 
 const SESSION_COOKIE = "sg_session";
 
+/**
+ * Confirm a /vm/<slug>/... URL targets a connector the caller still owns.
+ * `slug` here is either a bare connector name or `<login>.<connector>`; we
+ * accept both shapes because historical URLs mixed them. Case-insensitive
+ * match — connector names are case-insensitive at the DB layer.
+ *
+ * Used to reject stale last_agent_url / postLoginRedirect values after a
+ * connector rename or delete, which would otherwise 404 the user on every
+ * sign-in.
+ */
+function vmSlugStillValid(
+  url: string,
+  connectors: Array<{ name: string }>,
+): boolean {
+  if (!url.startsWith("/vm/")) {
+    // Non-VM redirect (e.g. /setup, /fleetrelay) — assume valid.
+    return true;
+  }
+  const rest = url.slice(4); // strip "/vm/"
+  const firstSeg = rest.split("/")[0] || "";
+  if (!firstSeg) return false;
+  const connectorName = firstSeg.includes(".")
+    ? firstSeg.slice(firstSeg.indexOf(".") + 1)
+    : firstSeg;
+  return connectors.some(
+    (c) => c.name.toLowerCase() === connectorName.toLowerCase(),
+  );
+}
+
 export function authRoutes(): Hono<RelayEnv> {
   const app = new Hono<RelayEnv>();
 
@@ -108,22 +137,27 @@ export function authRoutes(): Hono<RelayEnv> {
       path: "/",
     });
 
-    // Redirect to saved post-login URL, or last-used agent, or first available agent
+    // Redirect to saved post-login URL, or last-used agent, or first available agent.
+    // Fetch connectors up-front so we can validate stored redirects against the
+    // current fleet — otherwise a renamed or deleted connector leaves the user
+    // landing on a 404 every login.
+    const connectors = getConnectorsByUser(user.id);
     const postLoginRedirect = getCookie(c, "oauth_redirect");
     deleteCookie(c, "oauth_redirect");
-    if (postLoginRedirect?.startsWith("/")) {
+    if (postLoginRedirect?.startsWith("/") && vmSlugStillValid(postLoginRedirect, connectors)) {
       return c.redirect(postLoginRedirect);
     }
 
-    // Try last-used agent URL
+    // Try last-used agent URL — only honor it if the connector slug still exists.
+    // Preferences stored before a rename would otherwise redirect to /vm/<old>/,
+    // which the relay can't route.
     const lastAgent = getUserPreference(user.id, "last_agent_url");
-    if (lastAgent?.startsWith("/")) {
+    if (lastAgent?.startsWith("/") && vmSlugStillValid(lastAgent, connectors)) {
       return c.redirect(lastAgent);
     }
 
-    // Fallback: redirect to first owned connector's root (fleet relay will
-    // resolve to the first available role)
-    const connectors = getConnectorsByUser(user.id);
+    // Fallback: redirect to first owned connector's root (Server+Directory
+    // picker on that VM renders next).
     if (connectors.length > 0) {
       return c.redirect(`/vm/${connectors[0].name}/`);
     }
@@ -144,15 +178,40 @@ export function authRoutes(): Hono<RelayEnv> {
 
   // Token exchange: GitHub PAT → agent key (fully headless, no browser needed)
   app.post("/api/auth/token-exchange", async (c) => {
-    const body = await c.req.json<{ github_pat: string; key_name?: string }>().catch(() => null);
-    if (!body?.github_pat || typeof body.github_pat !== "string") {
-      return c.json({ error: "github_pat is required" }, 400);
+    const ct = (c.req.header("content-type") || "").toLowerCase();
+    if (ct && !ct.includes("application/json")) {
+      return c.json({ error: "Content-Type must be application/json" }, 400);
+    }
+    const body = await c.req
+      .json<{ github_pat?: unknown; key_name?: unknown }>()
+      .catch(() => null);
+    if (!body || typeof body !== "object") {
+      return c.json({ error: "Invalid JSON body" }, 400);
+    }
+    if (typeof body.github_pat !== "string" || !body.github_pat.trim()) {
+      return c.json({ error: "github_pat is required (string)" }, 400);
+    }
+    // Shape-reject before we spend a GitHub API round-trip. Classic PATs are
+    // `ghp_` + 36 chars; fine-grained are `github_pat_` + ~82 chars; legacy
+    // 40-hex PATs still exist. Length bound 20..255 + printable ASCII is
+    // conservative enough to pass all three while rejecting obvious garbage.
+    const pat = body.github_pat.trim();
+    if (pat.length < 20 || pat.length > 255 || !/^[A-Za-z0-9_]+$/.test(pat)) {
+      return c.json({ error: "github_pat has invalid shape" }, 400);
+    }
+    if (body.key_name !== undefined) {
+      if (typeof body.key_name !== "string") {
+        return c.json({ error: "key_name must be a string" }, 400);
+      }
+      if (body.key_name.length > 100) {
+        return c.json({ error: "key_name max 100 chars" }, 400);
+      }
     }
 
     // Verify PAT against GitHub API
     const ghRes = await fetch("https://api.github.com/user", {
       headers: {
-        Authorization: `Bearer ${body.github_pat}`,
+        Authorization: `Bearer ${pat}`,
         Accept: "application/vnd.github.v3+json",
         "User-Agent": "SpAIglass-Relay",
       },
@@ -178,7 +237,10 @@ export function authRoutes(): Hono<RelayEnv> {
     const key = `sg_${rawKey}`;
     const keyHash = createHash("sha256").update(key).digest("hex");
     const prefix = `sg_${rawKey.slice(0, 8)}...`;
-    const keyName = body.key_name || `auto-${ghUser.login}-${Date.now()}`;
+    const keyName =
+      typeof body.key_name === "string" && body.key_name.trim()
+        ? body.key_name.trim()
+        : `auto-${ghUser.login}-${Date.now()}`;
 
     const { createAgentKey } = await import("./db.ts");
     const agentKey = createAgentKey(user.id, keyName, keyHash, prefix);

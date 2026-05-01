@@ -23,6 +23,7 @@ import {
   getConnectorByName,
   getConnectorBySlug,
   getConnectorsByUser,
+  getUserById,
   getSharedConnectorsForUser,
   getConnectorAccess,
   connectorDisplayName,
@@ -208,6 +209,11 @@ const THEME_HEAD = `
   font-weight: 600 !important;
 }
 [data-theme="glass"] h1 { background: linear-gradient(135deg, #00BCD4, #7C4DFF); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+/* Brand wordmark: keep "ai" gold across every theme. Required because the
+ * glass theme paints the whole h1 with a transparent-fill gradient, which
+ * cascades into descendants — without this override the span inherits the
+ * gradient and the gold is lost. */
+h1 .brand-ai, [data-theme] h1 .brand-ai { color: #f59e0b !important; background: none !important; -webkit-text-fill-color: #f59e0b !important; -webkit-background-clip: initial !important; background-clip: initial !important; }
 [data-theme="glass"] p, [data-theme="glass"] li, [data-theme="glass"] .pitch, [data-theme="glass"] .subtitle { color: #C0C0D8 !important; }
 [data-theme="glass"] a { color: #00BCD4 !important; }
 [data-theme="glass"] a:hover { color: #4DD0E1 !important; }
@@ -794,6 +800,40 @@ function getSetupData() {
     license: "MIT",
     source: "https://github.com/c0inz/spaiglass",
     relay: PUBLIC_URL,
+    bestPractice: {
+      title: "Running the integrity check is the #1 best practice",
+      summary:
+        "Every setup you perform MUST end with the six-gate integrity check in the \"Verify the setup actually works\" step. Do not declare success until all six gates are green. A setup where the installer exited 0 and the connector shows online can still be silently broken — the gates exist because these failures have shipped to real users.",
+      failuresCaught: [
+        "Orphan connectors — installer wired up a different connector than the one just registered; the new row stays permanently online:false and clutters every user's dropdown.",
+        "Role-less dead chats — directory has no agents/*.md, so session_start rejects every message while the UI looks connected.",
+        "Duplicate-VM fleet pollution — leftover connectors from prior setup attempts masquerading as separate servers in the dropdown.",
+      ],
+      rule:
+        "If any integrity gate fails, do not report success. Fix it and re-run the check. The contract: installer exit 0 is not proof; all six gates green is proof.",
+      universalFixPattern:
+        "The best universal recipe for almost any failed integrity gate is \"delete bad record + re-add correctly\". Every configurable surface supports it: DELETE /api/connectors/:id then POST /api/connectors (relay), DELETE /api/roles/:name?path=X then POST /api/roles?path=X (VM), POST /api/projects/unregister then POST /api/projects/register (VM). Re-running the installer is just a convenience wrapper over the same pattern.",
+      perGateFix: [
+        "Gate 1 (relay health) — infrastructure; redeploy relay if failing.",
+        "Gate 2 (connector offline) — DELETE /api/connectors/:id then re-run installer (POSTs a fresh connector with valid token).",
+        "Gate 3 (project missing) — POST /api/projects/register on the VM (idempotent; re-registering same path is safe). Use POST /api/projects/unregister first if the entry is corrupt.",
+        "Gate 4 (no role file) — DELETE /api/roles/:name?path=<project> then POST /api/roles?path=<project>. Or drop /roletemplate.md into <project>/.claude/agents/developer.md.",
+        "Gate 5 (CONNECTOR_ID mismatch) — DELETE /api/connectors/:id on the orphan, then re-run installer so the live service writes the correct UUID to ~/spaiglass/.env.",
+        "Gate 6 (duplicate/legacy connectors) — DELETE /api/connectors/:id on each orphan; keep the one whose UUID matches the live ~/spaiglass/.env.",
+      ],
+    },
+    model: {
+      title: "Mental model: Server + Directory (read this first)",
+      summary:
+        "SpAIglass now works on two concepts — Server and Directory. Everything below assumes this model. If you are an agent reading this to configure a new user, internalize the terms before touching any endpoints.",
+      points: [
+        "<strong>Server</strong> = one connector = one machine. The user picks a server from a dropdown in the UI. Internally each server has a connector <code>name</code> (URL slug) and a <code>displayName</code> (human label). The fleet API calls these rows \"connectors\"; the UI calls them \"Servers\". Same thing. One agent key can own many servers.",
+        "<strong>Directory</strong> = one project folder on a server. In the UI this is a dropdown populated from the server's <code>GET /api/projects</code> (Claude Code's own project registry at <code>~/.claude.json</code>). One server can have many directories — a user is no longer forced into one-connector-per-project. <strong>The UI term is always \"Directory\", never \"Folder\" — do not rename it in user-facing copy.</strong>",
+        "<strong>Role is optional.</strong> A role file (<code>.claude/agents/&lt;role&gt;.md</code>) defines persistent Claude persona + plugins + tool allowlist for a directory. If a directory has no role, chat still works — you just get the default Claude Code behavior. Add roles when the user wants persistent persona or plugin pinning; skip them for casual exploration.",
+        "<strong>URL shapes.</strong> <code>/vm/&lt;login&gt;.&lt;server&gt;/</code> → Server+Directory picker. <code>/vm/&lt;login&gt;.&lt;server&gt;/&lt;directory-basename&gt;/</code> → chat for that directory (role-less; primary flow). <code>/vm/&lt;login&gt;.&lt;server&gt;/&lt;directory&gt;-&lt;role&gt;/</code> → chat with a specific role (legacy but still supported for links/bookmarks). The human never needs to know any of these — they use dropdowns.",
+        "<strong>Migration from old single-project connectors.</strong> Existing connectors keep working as-is. They just become \"servers\" in the new vocabulary. The old one-connector-per-project habit is no longer necessary — consolidate by pointing one connector at a server with several <code>~/projects/*</code> directories. Nothing in the DB needs migrating.",
+      ],
+    },
     supportedPlatforms: {
       hosts: [
         {
@@ -817,6 +857,15 @@ function getSetupData() {
     },
     steps: [
       {
+        title: "Check what already exists (do this FIRST)",
+        description:
+          'Before registering anything, find out whether this user already has a connector set up. This step prevents the #1 fleet-maintenance bug: agents re-registering a VM the user already owns, leaving duplicate or stale connectors behind.<br><br><strong>1. Do you already have an agent key?</strong> If your human user has handed you an <code>sg_...</code> key, use it. If not, skip to Step 2 to mint one — you need it to call <code>GET /api/connectors</code>.<br><br><strong>2. List existing connectors.</strong> Call <code>GET ' +
+          PUBLIC_URL +
+          '/api/connectors</code> with your agent key. If the VM you are being asked to configure already appears in the list, do NOT create a new one — reuse it. If only the human-friendly name is wrong, use <code>PATCH /api/connectors/:id</code> with <code>{"name": "new-slug"}</code> to rename in place (preserves id + token, VM keeps running).<br><br><strong>3. Ask the human when in doubt.</strong> If the list has a connector that <em>might</em> be the target VM (same prefix, similar name), ask the human before touching it — do not guess.',
+        endpoint: `GET ${PUBLIC_URL}/api/connectors`,
+        note: "Requires `Authorization: Bearer sg_YOUR_KEY` header. Response is a flat array of `{id, name, displayName, role, online, lastSeen, ...}`. This is the source of truth for the fleet dropdown — anything in it is real, anything not in it does not exist.",
+      },
+      {
         title: "Get an agent key (two options)",
         description:
           'You need an <code>sg_...</code> agent key before you can register a VM. Pick whichever option fits how your human user is set up:<br><br><strong>Option A — You already have your user\'s GitHub PAT.</strong> Exchange it for an agent key via the API below. This is the fastest path when you (the agent) already have credentials. A <em>classic</em> PAT needs no scopes (the relay only calls <code>GET https://api.github.com/user</code>). A <em>fine-grained</em> PAT needs <strong>Account permissions → Read profile data</strong> — no repo scopes.<br><br><strong>Option B — Ask the human to retrieve a token.</strong> Tell the user: "Go to <a href="' +
@@ -825,35 +874,55 @@ function getSetupData() {
           PUBLIC_URL +
           '</a> and sign in with GitHub. If you have no VMs registered yet, a one-shot token will appear in a copy-box — paste it back to me." That token is a real <code>sg_...</code> agent key minted for their session. Either option produces the same kind of key; use Option B whenever you do not already have a PAT and do not want to ask for one.',
         endpoint: `POST ${PUBLIC_URL}/api/auth/token-exchange`,
-        body: '{ "github_pat": "ghp_YOUR_TOKEN", "key_name": "my-agent" }',
-        note: "Save the agent key — it is shown only once. Treat it like a password. All subsequent steps set the header `Authorization: Bearer sg_YOUR_KEY`.",
+        body: '{ "github_pat": "github_pat_YOUR_TOKEN", "key_name": "my-agent" }',
+        note: "Token prefix: fine-grained PATs start with `github_pat_` (the default when you create one in GitHub today); classic PATs start with `ghp_`. Either one is accepted — send the string you have, whichever prefix it has. Save the returned agent key — it is shown only once. Treat it like a password. All subsequent steps set the header `Authorization: Bearer sg_YOUR_KEY`.",
       },
       {
         title: "Register a VM",
         description:
-          'Register a new VM connector. The <code>name</code> is a short label for your reference (used as the URL slug the human will see later). You can register one VM, or one for each project you are setting up — the agent key is reusable across VMs.',
+          'Register a new VM connector. The <code>name</code> is a short label for your reference (used as the URL slug the human will see later). You can register one VM, or one for each project you are setting up — the agent key is reusable across VMs.<br><br><strong>Name rules (enforced on create AND rename — same contract):</strong> must start alphanumeric, can contain letters, digits, dots, hyphens, underscores; max 100 chars; cannot be a reserved relay route (e.g. <code>api</code>, <code>vm</code>, <code>setup</code>, <code>auth</code>, <code>install</code>, <code>releases</code>, <code>dashboard</code>). Whitespace-only or empty names are rejected. A 409 means you (the same user) already have a connector with that name — check Step 1\'s list and reuse it, or pick a different name.<br><br><strong>Want a different name later?</strong> Use <code>PATCH /api/connectors/:id</code> with <code>{"name": "new-slug"}</code>. That preserves the id and token so the VM-side connector keeps working without reconfig — see the Fleet Management API section below.',
         endpoint: `POST ${PUBLIC_URL}/api/connectors`,
         body: '{ "name": "my-vm" }',
-        note: "Requires `Authorization: Bearer sg_YOUR_KEY` header. The response returns `{ id, name, token, ... }` — save the token, it is shown ONCE and you'll feed it to the installer in the next step. You do NOT need to construct or remember a VM URL; sign-in handles routing for the human automatically.",
+        note:
+          "Requires `Authorization: Bearer sg_YOUR_KEY` header. The response returns `{ id, name, token, ... }` — save all three, `token` is shown ONCE and you'll feed all three to the installer in the next step. `id` and `token` are both UUIDs (no prefix); `name` is the slug you just chose.\n\n" +
+          'Worked example mapping this response to Step 5 flags:\n' +
+          '  Response:  { "id": "4f5e...", "name": "my-vm", "token": "8a9b..." }\n' +
+          '  Step 5:    --id=4f5e... --name=my-vm --token=8a9b...\n' +
+          "Copy each field verbatim. Do not invent values. Do not reuse the agent key (sg_...) as the connector token — they are different credentials. You do NOT need to construct or remember a VM URL; sign-in handles routing for the human automatically.",
       },
       {
         title: "Install Claude Code CLI on the host",
         description:
-          "SpAIglass spawns the official Anthropic Claude Code CLI to run sessions. It must be installed and authenticated before the spaiglass installer runs.",
+          "SpAIglass spawns the official Anthropic Claude Code CLI to run sessions. It must be installed AND authenticated before the spaiglass installer runs.<br><br><strong>Auth model — read this first.</strong> Both auth patterns below use your existing Claude <strong>subscription via OAuth</strong>. Neither one generates or uses an <code>ANTHROPIC_API_KEY</code>; nothing here switches you to API-key billing. The terms \"headless\" and \"setup-token\" sound like API-key flows but they are not — they are just OAuth tokens stored on disk so non-interactive subprocesses can read them. SpAIglass spawns <code>claude</code> as a subprocess; it inherits whichever credentials file you produce here.<br><br><strong>Pick the right pattern for the host:</strong><br><br><strong>Pattern A — Desktop with a browser (Windows, macOS, Linux desktop).</strong> Run <code>claude login</code> once. The CLI opens your default browser, you complete OAuth, the credentials persist to <code>~/.claude/.credentials.json</code> (Linux/macOS) or <code>%USERPROFILE%\\.claude\\.credentials.json</code> (Windows). Use this on any machine where you can reach the browser yourself.<br><br><strong>Pattern B — Headless VM (no desktop, SSH-only).</strong> Plain <code>claude login</code> hangs waiting for a TTY/browser that is not there. Run <code>claude setup-token</code> on the VM instead — it prints a URL, you open it in a browser on any other machine, complete OAuth, paste the code back into the VM terminal. Same OAuth subscription, just a one-round-trip flow that doesn't need a browser on the VM itself.<br><br><strong>Pattern C — Cloning credentials (fleet rollouts).</strong> If you already authenticated on another machine, copy <code>~/.claude/.credentials.json</code> to the new host (same path, mode 600 on Linux/macOS). Same OAuth subscription, no second login.<br><br>Verify with <code>claude --version</code> AND a trivial round-trip (<code>echo hi | claude -p 'say ok'</code>) before continuing. A claude binary that responds to <code>--version</code> but 401s on <code>-p</code> will cause the spaiglass installer to look fine while every chat session dies on first message.",
         requirements: [
           "Node.js >= 20",
-          "Claude Code CLI authenticated (claude --version should work)",
+          "Claude Code CLI installed (~/.local/bin/claude on Linux/macOS, %USERPROFILE%\\.local\\bin\\claude.exe on Windows)",
+          "Claude Code CLI authenticated via OAuth (subscription) — verify with: echo hi | claude -p 'say ok'",
         ],
         commands: [
+          "# ── Install ──",
           "# Linux / macOS:",
           "curl -fsSL https://claude.ai/install.sh | bash",
-          "claude  # one-time interactive auth",
           "",
           "# Windows (PowerShell):",
           "irm https://claude.ai/install.ps1 | iex",
-          "claude  # one-time interactive auth",
+          "",
+          "# ── Authenticate (pick ONE; both are OAuth subscription, NOT API key) ──",
+          "",
+          "# Pattern A — Desktop with a browser (Windows, macOS, Linux desktop):",
+          "claude login",
+          "# Opens your default browser, complete OAuth, done.",
+          "",
+          "# Pattern B — Headless VM (SSH-only, no GUI):",
+          "claude setup-token",
+          "# Prints a URL. Open on any machine with a browser, complete OAuth,",
+          "# paste the returned code back into the VM terminal.",
+          "",
+          "# ── Verify auth actually works (not just that the binary exists) ──",
+          "claude --version",
+          "echo hi | claude -p 'say ok'   # should print an assistant reply",
         ],
-        note: "SpAIglass looks for the binary at ~/.local/bin/claude on Linux/macOS and %USERPROFILE%\\.local\\bin\\claude.exe on Windows.",
+        note: "SpAIglass looks for the binary at ~/.local/bin/claude on Linux/macOS and %USERPROFILE%\\.local\\bin\\claude.exe on Windows. If `claude -p` fails with 401/403, re-run `claude login` (desktop) or `claude setup-token` (headless) — tokens occasionally expire before paste. Do NOT set ANTHROPIC_API_KEY; SpAIglass uses your OAuth subscription. Do NOT run plain `claude login` on a headless VM expecting it to auth — it needs a TTY and a local browser. Use `claude setup-token` there instead.",
       },
       {
         title: "Install spaiglass on the host (one liner)",
@@ -862,6 +931,11 @@ function getSetupData() {
         commands: [
           "# Linux preflight (ask the user to run if this errors):",
           "sudo -n loginctl enable-linger $USER",
+          "",
+          "# Field mapping — use the EXACT values from Step 3's response:",
+          "#   --id=<id from response>       (UUID)",
+          "#   --name=<name from response>   (the slug you chose)",
+          "#   --token=<token from response> (UUID, shown once)",
           "",
           "# Linux / macOS install:",
           "curl -fsSL " + PUBLIC_URL + "/install.sh | bash -s -- \\",
@@ -873,12 +947,12 @@ function getSetupData() {
             "/install.ps1 -useb))) `",
           "    -Token YOUR_TOKEN -Id YOUR_ID -Name YOUR_VM_NAME",
         ],
-        note: "Installs a systemd --user unit on Linux, a launchd LaunchAgent on macOS, and a per-user Scheduled Task on Windows. All three start automatically and restart on crash. No inbound ports are opened — the connector dials out over WSS to the relay. If the installer bails on the linger check, fix linger and re-run the same one-liner.",
+        note: "Installs a systemd --user unit on Linux, a launchd LaunchAgent on macOS, and a per-user Scheduled Task on Windows. All three start automatically and restart on crash. No inbound ports are opened — the connector dials out over WSS to the relay. If the installer bails on the linger check, fix linger and re-run the same one-liner.\n\nSupported hosts: Linux x64/arm64, macOS x64/arm64, and Windows x64 — five native binaries, no WSL2 required. The PowerShell installer pulls the matching windows-x64 build automatically. Files land under %USERPROFILE%\\spaiglass\\ on Windows (env file: %USERPROFILE%\\spaiglass\\.env).",
       },
       {
-        title: "Add one or more roles to projects",
+        title: "Optional: add a role file to a directory",
         description:
-          'Roles are the most important part of SpAIglass. A role file defines who Claude is, what plugins and tools it has, and how it should behave. SpAIglass uses Claude Code\'s native <code>.claude/agents/</code> directory — the same convention the CLI uses with <code>claude --agent &lt;name&gt;</code>. Each <code>.md</code> file becomes a selectable role in the SpAIglass chat view.<br><br><strong>Fastest path — use the register API.</strong> One POST to the VM\'s local backend does everything: creates the project directory, the role file, registers it in Claude\'s config, and creates the project metadata directory. <strong>See <a href="/add-project">Adding Projects &amp; Roles</a> for the endpoint reference.</strong><br><br><strong>Manual path (same result).</strong> If you prefer shell commands, the block below works. After creating the file, restart the spaiglass service (<code>systemctl --user restart spaiglass</code>) so the backend re-scans.<br><br><strong>Start from the baseline.</strong> A setup agent running on a fresh VM should not stop to hand-craft a role file — there is a canonical template at <a href="/roletemplate">/roletemplate</a> (raw: <a href="/roletemplate.md"><code>/roletemplate.md</code></a>). Drop it in, finish setup, and then <em>discuss with your human user how to improve the role.md to make SpAIglass more effective</em> during the first real session.',
+          '<strong>Roles are optional in the Server+Directory model.</strong> A directory without a role works fine — chat uses default Claude Code behavior for that <code>cwd</code>. Add a role when the user wants a persistent persona, a pinned plugin set, or a restricted tool allowlist for that directory. If the user has not asked for one, skip this step — do not hand-craft a role file unprompted.<br><br><strong>When you do add a role:</strong> SpAIglass uses Claude Code\'s native <code>.claude/agents/</code> directory — the same convention the CLI uses with <code>claude --agent &lt;name&gt;</code>. Each <code>.md</code> file becomes a selectable role for that directory in the SpAIglass chat view.<br><br><strong>Fastest path — use the register API.</strong> One POST to the VM\'s local backend creates the directory, role file, Claude config entry, and project metadata directory in one shot. <strong>See <a href="/add-project">Adding Projects &amp; Roles</a> for the endpoint reference.</strong><br><br><strong>Manual path (same result).</strong> If you prefer shell commands, the block below works. After creating the file, restart the spaiglass service (<code>systemctl --user restart spaiglass</code>) so the backend re-scans.<br><br><strong>Start from the baseline.</strong> Do not block on hand-crafting a role. There is a canonical template at <a href="/roletemplate">/roletemplate</a> (raw: <a href="/roletemplate.md"><code>/roletemplate.md</code></a>). Drop it in, finish setup, and then <em>discuss with the human how to improve the role.md</em> during the first real session.',
         commands: [
           "# ── RECOMMENDED: one-shot register via API ──",
           "curl -s -X POST http://127.0.0.1:8080/api/projects/register \\",
@@ -909,7 +983,7 @@ function getSetupData() {
               name: "plugins",
               type: "object",
               description:
-                'Enable/disable plugins for this role: <code>"plugin-name@marketplace": true/false</code>. SpAIglass writes these to an isolated settings.json via CLAUDE_CONFIG_DIR so roles don\'t conflict.',
+                'Enable/disable plugins for this role: <code>"plugin-name@marketplace": true/false</code>. Parsed from role frontmatter and surfaced in the role editor UI.',
             },
             {
               name: "mcpServers",
@@ -975,9 +1049,9 @@ model: claude-opus-4-6
 You are the lead backend engineer...`,
         },
         roleConfigDir: {
-          title: "Per-role plugin isolation (CLAUDE_CONFIG_DIR)",
+          title: "Plugin enablement per role",
           description:
-            "SpAIglass creates a separate config directory for each role at <code>.claude/agent-configs/&lt;role&gt;/</code>. When a session starts, SpAIglass sets <code>CLAUDE_CONFIG_DIR</code> to this directory and writes the role's <code>enabledPlugins</code> from the frontmatter into its <code>settings.json</code>. This means a developer role and a QA role on the same project can have completely different plugins active without clobbering each other — even if sessions run concurrently. Auth credentials are symlinked from the real <code>~/.claude/</code> so sessions authenticate normally.",
+            "SpAIglass parses the <code>enabledPlugins</code> map from each role's frontmatter and surfaces it in the role editor UI. Sessions for all roles currently share the host's <code>~/.claude/</code> config — per-role plugin settings aren't physically isolated yet, so if two roles enable conflicting plugins, the last-written settings win. Keep plugin sets aligned across roles on the same project for now.",
         },
         roleChecklist: [
           {
@@ -1097,10 +1171,110 @@ Preserve: list of modified files, pending deploys, current task, test results.
 - NEVER drop a production table without explicit instruction. Why: data loss is irreversible.`,
       },
       {
-        title: "Add architecture.json (optional)",
+        title: "Managing the Directory dropdown (hide / add / rename)",
         description:
-          "The Arch button in the chat view shows an ASCII architecture diagram for the current project. It reads from architecture/architecture.json inside the project directory.",
-        commands: ["mkdir -p ~/projects/myproject/architecture"],
+          'The Directory dropdown in the SpAIglass chat header is a live view of Claude Code\'s <code>~/.claude.json</code> <code>projects</code> map on this VM — SpAIglass does not maintain its own separate list. To change what the human sees in the dropdown, mutate <code>~/.claude.json</code> via the three VM-local endpoints below. The user will typically ask you in chat (e.g. <em>"hide the workspace directory"</em>, <em>"add ~/code/foo"</em>, <em>"rename that one to Acme API"</em>) — make the matching API call and confirm. The next page reload on the user\'s side picks up the change; no restart needed.<br><br><strong>Hide a directory</strong> — removes the entry from <code>~/.claude.json</code> but keeps its encoded session history on disk, so re-registering later restores prior chats.<br><br><strong>Add a directory</strong> — the same <code>register</code> endpoint used at setup time. Role is optional in the Server+Directory model; pass <code>{"name": "..."}</code> alone to just create the directory entry.<br><br><strong>Rename (cosmetic label only)</strong> — the directory\'s real path never changes; this just overrides the display name in the dropdown.<br><br>These calls are VM-local (<code>127.0.0.1:8080</code>) and require no auth — only the VM-side agent can reach them.',
+        commands: [
+          "# ── Hide a directory from the dropdown ──",
+          "curl -s -X POST http://127.0.0.1:8080/api/projects/unregister \\",
+          "  -H 'Content-Type: application/json' \\",
+          "  -d '{\"path\": \"/home/user/workspace\"}'",
+          "# → {\"ok\":true,\"removed\":true,\"path\":\"/home/user/workspace\"}",
+          "# Idempotent: removed:false if the path was not registered.",
+          "",
+          "# ── Add a directory to the dropdown ──",
+          "curl -s -X POST http://127.0.0.1:8080/api/projects/register \\",
+          "  -H 'Content-Type: application/json' \\",
+          "  -d '{\"name\": \"foo\"}'            # ~/projects/foo, no role",
+          "",
+          "# Add with an explicit absolute path (anywhere on disk):",
+          "curl -s -X POST http://127.0.0.1:8080/api/projects/register \\",
+          "  -H 'Content-Type: application/json' \\",
+          "  -d '{\"name\": \"foo\", \"path\": \"/home/user/code/foo\"}'",
+          "",
+          "# ── Rename the dropdown label (cosmetic) ──",
+          "# `project` is the directory basename (e.g. 'foo' for /home/user/code/foo),",
+          "# NOT the full path. Pass displayName:null to clear the override.",
+          "curl -s -X PUT http://127.0.0.1:8080/api/settings/project-display-name \\",
+          "  -H 'Content-Type: application/json' \\",
+          "  -d '{\"project\": \"foo\", \"displayName\": \"Acme API\"}'",
+          "",
+          "# ── See what is currently in the dropdown ──",
+          "curl -s http://127.0.0.1:8080/api/projects | jq",
+        ],
+        note: "These mutate ~/.claude.json directly. Hide preserves session transcripts under ~/.claude/projects/<encoded>/ so re-adding the same path restores history. Directories under ~/spaiglass, ~/.spaiglass, and ~/.claude are filtered from the dropdown automatically — do not try to hide those, they are already invisible.",
+      },
+      {
+        title: "Verify the setup actually works",
+        description:
+          'Do NOT trust \"installer exited 0\" as proof of working. The service can fail to start, the connector token can be wrong, linger can silently revert — all of which leave the installer happy but the VM absent from the fleet.<br><br><strong>1. Relay health (public).</strong> <code>GET ' +
+          PUBLIC_URL +
+          '/api/health</code> — returns <code>{"status":"ok", "spaiglassVersion":"..."}</code>. No auth required. Confirms the relay is reachable from wherever you are calling from.<br><br><strong>2. Connector online (authenticated).</strong> <code>GET ' +
+          PUBLIC_URL +
+          '/api/connectors</code> and look for your <code>id</code> with <code>online: true</code>. If <code>online: false</code> 30 seconds after the installer finished, the service did not attach — see troubleshooting.<br><br><strong>3. Project visible (on the VM).</strong> <code>GET http://127.0.0.1:8080/api/projects</code> on the VM itself should return the project you just registered. If it does not, either the backend is not running on port 8080 or the project was written to the wrong directory.<br><br><strong>4. Directory has a resolvable role.</strong> <code>GET http://127.0.0.1:8080/api/roles?path=&lt;projectPath&gt;</code> must return a non-empty <code>roles</code> array. The backend session store is keyed by <code>(projectPath, roleFile)</code> — a directory with zero role files cannot start a session even though chat URLs resolve and the connector looks online. The browser\'s role-less URL flow (<code>/vm/&lt;server&gt;/&lt;directory&gt;/</code>) auto-picks <code>developer.md</code> if present, else the first available file; if the list is empty, chat silently dies at session_start. If this check returns <code>{ "roles": [] }</code>, either (a) call <code>POST /api/projects/register</code> with a <code>role</code> name to create one, or (b) drop <code>/roletemplate.md</code> into <code>&lt;projectPath&gt;/.claude/agents/developer.md</code> and re-run the check.<br><br><strong>5. Installed CONNECTOR_ID matches the one you just registered.</strong> Read <code>CONNECTOR_ID</code> from <code>~/spaiglass/.env</code> on the VM and compare it to the <code>id</code> returned by Step 3\'s <code>POST /api/connectors</code>. <strong>They must be the same UUID.</strong> If they differ, the installer was run with flags from a <em>previous</em> registration, leaving the connector you just created as an orphan (visible in <code>GET /api/connectors</code>, permanently <code>online: false</code>, never seen by the relay) while the service is actually authenticated as a different one. Fix by calling <code>DELETE /api/connectors/:id</code> on the orphan — do not leave it in the fleet, it shows up in every user\'s dropdown as a broken server.<br><br><strong>6. No other orphaned connectors for this host.</strong> List owned connectors via <code>GET /api/connectors</code> and inspect any entry with <code>online: false</code> AND a <code>lastSeen</code> either <code>null</code> or older than 24h. If more than one owned connector is authenticated-but-silent and they plausibly map to the same VM (same display name stem, same human&rsquo;s machine), they are leftovers from a prior failed setup. <strong>One machine should equal one connector</strong> — duplicate registrations fracture the recent-URL list in the UI and make the dropdown surface dead entries. Delete the orphans with <code>DELETE /api/connectors/:id</code>; the live service keeps working because its token points at the row you are keeping.<br><br>Only after all six pass should you report "setup complete" to the human.',
+        commands: [
+          "# From anywhere (no auth):",
+          "curl -fsSL " + PUBLIC_URL + "/api/health | jq",
+          "",
+          "# With your agent key (confirm connector is online):",
+          "curl -fsSL -H 'Authorization: Bearer sg_YOUR_KEY' \\",
+          "     " + PUBLIC_URL + "/api/connectors \\",
+          "  | jq '.[] | select(.id==\"YOUR_CONNECTOR_ID\") | {name, online, spaiglassVersion}'",
+          "",
+          "# On the VM (confirm project was registered):",
+          "curl -fsSL http://127.0.0.1:8080/api/projects | jq",
+          "",
+          "# On the VM (confirm the directory has at least one role file —",
+          "# chat silently dies at session_start if this list is empty):",
+          "curl -fsSL 'http://127.0.0.1:8080/api/roles?path=/home/USER/projects/myproject' \\",
+          "  | jq '.roles | length'   # must be >= 1",
+          "",
+          "# Fix pattern if gate 4 fails — delete bad role + re-add. On the VM:",
+          "#   curl -X DELETE 'http://127.0.0.1:8080/api/roles/<name>?path=<project>'",
+          "#   curl -X POST   'http://127.0.0.1:8080/api/roles?path=<project>' \\",
+          "#        -H 'Content-Type: application/json' \\",
+          "#        -d '{\"name\":\"developer\",\"description\":\"...\"}'",
+          "",
+          "# On the VM (confirm the installer actually wired up the connector",
+          "# you just registered — mismatch = orphan row in the relay DB):",
+          "grep '^CONNECTOR_ID=' ~/spaiglass/.env",
+          "# The UUID printed here MUST equal the `id` from Step 3's response.",
+          "",
+          "# Orphan sweep — any owned connector that never came online, or",
+          "# last saw the relay >24h ago, that maps to this same host is dead",
+          "# weight in the dropdown. Delete each one with:",
+          "#   curl -X DELETE -H 'Authorization: Bearer sg_YOUR_KEY' \\",
+          "#        " + PUBLIC_URL + "/api/connectors/<ORPHAN_ID>",
+          "curl -fsSL -H 'Authorization: Bearer sg_YOUR_KEY' \\",
+          "     " + PUBLIC_URL + "/api/connectors \\",
+          "  | jq '.[] | select(.online==false and (.lastSeen==null or (now - (.lastSeen/1000) > 86400))) | {id, name, displayName, lastSeen}'",
+        ],
+        note: "If any of the six checks fail, stop and consult the troubleshooting section — do not ship an unverified setup. Check #4 catches the \"everything looks green but first message never gets a reply\" failure mode (online connector, registered project, but no role file so session_start rejects). Check #5 catches the \"running service authenticates as connector X while the agent thought it set up connector Y\" split — the .env is authoritative for which row is live, anything else with the agent's user_id is dead weight. Check #6 catches older orphans from prior setup attempts — one machine equals one connector, and duplicates surface in the fleet dropdown as permanently-offline servers users keep clicking.",
+      },
+      {
+        title: "Add architecture.json (strongly recommended)",
+        description:
+          '<strong>Do not skip this step.</strong> <code>architecture/architecture.json</code> is the single most valuable artifact you will produce during setup. It is an <em>operational snapshot</em> of the project — when Claude (or a human returning after months away) opens a session, the Arch button renders this file and gives them full mental context without reading code. A project without one is a project every new session re-discovers from scratch.<br><br>Pick one of the two paths below based on how much the user has ready right now:<br><br><strong>Path A — Quick start (≈5 minutes).</strong> Use the minimal template below. Fills components, connections, and infrastructure with placeholder values the user can refine later. Good when the user wants to move on to chat and promises to improve the file "soon". Set the expectation: this unblocks the Arch button but produces a <em>breadcrumb</em>, not an operational document. Schedule a follow-up to graduate it to Path B within the week.<br><br><strong>Path B — Comprehensive (recommended; ≈30-60 minutes).</strong> <strong>Fetch the full manual first</strong> at <a href="/api/architecture-manual"><code>' +
+          PUBLIC_URL +
+          '/api/architecture-manual</code></a> (raw markdown; easy to parse) and read it <em>end-to-end before writing any field</em>. The manual lays out the eight non-negotiable rules — snapshot over design doc, measured status with <code>statusSource</code>, complete site map including orphans, redacted secrets preserving shapes, etc. Then generate the manifest by observing the running system (code at HEAD, running processes, the DB, URLs that actually respond), not by reading README. <strong>This is the default path; only fall back to Path A if the user explicitly opts for the quick start.</strong>',
+        commands: [
+          "mkdir -p ~/projects/myproject/architecture",
+          "",
+          "# ── Path B: Fetch the manual (READ END-TO-END before writing) ──",
+          "curl -fsSL " + PUBLIC_URL + "/api/architecture-manual -o /tmp/architecture-manual.md",
+          "# Manual is ~5 pages of core rules + reference appendix. Do not skim.",
+          "",
+          "# After reading, generate architecture.json from OBSERVATION:",
+          "#   git rev-parse HEAD                 # code as checked out",
+          "#   systemctl --user list-units         # processes actually running",
+          "#   psql -c '\\d'  /  mongosh --eval ... # DB as it currently exists",
+          "#   curl -sSf <public-url>              # routes that actually respond",
+          "#   du -sh / ls                         # filesystem as it currently exists",
+          "# Write the manifest as a SNAPSHOT, not a design doc.",
+          "",
+          "# ── Path A: Quick-start minimal template (placeholder only) ──",
+          "# Use only if the user explicitly opted out of the comprehensive path.",
+        ],
         example: JSON.stringify(
           {
             project: {
@@ -1114,6 +1288,11 @@ Preserve: list of modified files, pending deploys, current task, test results.
                 type: "service",
                 runsOn: ["vm1"],
                 status: "active",
+                statusSource: {
+                  command: "systemctl --user is-active myproject-api",
+                  output: "active",
+                  observedAt: "2026-04-20T00:00:00Z",
+                },
               },
               {
                 id: "db",
@@ -1129,26 +1308,394 @@ Preserve: list of modified files, pending deploys, current task, test results.
           null,
           2,
         ),
-        note: "Save the JSON above as ~/projects/myproject/architecture/architecture.json. The Arch button in the chat UI reads this file and renders it as an ASCII diagram. Without this file, the Arch button shows a link to this setup guide.",
+        note: "Save at ~/projects/myproject/architecture/architecture.json. The Arch button in the chat UI renders this file; without it, Arch links here. Path A is a placeholder — it unblocks the Arch button but does not substitute for Path B. The manual explains why shallow manifests are worse than no manifest.",
       },
     ],
     addMoreVms:
       "The agent key is reusable. To add another VM, repeat steps 2-4 with the same key — each VM gets its own connector token. Mix and match Linux, macOS, and Windows hosts under the same account.",
+    configuring: {
+      title: "Configuring SpAIglass (day-2 operations)",
+      summary:
+        'SpAIglass is a browser UI for Claude Code — it does not launch Claude for the user, and it never asks the user about "absolute paths" or "relay vs VM". When the user says <em>"rename my server to Foo"</em> or <em>"add ~/code/bar to my directory list"</em>, you (the install agent on this VM) make the API call on their behalf. Confirm the plain-English settings you are about to change before firing, then do it. Never instruct the user to reinstall to make a change.',
+      vocab: [
+        {
+          term: "Server Display Name",
+          scope:
+            "Top-left server name on the chat page, Server dropdown entries, Server segment of the 'last used' buttons, Agent Picker on mobile. Cosmetic — the real connector slug in the URL does not change.",
+          editableBy: "User via Settings wheel OR agent via relay API.",
+        },
+        {
+          term: "Project Directory Display Name",
+          scope:
+            "Top-left project label on the chat page, Directory dropdown entries (shown as '<Display Name> — <working directory>'), Agent Picker on mobile. Cosmetic — the real filesystem path does not change.",
+          editableBy: "User via Settings wheel OR agent via VM-local API.",
+        },
+        {
+          term: "Project Directory Tab Name",
+          scope:
+            "Browser tab title (and therefore the text saved when the user bookmarks the page). Falls back to Project Directory Display Name, then to the directory basename. Nothing in-app uses this string.",
+          editableBy: "User via Settings wheel OR agent via VM-local API.",
+        },
+        {
+          term: "Working Directory (real)",
+          scope:
+            "The absolute path on the VM's filesystem, used as Claude Code's cwd for the session. Appears top-left of the chat page alongside the Display Name, and on every Directory dropdown entry. This never changes via a rename — only via unregister + re-register.",
+          editableBy: "Agent only, via register/unregister. No UI path.",
+        },
+        {
+          term: "Connector Slug (real)",
+          scope:
+            "The segment in the URL /vm/<login>.<slug>/. Stable identity. Changing it invalidates bookmarks and saved 'last used' entries.",
+          editableBy: "Agent only, via installer; never via UI.",
+        },
+      ],
+      playbook: [
+        {
+          userAsks:
+            '"Rename this server to X" / "Change my server name to X" / "Call this server X"',
+          confirmBefore:
+            'Read back: "I\'ll change the Server Display Name to X. The URL and bookmarks stay the same. OK to proceed?"',
+          api: {
+            method: "PUT",
+            url: PUBLIC_URL + "/vm/<slug>/api/__relay/self/display-name",
+            body: '{ "displayName": "X" }',
+            auth: "Owner-only — must be called from a session that owns the connector. The VM-side agent can curl this with the user's relay cookie or agent key.",
+          },
+          consequences:
+            "Cosmetic. No session history lost. No re-sign-in needed. Dropdown updates on next page refresh.",
+          clearOverride: 'Pass { "displayName": null } to revert to the raw slug.',
+        },
+        {
+          userAsks:
+            '"Rename this directory to X" / "Call this folder X in the dropdown"',
+          confirmBefore:
+            'Read back: "I\'ll change the Project Directory Display Name for <basename> to X. The real path <path> does not change. OK?"',
+          api: {
+            method: "PUT",
+            url: "http://127.0.0.1:8080/api/settings/project-display-name",
+            body: '{ "project": "<directory basename>", "displayName": "X" }',
+            auth: "VM-local — no auth. Only callable from inside the VM.",
+          },
+          consequences:
+            "Cosmetic. No session history lost. Dropdown + top-left label update on refresh.",
+          clearOverride: 'Pass displayName:null to revert to the basename.',
+        },
+        {
+          userAsks:
+            '"Change the browser tab title to X" / "I want the tab to say X when I\'m on this project"',
+          confirmBefore:
+            'Read back: "I\'ll change the Project Directory Tab Name for <basename> to X. That only affects the browser tab title, nothing else. OK?"',
+          api: {
+            method: "PUT",
+            url: "http://127.0.0.1:8080/api/settings/project-directory-tab-name",
+            body: '{ "project": "<directory basename>", "tabName": "X" }',
+            auth: "VM-local — no auth.",
+          },
+          consequences:
+            "Cosmetic. Tab title updates on next navigation / refresh.",
+          clearOverride:
+            'Pass tabName:null to fall back to the Display Name (and then to the basename).',
+        },
+        {
+          userAsks:
+            '"Add <directory> to my dropdown" / "Put ~/code/foo in the picker"',
+          confirmBefore:
+            'Read back: "I\'ll add <resolved absolute path> to your Directory dropdown. It\'ll show up with the label \'<basename>\' unless you want a different Display Name. OK?" If the path does not exist yet, say so — do not silently create a stray directory far from where the user meant.',
+          api: {
+            method: "POST",
+            url: "http://127.0.0.1:8080/api/projects/register",
+            body:
+              '{ "name": "<basename>" }  // or { "name":"foo", "path":"/home/user/code/foo" } for an explicit path\n' +
+              '// role is optional; include { "role": "<name>" } only if the user asked for a persona',
+            auth: "VM-local — no auth.",
+          },
+          consequences:
+            "No session history touched. Dropdown updates on next page refresh. If a hidden entry for the same path existed before, prior session transcripts under ~/.claude/projects/<encoded>/ are restored automatically.",
+        },
+        {
+          userAsks:
+            '"Hide <directory>" / "Remove <directory> from the dropdown" / "I don\'t want to see <directory> in the picker"',
+          confirmBefore:
+            'Read back: "I\'ll remove <absolute path> from your Directory dropdown. Session transcripts stay on disk, so if you change your mind later I can re-add it and your history comes back. OK?"',
+          api: {
+            method: "POST",
+            url: "http://127.0.0.1:8080/api/projects/unregister",
+            body: '{ "path": "<absolute path exactly as in ~/.claude.json>" }',
+            auth: "VM-local — no auth.",
+          },
+          consequences:
+            "Dropdown entry disappears on next page refresh. Session transcripts under ~/.claude/projects/<encoded>/ are preserved. Idempotent: removing an already-removed path returns removed:false.",
+        },
+        {
+          userAsks:
+            '"What\'s in my Directory dropdown?" / "List my directories" / "Show me my registered paths"',
+          confirmBefore: "Read-only. No confirmation needed.",
+          api: {
+            method: "GET",
+            url: "http://127.0.0.1:8080/api/projects",
+            body: "(none)",
+            auth: "VM-local — no auth.",
+          },
+          consequences:
+            "Returns { projects: [{ path, encodedName }] }. The path is the real filesystem directory; the dropdown shows it with any Display Name override applied on top.",
+        },
+        {
+          userAsks:
+            '"What Project Directory Display Names are set?" / "Which directories have custom names?"',
+          confirmBefore: "Read-only. No confirmation needed.",
+          api: {
+            method: "GET",
+            url: "http://127.0.0.1:8080/api/settings/project-display-names",
+            body: "(none)",
+            auth: "VM-local — no auth.",
+          },
+          consequences:
+            "Returns { displayNames: { '<basename>': '<label>' } }. Only directories with an override appear — absence means 'using the directory basename'. Pair this with /api/projects to report full state.",
+        },
+        {
+          userAsks:
+            '"What Project Directory Tab Names are set?" / "Which directories have custom browser tab titles?"',
+          confirmBefore: "Read-only. No confirmation needed.",
+          api: {
+            method: "GET",
+            url: "http://127.0.0.1:8080/api/settings/project-directory-tab-names",
+            body: "(none)",
+            auth: "VM-local — no auth.",
+          },
+          consequences:
+            "Returns { tabNames: { '<basename>': '<tab title>' } }. Only directories with an override appear — absence means 'falls back to Project Directory Display Name, then to basename'.",
+        },
+        {
+          userAsks:
+            '"What\'s THIS server\'s name?" / "What connector am I on?" / "What is my Server Display Name?" / "List ALL my servers" / "Show my whole fleet"',
+          confirmBefore:
+            'Read-only, but needs an agent key (sg_...) — even to read THIS server\'s own Server Display Name, because there is no VM-local endpoint for it. If you do not already have one on disk, ask the user: "To read your Server Display Name (this server or any other) I need an agent key. You can mint one at ' +
+            PUBLIC_URL +
+            "/dashboard (Agent Keys → New). Paste it here and I won't store it beyond this session.\" If they decline, you can still read Project Directory info (reads above) and tell the user the Server Display Name requires an agent key to fetch.",
+          api: {
+            method: "GET",
+            url: PUBLIC_URL + "/api/connectors",
+            body: "(none)",
+            auth:
+              "Authorization: Bearer sg_<agent-key>. A CONNECTOR_TOKEN (the one in ~/spaiglass/.env) is NOT the same thing and will 401 here.",
+          },
+          consequences:
+            "Returns an array of connectors the user owns: [{ id, name (slug), displayName, customDisplayName, online, spaiglassVersion, ... }]. Each id can be passed to DELETE /api/connectors/<id> or PATCH-equivalents.",
+        },
+        {
+          userAsks:
+            '"What\'s my full configuration?" / "Give me a report of everything (every server AND every directory on every server)"',
+          confirmBefore:
+            "Read-only. An agent key (sg_...) is required to enumerate servers and to reach OTHER servers\u2019 directories. If you do not already have one, mint one via Step 2 of this guide (POST /api/auth/token-exchange) — the same key works for every read below. Without a key you can only report the three VM-local reads for THIS server.",
+          api: {
+            method: "GET (multi) — do this in two passes",
+            url:
+              "Pass 1 — enumerate the fleet (one call):\n" +
+              "  " +
+              PUBLIC_URL +
+              "/api/connectors\n" +
+              "  \u2192 gives you every connector\u2019s slug (`name`) and Server Display Name (`displayName`).\n\n" +
+              "Pass 2 — for EACH connector slug from Pass 1, call ONE combined endpoint that proxies through that VM\u2019s connector tunnel and returns its directories with Display Name AND Tab Name already merged:\n" +
+              "  " +
+              PUBLIC_URL +
+              "/vm/<any-online-slug>/api/__relay/fleet/<targetSlug>/roles\n" +
+              "  \u2192 response includes `directories: [{ name, path, displayName, tabName, ... }]`.\n\n" +
+              "Notes:\n" +
+              "  \u2022 `<any-online-slug>` is just the slug you are routed through — use your current VM\u2019s slug (e.g. `<login>.<your-connector>`). The `<targetSlug>` is the connector you want to read (bare name is fine).\n" +
+              "  \u2022 The target VM must be online (its connector tunnel must be attached). If `directories` comes back empty AND the connector is listed as offline in Pass 1, report it as offline — don\u2019t claim zero directories.\n" +
+              "  \u2022 For THIS server only (no agent key, no fleet-wide read), fall back to the three VM-local endpoints listed above.",
+            body: "(none)",
+            auth:
+              "Both passes: Authorization: Bearer sg_<agent-key>. Same key for all calls.",
+          },
+          consequences:
+            "Output format to send back to the user — one block per server:\n\nServer: <Server Display Name> (slug <slug>, <online|offline>)\n  Directories:\n    - <Project Directory Display Name or basename> \u2014 <working directory path> [Tab: <Project Directory Tab Name or \u201cdefault\u201d>]\n    - ...\n\nAlways use the plain-English field names (Server Display Name, Project Directory Display Name, Project Directory Tab Name) when speaking to the user. If a field is unset, say \u201cdefault\u201d rather than \u201cnull\u201d.",
+        },
+        {
+          userAsks:
+            '"Run SpAIglass doctor" / "Audit my config" / "What\u2019s wrong with my setup?" / "Check everything"',
+          confirmBefore:
+            "Read-only audit. No confirmation needed to RUN. If you plan to act on any issue, stop and confirm with the human first — doctor reports issues, it does not auto-fix them.",
+          api: {
+            method: "GET",
+            url:
+              "Two scopes:\n" +
+              "  \u2022 Just THIS VM:  http://127.0.0.1:8080/api/doctor  (no auth, loopback)\n" +
+              "  \u2022 Whole fleet:   " +
+              PUBLIC_URL +
+              "/vm/<any-online-slug>/api/__relay/doctor  (agent key; fans out to every online connector you can see)",
+            body: "(none)",
+            auth:
+              "VM-local: no auth. Fleet-wide: Authorization: Bearer sg_<agent-key>.",
+          },
+          consequences:
+            "Response shape (VM-local): { ok, checkedAt, counts, issues:[{ id, code, severity, message, details, fixable, fixHint }] }. Fleet-wide wraps that as { servers:[{ server:{slug, displayName, online, role}, issues, counts }] }. Checks in v1: directory.missing (registered path gone from disk), directory.duplicate-case (two entries differ only in case), directory.home-root ($HOME registered as a project — usually accidental), displayName.orphan / tabName.orphan (override for a basename that isn\u2019t registered anymore). severity is info | warn | error. Offline servers are returned with issues=[] and skipped='offline'. Report issues grouped by server, in severity order, and for each one read the `message` verbatim plus the `fixHint` — then ASK the human before touching anything.",
+        },
+        {
+          userAsks:
+            '"Add another server" / "I want to connect my laptop too"',
+          confirmBefore:
+            'The user adds servers by running the installer on the new machine. Do NOT try to add a server from this VM. Tell them: "Adding a server is a one-shot installer you run on the new machine itself. I can\'t do it from this VM. Open ' +
+            PUBLIC_URL +
+            '/setup on the new machine and follow the installer step — or I can give you the exact one-liner for your OS."',
+          api: {
+            method: "N/A",
+            url: "(installer only — runs on the target machine)",
+            body: "(see the 'Install the connector' step in this guide)",
+            auth: "Agent key + connector token generated during install.",
+          },
+          consequences:
+            "Creates a new connector row in the relay DB. Does not touch this VM.",
+        },
+        {
+          userAsks:
+            '"Remove this server" / "Delete this connector" / "Take this VM out of my fleet"',
+          confirmBefore:
+            'This is destructive on the relay side. Read back exactly: "Removing this server unlists it from your Server dropdown and ends this connector\'s ability to attach. Nothing on the VM itself is deleted. If you later reinstall with the same name you\'ll get a fresh connector — old session history stays on disk here regardless. Proceed?"',
+          api: {
+            method: "DELETE",
+            url: PUBLIC_URL + "/api/connectors/<connector-id>",
+            body: "(none)",
+            auth: "Owner-authenticated via relay session / agent key.",
+          },
+          consequences:
+            "Relay row removed; this VM can no longer attach as that connector. Local files, ~/.claude.json, and session transcripts are untouched. Users will need to sign in again only if their session was pinned to this connector.",
+        },
+      ],
+      agentRules: [
+        'Use the user-facing names — "Server Display Name", "Project Directory Display Name", "Project Directory Tab Name" — when you confirm changes. Do not say "connector display name" or "basename override".',
+        "Never require or request a reinstall to change a name. All renames are API calls.",
+        "Never ask the user for absolute paths, `~/.claude.json` keys, or connector IDs. You are on the VM — look them up yourself (GET /api/projects for paths, relay GET /api/connectors for IDs).",
+        "Confirm the plain-English setting you are about to change before firing, in one sentence. Do not dump curl output at the user mid-confirmation.",
+        "After a change, report what you did in plain English and mention the user may need to refresh the page for the UI to pick it up.",
+        "If a user asks for something the UI already exposes (Settings wheel for the three display fields), you may do it via the API OR point them at the Settings wheel — either is fine. Pick whichever is faster in context. For anything structural (add/remove directory, add/remove server), always do it via API; the UI no longer exposes those.",
+      ],
+    },
+    troubleshooting: {
+      summary:
+        "If you are an agent and a setup step failed, match the symptom here before guessing. These are the real failure modes we have seen — fix the root cause, do not paper over it with retries or SQL.",
+      entries: [
+        {
+          symptom: "POST /api/auth/token-exchange → 401 Invalid GitHub token",
+          causes: [
+            "PAT expired, revoked, or never had the right scope. Classic PATs need no scopes (the relay only reads /user). Fine-grained PATs need 'Account permissions → Read profile data'.",
+            "You pasted the token with surrounding whitespace or quotes — check for trailing \\n.",
+          ],
+          fix: "Ask the human for a fresh PAT (or switch to Option B — send them to PUBLIC_URL/ and have them hand you the one-shot token). Do not retry with the same PAT expecting a different result.",
+        },
+        {
+          symptom: "POST /api/connectors → 401 Unauthorized",
+          causes: [
+            "Missing or malformed Authorization header.",
+            "Agent key was deleted, or you are hitting the wrong relay.",
+          ],
+          fix: "Confirm the header is exactly `Authorization: Bearer sg_...` (no quotes, no leading 'Bearer:'). Run GET /api/auth/me with the same key — if that also 401s, the key is dead; mint a new one via token-exchange.",
+        },
+        {
+          symptom: "POST /api/connectors → 409 You already have a connector named '…'",
+          causes: ["You skipped Step 1 and registered a duplicate of a connector you already own."],
+          fix: "Use the existing connector from GET /api/connectors (the response body includes its id). If the name is wrong, PATCH it — do not create a second one.",
+        },
+        {
+          symptom: "POST /api/connectors → 400 'name' contains reserved slug / control chars / invalid format",
+          causes: ["Name picked a reserved route prefix (api, vm, setup, auth, install, ...) or contains disallowed characters."],
+          fix: "Rename with only [A-Za-z0-9._-], starting alphanumeric, ≤100 chars. Examples that work: 'production-vm', 'dev.alice', 'Staging_2'.",
+        },
+        {
+          symptom: "Installer exits 0 but GET /api/connectors shows online: false",
+          causes: [
+            "systemd --user linger is off (service dies at logout). Installer should have hard-failed on this but check `loginctl show-user $USER | grep Linger`.",
+            "CONNECTOR_TOKEN in ~/spaiglass/.env does not match the token shown at create time.",
+            "Backend crashed at startup — check `systemctl --user status spaiglass` and `journalctl --user -u spaiglass -n 50`.",
+          ],
+          fix: "Enable linger (`sudo loginctl enable-linger $USER`), verify the token in .env matches the one from POST /api/connectors, then `systemctl --user restart spaiglass` and re-check GET /api/connectors. If the token really is lost, DELETE the connector and POST a new one — do not edit the DB.",
+        },
+        {
+          symptom: "POST http://127.0.0.1:8080/api/projects/register → connection refused",
+          causes: [
+            "The local backend is not running (service failed to start).",
+            "PORT in the .env was changed from 8080 and you are hitting the wrong port.",
+          ],
+          fix: "Check `systemctl --user status spaiglass`, start/restart it, and confirm PORT in ~/spaiglass/.env. The local backend is what hosts the project-register endpoint — it is NOT served by the relay.",
+        },
+        {
+          symptom: "Human signs in at PUBLIC_URL but lands on /fleetrelay instead of their VM",
+          causes: ["No connectors exist yet for this user (fresh account, or they deleted them all)."],
+          fix: "This is the expected empty-state page — it carries a one-shot sg_ token for you to use in Option A. Complete Steps 2-4 to register their first VM; next sign-in will route them to chat.",
+        },
+      ],
+    },
+    fleetManagementApi: {
+      summary:
+        "After initial setup, the connector fleet is managed entirely through the relay API. If the API cannot express an operation you need, update the API — never edit the relay database directly. Every endpoint below requires `Authorization: Bearer sg_YOUR_KEY` and operates on connectors owned by the caller.",
+      endpoints: [
+        {
+          method: "GET",
+          path: "/api/connectors",
+          purpose:
+            "List all connectors owned by the caller, plus any shared with them. Returns `{ id, name, displayName, role, online, lastSeen, createdAt, spaiglassVersion }` per connector. Use this as the source of truth for what's in the fleet — it is what the fleet dropdown reads.",
+        },
+        {
+          method: "POST",
+          path: "/api/connectors",
+          purpose:
+            "Register a new connector. Body: `{ \"name\": \"my-vm\" }`. Returns `{ id, name, token, ... }`; the raw token is shown once — store it, then supply it to the VM installer. Preferred over any manual DB entry.",
+        },
+        {
+          method: "PATCH",
+          path: "/api/connectors/:id",
+          purpose:
+            "Update a connector. Body accepts `displayName` (free-form label) and/or `name` (slug — changes /vm/<login>.<name>/ URL). Both preserve the connector id and token, so the VM-side connector keeps its existing .env and does NOT need reconfiguration. Use this to rename — never rename via SQL.",
+        },
+        {
+          method: "DELETE",
+          path: "/api/connectors/:id",
+          purpose:
+            "Remove a connector. Disconnects the live tunnel if the VM is online and deletes the connector record. The VM-side spaiglass service will fail to reauth until you POST a replacement and update its .env with the new token/id.",
+        },
+        {
+          method: "GET",
+          path: "/api/connectors/:id/config",
+          purpose:
+            "Download a .env scaffold for the connector (the raw token is NOT embedded — tokens are hashed at rest; you must keep your own copy from the create call).",
+        },
+        {
+          method: "GET / POST / PATCH / DELETE",
+          path: "/api/connectors/:id/collaborators[/:userId]",
+          purpose:
+            "Share a connector with another signed-in spaiglass user at role `editor` or `viewer`. Owner-only except for GET, which any collaborator can call to see who else has access.",
+        },
+        {
+          method: "PUT",
+          path: "/api/connectors/:id/labels",
+          purpose:
+            "Set or clear a custom human-readable label for a role file on this connector. Owner only. Use this instead of renaming role files on disk when a human wants a friendlier name in the UI.",
+        },
+      ],
+      principles: [
+        "Use the API, not the DB. If the API cannot express an operation, the correct fix is to add/extend the endpoint — not to run SQL against /opt/sgcleanrelay/relay.db.",
+        "Renames preserve identity. `PATCH /api/connectors/:id` with `{ name }` keeps the same id and token — the VM-side connector keeps working. The customer agent does not need to restart or reconfigure the service.",
+        "Tokens are held by the customer. The connector token lives in the VM's .env (`CONNECTOR_TOKEN`). The relay stores only the SHA-256 hash. Treat the customer-side .env as the authoritative source.",
+        "The fleet dropdown reflects `GET /api/connectors`. If something looks wrong in the fleet list, verify against this endpoint first — that is the user-facing registry.",
+      ],
+    },
     shortcut:
       "If you already have a token/id/name from a previous registration, skip straight to the install step.",
     finalStep: {
       title: "Tell the human user you're done",
       description:
-        "Once the service is running and at least one role file exists, setup is finished. Report success to your human user and tell them: \"Setup complete. Go to " +
+        "Report success ONLY after the <strong>full six-gate integrity check</strong> passed (see step \"Verify the setup actually works\"). All six gates must be green: relay health, <code>online: true</code> for the connector, project visible in <code>/api/projects</code>, at least one role file via <code>/api/roles?path=…</code>, <code>CONNECTOR_ID</code> in <code>~/spaiglass/.env</code> matches the id you registered in Step 3, and no orphan connectors left behind for this host. <strong>Running the integrity check is not optional — it is the contract that separates a finished setup from a broken one that only looks finished.</strong> If any gate fails, do not declare success; fix it (delete orphans with <code>DELETE /api/connectors/:id</code>, add a role file, re-run the installer, etc.) and re-run the check until every gate is green. Once verified, tell the human: \"Setup complete. Go to " +
         PUBLIC_URL +
         " and sign in with GitHub — you'll land directly in your chat.\" They do not need a URL, a VM name, or a role name; sign-in routes them to the right place automatically. Do not construct or share <code>/vm/&lt;login&gt;.&lt;vm&gt;/</code> URLs — that detail is now internal. If something failed partway through, say so plainly and tell the user what you need from them (typically: `sudo loginctl enable-linger $USER`, then re-run the install one-liner).",
     },
     features: [
+      "Server + Directory picker — one connector per machine, many directories per server, role is optional",
+      "Rich session picker — first-message intent, turn counts, files touched, model, and duration for every past session",
       "Chat with Claude Code from any browser — laptop, phone, tablet",
-      "Project file browser — see and edit your files while you chat",
+      "Directory file browser — see and edit your files while you chat",
       "Markdown editor — Monaco-powered, syntax highlighted, Ctrl+S to save",
       "Six themes including 70s amber/green CRT phosphor + corporate plain",
-      "Role-based sessions — define agent roles per project via .claude/agents/*.md files — per-role plugin isolation via CLAUDE_CONFIG_DIR",
+      "Optional roles — define agent personas per directory via .claude/agents/*.md files",
       "Architecture viewer — ASCII diagrams from architecture.json",
       "Multi-VM fleet management — one dashboard for all your machines, across Linux/macOS/Windows",
       "Frontend served by the relay — your VMs only ship the backend; UI updates ship without VM redeploys",
@@ -1479,6 +2026,23 @@ ${THEME_TOGGLE_HTML}
   <p style="margin: 8px 0 0; font-size: 0.9em; color: #475569;">Use whichever format is easier for your tools. The numbered steps, decision trees, and final instructions are identical.</p>
 </div>
 
+<div class="card" style="border-left: 4px solid #dc2626; background: #fef2f2;">
+  <h3 style="margin-top: 0; color: #991b1b;">&#9888; Integrity check is mandatory &mdash; this is the single most important best practice in this guide</h3>
+  <p style="margin: 8px 0;">Every setup you perform MUST end with the full integrity check in the "Verify the setup actually works" step below. <strong>Do not declare success until all six gates are green.</strong> A setup where the installer exited 0 and the connector shows online can still be silently broken &mdash; the failure modes the gates catch are real ones we have shipped to users:</p>
+  <ul style="margin: 8px 0 8px 20px; font-size: 0.95em; color: #7f1d1d;">
+    <li><strong>Orphan connectors</strong> &mdash; the installer wired up a different connector than the one you just registered, leaving a permanently-offline row in every user's dropdown</li>
+    <li><strong>Role-less dead chats</strong> &mdash; the directory has no <code>agents/*.md</code>, so <code>session_start</code> rejects every message while the UI looks connected</li>
+    <li><strong>Duplicate-VM fleet pollution</strong> &mdash; leftovers from prior setup attempts masquerading as separate servers in the dropdown</li>
+  </ul>
+  <p style="margin: 8px 0 0; font-size: 0.9em; color: #7f1d1d;">Integrity-check failures are not optional to investigate. If you skip them, the user will come back with "it doesn't work" and neither of us will know where the break is. <strong>Run all six checks, paste the jq output if anything looks off, and fix before reporting done.</strong></p>
+  <p style="margin: 10px 0 4px; font-size: 0.92em; color: #7f1d1d;"><strong>Universal fix pattern:</strong> <em>delete bad record + re-add correctly</em>. Every configurable surface supports it:</p>
+  <ul style="margin: 4px 0 8px 20px; font-size: 0.9em; color: #7f1d1d;">
+    <li>Connector: <code>DELETE /api/connectors/:id</code> then <code>POST /api/connectors</code></li>
+    <li>Role file: <code>DELETE /api/roles/:name?path=X</code> then <code>POST /api/roles?path=X</code></li>
+    <li>Project entry: <code>POST /api/projects/unregister</code> then <code>POST /api/projects/register</code> (idempotent)</li>
+  </ul>
+</div>
+
 <div class="features">
   <h2>Supported Platforms</h2>
   <p style="margin: 4px 0 10px; font-size: 0.92em; color: #475569;">SpAIglass runs anywhere the Anthropic Claude Code CLI runs. Mix and match in the same fleet.</p>
@@ -1491,11 +2055,13 @@ ${THEME_TOGGLE_HTML}
 
   <h2>What You Get</h2>
   <ul>
+    <li><strong>Server + Directory picker</strong> — one connector per machine, many directories per server, role is optional</li>
+    <li><strong>Rich session picker</strong> — first-message intent, turn counts, files touched, model, and duration for every past session</li>
     <li><strong>Chat with Claude Code</strong> from any browser — laptop, phone, tablet</li>
-    <li><strong>Project file browser</strong> — see and edit your files while you chat</li>
+    <li><strong>Directory file browser</strong> — see and edit your files while you chat</li>
     <li><strong>Markdown editor</strong> — Monaco-powered, syntax highlighted, Ctrl+S to save</li>
     <li><strong>Six themes</strong> including 70s amber/green CRT phosphor and corporate plain</li>
-    <li><strong>Role-based sessions</strong> — define agent roles per project via .claude/agents/*.md files — per-role plugin isolation via CLAUDE_CONFIG_DIR</li>
+    <li><strong>Optional roles</strong> — define agent personas per directory via .claude/agents/*.md files</li>
     <li><strong>Architecture viewer</strong> — ASCII diagrams from architecture.json</li>
     <li><strong>Multi-VM fleet management</strong> — one dashboard for all your machines, across Linux/macOS/Windows</li>
     <li><strong>Frontend served by the relay</strong> — your VMs ship only the backend, so UI updates roll out without redeploying every VM</li>
@@ -1519,11 +2085,116 @@ ${THEME_TOGGLE_HTML}
   <strong>Adding more VMs:</strong> ${data.addMoreVms}
 </div>
 
+<div class="card" style="border-left: 4px solid #8b5cf6;">
+  <h3 style="margin-top: 0;">${data.model.title}</h3>
+  <p>${data.model.summary}</p>
+  <ul>${data.model.points.map((p) => `<li style="margin-bottom: 8px;">${p}</li>`).join("")}</ul>
+</div>
+
 ${stepsHtml}
 
 <div class="card" style="border-left: 4px solid #22c55e;">
   <h3>${data.steps.length + 1}. ${data.finalStep.title}</h3>
   <p>${data.finalStep.description}</p>
+</div>
+
+<div class="card" style="border-left: 4px solid #6366f1;">
+  <h3 style="margin-top: 0;">Fleet Management API</h3>
+  <p>${data.fleetManagementApi.summary}</p>
+  <table style="width: 100%; border-collapse: collapse; font-size: 0.9em; margin: 8px 0 16px;">
+    <thead><tr style="border-bottom: 2px solid #e2e8f0; text-align: left;">
+      <th style="padding: 6px 12px; width: 22%;">Method / Path</th>
+      <th style="padding: 6px 12px;">Purpose</th>
+    </tr></thead>
+    <tbody>${data.fleetManagementApi.endpoints
+      .map(
+        (e) => `
+      <tr style="border-bottom: 1px solid #f1f5f9;">
+        <td style="padding: 6px 12px; font-family: monospace; vertical-align: top;"><strong>${e.method}</strong> ${e.path}</td>
+        <td style="padding: 6px 12px; color: #475569;">${e.purpose}</td>
+      </tr>`,
+      )
+      .join("")}
+    </tbody>
+  </table>
+  <h4 style="margin: 16px 0 8px; font-size: 1em;">Principles</h4>
+  <ul style="margin: 4px 0 4px; padding-left: 20px; font-size: 0.92em; color: #475569; line-height: 1.7;">
+    ${data.fleetManagementApi.principles.map((p) => `<li>${p}</li>`).join("")}
+  </ul>
+</div>
+
+<div class="card" style="border-left: 4px solid #0ea5e9;">
+  <h3 style="margin-top: 0;">${data.configuring.title}</h3>
+  <p>${data.configuring.summary}</p>
+
+  <h4 style="margin: 16px 0 6px; font-size: 1em;">Vocabulary — use these exact names with users</h4>
+  <table style="width: 100%; border-collapse: collapse; font-size: 0.9em; margin: 0 0 16px;">
+    <thead><tr style="border-bottom: 2px solid #e2e8f0; text-align: left;">
+      <th style="padding: 6px 10px; width: 24%;">Name</th>
+      <th style="padding: 6px 10px;">What it controls</th>
+      <th style="padding: 6px 10px; width: 22%;">Editable by</th>
+    </tr></thead>
+    <tbody>${data.configuring.vocab
+      .map(
+        (v) => `
+      <tr style="border-bottom: 1px solid #f1f5f9; vertical-align: top;">
+        <td style="padding: 6px 10px; font-weight: 600; color: #0369a1;">${v.term}</td>
+        <td style="padding: 6px 10px; color: #475569;">${v.scope}</td>
+        <td style="padding: 6px 10px; color: #475569;">${v.editableBy}</td>
+      </tr>`,
+      )
+      .join("")}
+    </tbody>
+  </table>
+
+  <h4 style="margin: 16px 0 6px; font-size: 1em;">Playbook — user request → agent action</h4>
+  ${data.configuring.playbook
+    .map(
+      (p) => `
+    <details style="margin: 10px 0; padding: 10px 14px; background: #f0f9ff; border-radius: 6px;">
+      <summary style="cursor: pointer; font-weight: 600; color: #075985;">${p.userAsks}</summary>
+      <div style="margin-top: 10px; font-size: 0.92em;">
+        <p style="margin: 4px 0;"><strong style="color: #075985;">Confirm first:</strong> ${p.confirmBefore}</p>
+        <table style="width: 100%; border-collapse: collapse; margin: 6px 0 8px; background: #fff; border-radius: 4px;">
+          <tbody>
+            <tr><td style="padding: 4px 8px; color: #64748b; width: 90px;">Method</td><td style="padding: 4px 8px; font-family: monospace;">${p.api.method}</td></tr>
+            <tr><td style="padding: 4px 8px; color: #64748b;">URL</td><td style="padding: 4px 8px; font-family: monospace; word-break: break-all;">${p.api.url}</td></tr>
+            <tr><td style="padding: 4px 8px; color: #64748b;">Body</td><td style="padding: 4px 8px; font-family: monospace; white-space: pre-wrap;">${p.api.body}</td></tr>
+            <tr><td style="padding: 4px 8px; color: #64748b;">Auth</td><td style="padding: 4px 8px; color: #475569;">${p.api.auth}</td></tr>
+          </tbody>
+        </table>
+        <p style="margin: 4px 0;"><strong style="color: #047857;">Consequences:</strong> ${p.consequences}</p>
+        ${p.clearOverride ? `<p style="margin: 4px 0; color: #64748b;"><strong>Clear:</strong> ${p.clearOverride}</p>` : ""}
+      </div>
+    </details>`,
+    )
+    .join("")}
+
+  <h4 style="margin: 16px 0 6px; font-size: 1em;">Rules of engagement (agent, not user)</h4>
+  <ul style="margin: 4px 0; padding-left: 20px; font-size: 0.92em; color: #475569; line-height: 1.7;">
+    ${data.configuring.agentRules.map((r) => `<li>${r}</li>`).join("")}
+  </ul>
+</div>
+
+<div class="card" style="border-left: 4px solid #dc2626;">
+  <h3 style="margin-top: 0;">Troubleshooting</h3>
+  <p>${data.troubleshooting.summary}</p>
+  ${data.troubleshooting.entries
+    .map(
+      (t) => `
+    <details style="margin: 10px 0; padding: 8px 12px; background: #fef2f2; border-radius: 6px;">
+      <summary style="cursor: pointer; font-weight: 600; color: #991b1b;">${t.symptom}</summary>
+      <div style="margin-top: 10px; font-size: 0.92em;">
+        <strong style="color: #475569;">Causes:</strong>
+        <ul style="margin: 4px 0 10px; padding-left: 20px; color: #475569; line-height: 1.6;">
+          ${t.causes.map((c) => `<li>${c}</li>`).join("")}
+        </ul>
+        <strong style="color: #047857;">Fix:</strong>
+        <p style="margin: 4px 0 4px; color: #1f2937;">${t.fix}</p>
+      </div>
+    </details>`,
+    )
+    .join("")}
 </div>
 
 <div class="card" style="border-left: 4px solid #f59e0b; background: #fffbeb;">
@@ -1762,7 +2433,7 @@ app.route("/", agentKeyRoutes());
 // Split out so renderFleetRelay stays focused on the redirect decision.
 function renderLanding(c: Context<RelayEnv>) {
   return c.html(`<!DOCTYPE html>
-<html><head><title>SpAIglass</title>
+<html><head><title>SpaiGlass</title>
 ${FAVICON}
 ${THEME_HEAD}
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -1796,7 +2467,7 @@ ${THEME_TOGGLE_HTML}
       <path d="M31,32L27,28A5,5 0 1,1 26,33Z"/>
     </g>
   </svg>
-  <h1 style="margin:0;">SpAIglass</h1>
+  <h1 style="margin:0;">Sp<span class="brand-ai">ai</span>Glass</h1>
 </div>
 <p class="tagline">Claude chat--markdown access--one interface--ANYWHERE</p>
 <p class="pitch">Browser-based interface for Claude Code across your machines. See your project files, edit markdown, run tools, and chat with Claude — from any device, anywhere. Open source. Fully auditable. Your code never leaves your machine.</p>
@@ -1915,21 +2586,61 @@ function renderFleetRelay(c: Context<RelayEnv>) {
     return renderLanding(c);
   }
 
-  // Prefer the user's last-used agent URL if we have one.
+  // Explicit escape hatch: the VM-offline page's "Back to fleet relay" link
+  // passes ?skip_last_used=1 so this handler doesn't auto-redirect the user
+  // right back to the same offline VM they just came from.
+  const skipLastUsed = c.req.query("skip_last_used") === "1";
+
+  // Prefer the user's last-used agent URL if we have one — but only if the
+  // connector it references still exists. Preferences stored before a rename
+  // or delete would otherwise redirect every load to a broken /vm/<old>/ URL
+  // that the relay can't route, leaving the user permanently stuck.
+  const owned = getConnectorsByUser(user.id);
+  const shared = getSharedConnectorsForUser(user.id);
+  const allConnectors: { name: string; id: string }[] = [
+    ...owned.map((c) => ({ name: c.name, id: c.id })),
+    ...shared.map((c) => ({ name: `${c.owner_login}.${c.name}`, id: c.id })),
+    ...shared.map((c) => ({ name: c.name, id: c.id })),
+  ];
+  const cm = getChannelManager();
   const lastAgent = getUserPreference(user.id, "last_agent_url");
-  if (lastAgent?.startsWith("/")) {
+  if (!skipLastUsed && lastAgent?.startsWith("/vm/")) {
+    const firstSeg = lastAgent.slice(4).split("/")[0] || "";
+    const connectorPart = firstSeg.includes(".")
+      ? firstSeg.slice(firstSeg.indexOf(".") + 1)
+      : firstSeg;
+    const match = allConnectors.find(
+      (c) => c.name.toLowerCase() === connectorPart.toLowerCase(),
+    );
+    // Only honor the last-used redirect when the target connector is
+    // currently ONLINE. Redirecting into an offline VM produces a dead-end
+    // page whose "Back to fleet relay" link bounces right back here — the
+    // exact loop that prompted this guard.
+    if (match && cm.isOnline(match.id)) return c.redirect(lastAgent);
+    // Stale preference OR offline target: fall through to first-available.
+    // Don't mutate the preference here — it'll get overwritten the next
+    // time the user lands on a valid chat page.
+  } else if (!skipLastUsed && lastAgent?.startsWith("/")) {
+    // Non-VM last-agent (unlikely but possible) — keep prior behavior.
     return c.redirect(lastAgent);
   }
 
-  // Otherwise fall back to the first owned connector, then the first shared
-  // connector. For owned, use bare connector name (resolveVmSlug accepts it);
-  // for shared, use owner_login.name so the slug resolves against the right
-  // owner.
-  const owned = getConnectorsByUser(user.id);
+  // Prefer an online owned connector over an offline one, then fall back
+  // to shared. If nothing is online, land on the first owned/shared anyway
+  // so the user sees a VM-offline page rather than nothing at all.
+  const firstOnlineOwned = owned.find((c) => cm.isOnline(c.id));
+  if (firstOnlineOwned) {
+    return c.redirect(`/vm/${firstOnlineOwned.name}/`);
+  }
+  const firstOnlineShared = shared.find((c) => cm.isOnline(c.id));
+  if (firstOnlineShared) {
+    return c.redirect(
+      `/vm/${firstOnlineShared.owner_login}.${firstOnlineShared.name}/`,
+    );
+  }
   if (owned.length > 0) {
     return c.redirect(`/vm/${owned[0].name}/`);
   }
-  const shared = getSharedConnectorsForUser(user.id);
   if (shared.length > 0) {
     return c.redirect(`/vm/${shared[0].owner_login}.${shared[0].name}/`);
   }
@@ -2096,7 +2807,7 @@ ${FAVICON}
 <style>body{font-family:system-ui;max-width:600px;margin:80px auto;padding:0 20px;color:#1a1a2e;background:#f0f0f5;}</style>
 </head><body><h1>VM not found</h1>
 <p>No VM matching "${slug}" was found on your account.</p>
-<p><a href="/fleetrelay">Back to fleet relay</a></p></body></html>`,
+<p><a href="/fleetrelay?skip_last_used=1">Back to fleet relay</a></p></body></html>`,
       404,
     );
   }
@@ -2368,11 +3079,16 @@ function makeInjectScript(slug: string, nonce: string): string {
     `var H=location.origin;` +
     // Tell React Router's BrowserRouter to use this basename
     `window.__SG_BASE=B;` +
-    // Parse project-role context from URL: /vm/:slug/<project>-<role>/
+    // Parse directory/role context from URL.
+    //   /vm/:slug/                            → no project, no role (picker)
+    //   /vm/:slug/<directory>/                → directory, no role (role-less)
+    //   /vm/:slug/<directory>-<role>/         → directory + role (legacy)
+    // Role-less URLs are the primary UX in the Server+Directory model; the
+    // hyphen-role form stays supported for back-compat with existing links.
     `var inner=location.pathname.slice(B.length).replace(/^\\/+/,'');` +
     `var seg=inner.split('/').filter(Boolean)[0]||'';` +
     `var di=seg.lastIndexOf('-');` +
-    `var proj=di>0?seg.slice(0,di):'';` +
+    `var proj=di>0?seg.slice(0,di):seg;` +
     `var role=di>0?seg.slice(di+1):'';` +
     `window.__SG={slug:'${slug}',project:proj,role:role,segment:seg};` +
     // URL rewrite helper — adds /vm/:slug prefix to same-origin paths
@@ -2402,6 +3118,27 @@ function makeInjectScript(slug: string, nonce: string): string {
 }
 
 // Helper: GET JSON from a VM backend through the tunnel
+/**
+ * Drop paths that look like the Spaiglass install itself — binary dir, state
+ * dir, or Claude Code's own config dir. These show up in ~/.claude.json if
+ * the user ever ran `claude` inside them but aren't user projects.
+ *
+ * Matches the common home-dir shapes for Linux (/home/<u>/), macOS
+ * (/Users/<u>/), and Windows (C:\Users\<u>\). Kept as a regex list so it
+ * tolerates the different path separators POSIX-normalized clients might
+ * send.
+ */
+function isSpaiglassInternalPath(rawPath: string): boolean {
+  const p = rawPath.replace(/\\/g, "/").replace(/\/+$/, "");
+  const patterns = [
+    /^\/home\/[^/]+\/(spaiglass|\.spaiglass|\.claude)(\/|$)/i,
+    /^\/Users\/[^/]+\/(spaiglass|\.spaiglass|\.claude)(\/|$)/i,
+    /^[A-Za-z]:\/Users\/[^/]+\/(spaiglass|\.spaiglass|\.claude)(\/|$)/i,
+    /^\/root\/(spaiglass|\.spaiglass|\.claude)(\/|$)/i,
+  ];
+  return patterns.some((re) => re.test(p));
+}
+
 async function proxyGetJson(
   cm: ReturnType<typeof getChannelManager>,
   connectorId: string,
@@ -2523,31 +3260,51 @@ app.put("/vm/:slug/api/__relay/last-agent", async (c) => {
   return c.json({ ok: true });
 });
 
-// Relay-level: fetch roles for a specific connector (by slug), accessible from VM context.
+// Relay-level: fetch roles + directories for a specific connector (by slug),
+// accessible from VM context. Directories are the primary Server+Directory
+// picker source — roles are retained as secondary, role-pinned entries.
 app.get("/vm/:slug/api/__relay/fleet/:targetSlug/roles", async (c) => {
   const auth = await vmAuth(c);
   if (auth instanceof Response) return auth;
 
   const targetSlug = c.req.param("targetSlug")!;
   const targetConn = resolveVmSlug(targetSlug);
-  if (!targetConn) return c.json({ roles: [] });
+  if (!targetConn) return c.json({ roles: [], directories: [] });
 
   const cm = getChannelManager();
-  if (!cm.isOnline(targetConn.id)) return c.json({ roles: [] });
+  if (!cm.isOnline(targetConn.id)) {
+    return c.json({ roles: [], directories: [] });
+  }
 
-  // Discover projects by scanning the filesystem for role files.
-  // This replaces the old /api/projects approach which read from
-  // .claude.json — that file is managed by Claude Code and accumulates
-  // stale entries from ad-hoc sessions, renamed directories, etc.
-  // /api/discover scans ~/projects for directories with actual role
-  // files on disk, so the fleet dropdown only shows real projects.
+  // Resolve the canonical slug (login.name) for URL construction so that
+  // role URLs match the __SG.slug set in the browser. The targetSlug from
+  // the fetch may be a bare connector name, but page URLs always use the
+  // full login.name format.
+  const owner = getUserById(targetConn.user_id);
+  const canonicalSlug = owner
+    ? `${owner.github_login}.${targetConn.name}`
+    : targetSlug;
+
   try {
-    const discoverRes = await proxyGetJson(
-      cm,
-      targetConn.id,
-      "/api/discover?projectsDir=~/projects",
-    );
-    if (!discoverRes?.projects) return c.json({ roles: [] });
+    // /api/discover scans ~/projects for role files (source of truth for roles).
+    // /api/projects reads Claude Code's registry (source of truth for the
+    // role-less directory list — includes dirs without role files).
+    // /api/settings/project-display-names supplies owner-provided labels.
+    // /api/settings/project-directory-tab-names supplies browser-tab-only overrides.
+    const [discoverRes, projectsRes, dnRes, tnRes] = await Promise.all([
+      proxyGetJson(cm, targetConn.id, "/api/discover?projectsDir=~/projects"),
+      proxyGetJson(cm, targetConn.id, "/api/projects"),
+      proxyGetJson(cm, targetConn.id, "/api/settings/project-display-names"),
+      proxyGetJson(
+        cm,
+        targetConn.id,
+        "/api/settings/project-directory-tab-names",
+      ),
+    ]);
+
+    const displayNames: Record<string, string> =
+      dnRes?.displayNames || {};
+    const tabNames: Record<string, string> = tnRes?.tabNames || {};
 
     const roles: Array<{
       project: string;
@@ -2559,35 +3316,167 @@ app.get("/vm/:slug/api/__relay/fleet/:targetSlug/roles", async (c) => {
       url: string;
     }> = [];
 
-    // Fetch project display names (one call per VM, not per project)
-    const dnRes = await proxyGetJson(
-      cm,
-      targetConn.id,
-      "/api/settings/project-display-names",
-    );
-    const displayNames: Record<string, string> =
-      dnRes?.displayNames || {};
+    if (discoverRes?.projects) {
+      for (const proj of discoverRes.projects) {
+        for (const role of proj.roles || []) {
+          const roleBase = role.filename.replace(/\.md$/, "");
+          const segment = `${proj.name}-${roleBase}`;
+          roles.push({
+            project: proj.name,
+            displayName: displayNames[proj.name] || null,
+            projectPath: proj.path,
+            roleFile: role.filename,
+            roleName: role.name,
+            segment,
+            url: `/vm/${canonicalSlug}/${segment}/`,
+          });
+        }
+      }
+    }
 
-    for (const proj of discoverRes.projects) {
-      for (const role of proj.roles || []) {
-        const roleBase = role.filename.replace(/\.md$/, "");
-        const segment = `${proj.name}-${roleBase}`;
-        roles.push({
-          project: proj.name,
+    // Build directory list from Claude's registry. Each entry is role-less —
+    // segment is just the basename, so the relay URL parser treats it as a
+    // directory-only target (new Server+Directory flow).
+    const directories: Array<{
+      name: string;
+      displayName: string | null;
+      tabName: string | null;
+      path: string;
+      segment: string;
+      url: string;
+      hasRoles: boolean;
+    }> = [];
+    const seenSegments = new Set<string>();
+
+    const projectList: Array<{ path: string; encodedName?: string }> =
+      Array.isArray(projectsRes?.projects) ? projectsRes.projects : [];
+    for (const p of projectList) {
+      if (!p?.path || typeof p.path !== "string") continue;
+      if (isSpaiglassInternalPath(p.path)) continue;
+      const basename = p.path.split("/").filter(Boolean).pop() || "";
+      if (!basename || seenSegments.has(basename)) continue;
+      seenSegments.add(basename);
+      const hasRoles = roles.some((r) => r.project === basename);
+      directories.push({
+        name: basename,
+        displayName: displayNames[basename] || null,
+        tabName: tabNames[basename] || null,
+        path: p.path,
+        segment: basename,
+        url: `/vm/${canonicalSlug}/${basename}/`,
+        hasRoles,
+      });
+    }
+
+    // Also surface any projects that have role files but aren't in
+    // Claude's registry yet (e.g. freshly scaffolded, never opened).
+    if (discoverRes?.projects) {
+      for (const proj of discoverRes.projects) {
+        if (seenSegments.has(proj.name)) continue;
+        seenSegments.add(proj.name);
+        directories.push({
+          name: proj.name,
           displayName: displayNames[proj.name] || null,
-          projectPath: proj.path,
-          roleFile: role.filename,
-          roleName: role.name,
-          segment,
-          url: `/vm/${targetSlug}/${segment}/`,
+          tabName: tabNames[proj.name] || null,
+          path: proj.path,
+          segment: proj.name,
+          url: `/vm/${canonicalSlug}/${proj.name}/`,
+          hasRoles: (proj.roles?.length || 0) > 0,
         });
       }
     }
 
-    return c.json({ roles });
+    directories.sort((a, b) =>
+      (a.displayName || a.name).localeCompare(b.displayName || b.name),
+    );
+
+    return c.json({ roles, directories });
   } catch {
-    return c.json({ roles: [] });
+    return c.json({ roles: [], directories: [] });
   }
+});
+
+// Relay-level: SpAIglass doctor — fan-out audit across every online
+// connector the caller can see (owned + shared). Each per-server result
+// is the verbatim response from that VM's GET /api/doctor, plus a
+// `server: { slug, displayName, online }` wrapper. Offline connectors
+// are returned with `online: false` and `issues: []` so the agent can
+// report them separately.
+//
+// The `:slug` in the URL just routes this request through SOME online
+// connector's tunnel (same pattern as /fleet/:targetSlug/roles) — the
+// actual audit targets are determined from the caller's fleet, not from
+// :slug.
+app.get("/vm/:slug/api/__relay/doctor", async (c) => {
+  const auth = await vmAuth(c);
+  if (auth instanceof Response) return auth;
+  const { user } = auth;
+
+  const cm = getChannelManager();
+  const owned = getConnectorsByUser(user.id).map((conn) => ({
+    conn,
+    role: "owner" as const,
+  }));
+  const shared = getSharedConnectorsForUser(user.id).map((conn) => ({
+    conn,
+    role: conn.role,
+  }));
+  const all = [...owned, ...shared];
+
+  const results = await Promise.all(
+    all.map(async ({ conn, role }) => {
+      const owner = getUserById(conn.user_id);
+      const canonicalSlug = owner
+        ? `${owner.github_login}.${conn.name}`
+        : conn.name;
+      const base = {
+        slug: conn.name,
+        canonicalSlug,
+        displayName: connectorDisplayName(conn),
+        role,
+        online: cm.isOnline(conn.id),
+      };
+      if (!base.online) {
+        return { server: base, issues: [], skipped: "offline" as const };
+      }
+      try {
+        const res = await proxyGetJson(cm, conn.id, "/api/doctor");
+        if (res && Array.isArray(res.issues)) {
+          return { server: base, issues: res.issues, counts: res.counts };
+        }
+        return {
+          server: base,
+          issues: [],
+          skipped: "doctor-endpoint-missing" as const,
+        };
+      } catch {
+        return {
+          server: base,
+          issues: [],
+          skipped: "proxy-error" as const,
+        };
+      }
+    }),
+  );
+
+  const totalIssues = results.reduce(
+    (sum, r) => sum + (r.issues?.length || 0),
+    0,
+  );
+  const onlineServers = results.filter((r) => r.server.online).length;
+  const offlineServers = results.length - onlineServers;
+
+  return c.json({
+    ok: true,
+    checkedAt: new Date().toISOString(),
+    counts: {
+      servers: results.length,
+      online: onlineServers,
+      offline: offlineServers,
+      issues: totalIssues,
+    },
+    servers: results,
+  });
 });
 
 // Redirect /vm/:slug (no trailing slash) to /vm/:slug/
@@ -2613,7 +3502,7 @@ ${FAVICON}
 </head><body><h1>VM offline</h1>
 <p>${connector.display_name || connector.name} is not connected to the relay.</p>
 <p>Start the connector on the VM to bring it online.</p>
-<p><a href="/fleetrelay">Back to fleet relay</a></p></body></html>`,
+<p><a href="/fleetrelay?skip_last_used=1">Back to fleet relay</a></p></body></html>`,
       503,
     );
   }
@@ -2793,7 +3682,7 @@ ${FAVICON}
 <style>body{font-family:system-ui;max-width:600px;margin:80px auto;padding:0 20px;color:#1a1a2e;background:#f0f0f5;}</style>
 </head><body><h1>Proxy error</h1>
 <p>${message}</p>
-<p><a href="/fleetrelay">Back to fleet relay</a></p></body></html>`,
+<p><a href="/fleetrelay?skip_last_used=1">Back to fleet relay</a></p></body></html>`,
       502,
     );
   }

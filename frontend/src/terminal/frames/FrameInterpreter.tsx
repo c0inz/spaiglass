@@ -41,7 +41,9 @@ import {
   type AssistantRow,
   type ErrorRow,
   type InteractiveRow,
+  type RecapRow,
   type Row,
+  type SystemNoticeRow,
   type ToolCallState,
   type UserRow,
 } from "./state";
@@ -75,6 +77,19 @@ export interface FrameRenderOptions {
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Military HH:MM in the viewer's local timezone. No seconds, no date. */
+function formatClockTime(ts: number | undefined): string {
+  if (!ts) return "";
+  const d = new Date(ts);
+  const h = String(d.getHours()).padStart(2, "0");
+  const m = String(d.getMinutes()).padStart(2, "0");
+  return `${h}:${m}`;
+}
+
+// ---------------------------------------------------------------------------
 // Top-level dispatch
 // ---------------------------------------------------------------------------
 
@@ -94,6 +109,10 @@ export function renderFrameRow(row: Row, opts: FrameRenderOptions): ReactNode {
       return <InteractiveRowView row={row} opts={opts} />;
     case "error":
       return <ErrorRowView row={row} />;
+    case "recap":
+      return <RecapRowView row={row} />;
+    case "system_notice":
+      return <SystemNoticeRowView row={row} />;
   }
 }
 
@@ -117,8 +136,11 @@ function UserRowView({
       className="my-2 font-mono text-sm border-l-2 pl-3 border-blue-500/60 dark:border-blue-400/60 bg-slate-800/60 dark:bg-slate-800/60 rounded-r-md py-2 pr-2"
       data-role="user"
     >
-      <div className="text-[10px] uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400 mb-1">
-        {label}@spaiglass
+      <div className="flex items-baseline justify-between mb-1 text-[10px] uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400">
+        <span>{label}@spaiglass</span>
+        <span className="tabular-nums normal-case tracking-normal text-slate-400 dark:text-slate-500">
+          {formatClockTime(row.ts)}
+        </span>
       </div>
       <div className="flex gap-2">
         <span
@@ -203,6 +225,21 @@ function AssistantRowView({
       toolUseIndices.push(i);
     }
   }
+
+  // Orphan-row guard: when every non-tool_use block is empty AND every
+  // tool_use block is a non-inline kind (TodoWrite/ExitPlanMode — swallowed
+  // by AssistantBlock), the row body renders to nothing but the
+  // "claude@spaiglass λ" header still takes space. Suppress the entire row
+  // in that case. This is exactly the "text stripped, container left
+  // behind" state the user reported.
+  const hasRenderableContent = row.content.some((b) => {
+    if (b.type === "text") return Boolean(b.text && b.text.trim());
+    if (b.type === "thinking") return Boolean(b.text && b.text.trim());
+    if (b.type === "tool_use") return shouldRenderInlineToolCard(b);
+    if (b.type === "inline_tool_result") return true;
+    return false;
+  });
+  if (!hasRenderableContent) return null;
   const lastToolIdx =
     toolUseIndices.length > 0
       ? toolUseIndices[toolUseIndices.length - 1]
@@ -236,8 +273,11 @@ function AssistantRowView({
       className="my-2 font-mono text-sm border-l-2 pl-3 border-emerald-500/60 dark:border-emerald-400/60"
       data-role="assistant"
     >
-      <div className="text-[10px] uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400 mb-1">
-        claude@spaiglass
+      <div className="flex items-baseline justify-between mb-1 text-[10px] uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400">
+        <span>claude@spaiglass</span>
+        <span className="tabular-nums normal-case tracking-normal text-slate-400 dark:text-slate-500">
+          {formatClockTime(row.ts)}
+        </span>
       </div>
       <div className="flex gap-2">
         <span
@@ -538,6 +578,63 @@ function InteractiveRowView({
     default:
       return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Turn recap row — styled like Claude Code's ※ status line
+// ---------------------------------------------------------------------------
+
+function RecapRowView({ row }: { row: RecapRow }): ReactNode {
+  const parts: string[] = [];
+  if (row.durationMs != null) {
+    const secs = (row.durationMs / 1000).toFixed(1);
+    parts.push(`${secs}s`);
+  }
+  if (row.inputTokens != null || row.outputTokens != null) {
+    const inp = row.inputTokens ? `${(row.inputTokens / 1000).toFixed(1)}k` : "0";
+    const out = row.outputTokens ? `${(row.outputTokens / 1000).toFixed(1)}k` : "0";
+    parts.push(`${inp} in · ${out} out`);
+  }
+  if (row.costUsd != null) {
+    parts.push(`$${row.costUsd.toFixed(4)}`);
+  }
+  if (parts.length === 0) return null;
+
+  return (
+    <div className="my-1 font-mono text-xs text-slate-500 dark:text-slate-500 border-t border-slate-200/30 dark:border-slate-700/40 pt-1.5 flex items-center gap-1.5 sg-recap">
+      <span className="text-cyan-600 dark:text-cyan-500">※</span>
+      <span>{parts.join("  ·  ")}</span>
+      {row.turns != null && (
+        <span className="text-slate-400 dark:text-slate-600 ml-1">
+          turn {row.turns}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// System notice — SDK system subtypes (compact_boundary, status, …)
+// ---------------------------------------------------------------------------
+
+function SystemNoticeRowView({
+  row,
+}: {
+  row: SystemNoticeRow;
+}): ReactNode {
+  const color =
+    row.frame.level === "warning"
+      ? "text-amber-600 dark:text-amber-400"
+      : "text-slate-500 dark:text-slate-400";
+  return (
+    <div className="my-1 font-mono text-xs flex items-start gap-1.5 italic">
+      <span className={`${color} flex-shrink-0`}>※</span>
+      <span className={color}>
+        <span className="opacity-70 mr-1.5">{row.frame.subtype}:</span>
+        {row.frame.text}
+      </span>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
