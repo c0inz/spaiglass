@@ -5,9 +5,11 @@ import {
   BookmarkIcon,
   TagIcon,
   WindowIcon,
+  SwatchIcon,
 } from "@heroicons/react/24/outline";
 import { useSettings } from "../../hooks/useSettings";
 import { getProjectDisplayName as getLocalDisplayName } from "../../utils/projectDisplayName";
+import { ICON_COLORS } from "../../../../shared/colors";
 
 type KeyStatus =
   | { state: "loading" }
@@ -78,6 +80,75 @@ export function GeneralSettings({ projectPath }: { projectPath?: string }) {
       .catch(() => {});
     return () => { cancelled = true; };
   }, [projectBasename]);
+
+  // ── Project Favicon Color ──────────────────────────────────────────────
+  const [iconColorSaved, setIconColorSaved] = useState<string | null>(null);
+  const [iconColorMessage, setIconColorMessage] = useState<string | null>(null);
+  const [iconColorBusy, setIconColorBusy] = useState(false);
+
+  useEffect(() => {
+    if (!projectBasename) return;
+    let cancelled = false;
+    fetch("/api/settings/project-icon-colors")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled) return;
+        setIconColorSaved(data?.iconColors?.[projectBasename] || null);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [projectBasename]);
+
+  async function setIconColor(colorId: string | null) {
+    if (!projectBasename) return;
+    setIconColorBusy(true);
+    setIconColorMessage(null);
+    try {
+      const res = await fetch("/api/settings/project-icon-color", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project: projectBasename, iconColor: colorId }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setIconColorMessage(data?.error ?? `Failed (${res.status})`);
+        return;
+      }
+      setIconColorSaved(colorId);
+      setIconColorMessage(
+        colorId
+          ? `Favicon set to ${ICON_COLORS.find((c) => c.id === colorId)?.label}.`
+          : "Favicon reset to default.",
+      );
+      // The favicon useEffect in ChatPage re-renders on iconColors change;
+      // we trigger a refetch by hard-reloading the iconColors map via a
+      // custom event. Simpler: just update the page-level state on next
+      // render. Since GeneralSettings doesn't own that state, the user will
+      // see the new favicon on next page navigation or refresh. For
+      // immediate feedback, swap the link element here too.
+      const { iconHexFor } = await import("../../../../shared/colors");
+      const hex = iconHexFor(colorId);
+      const svg =
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">` +
+        `<rect width="64" height="64" rx="12" fill="${hex}"/>` +
+        `<g fill="#fff">` +
+        `<path fill-rule="evenodd" d="M2,32C7,15 20,12 32,12C44,12 57,15 62,32C57,49 44,52 32,52C20,52 7,49 2,32ZM9,32C13,21 22,17 32,17C42,17 51,21 55,32C51,43 42,47 32,47C22,47 13,43 9,32Z"/>` +
+        `<path d="M21.5,26.5C16,28 9,30 9,32C9,34 16,36 21.5,37.5A11,11 0 0,0 21.5,26.5Z"/>` +
+        `<path fill-rule="evenodd" d="M20,32A11,11 0 1,1 42,32A11,11 0 1,1 20,32ZM24,32A7,7 0 1,0 38,32A7,7 0 1,0 24,32Z"/>` +
+        `<path d="M31,32L27,28A5,5 0 1,1 26,33Z"/>` +
+        `</g></svg>`;
+      document.querySelectorAll('link[rel="icon"]').forEach((el) => el.remove());
+      const link = document.createElement("link");
+      link.rel = "icon";
+      link.type = "image/svg+xml";
+      link.href = "data:image/svg+xml," + encodeURIComponent(svg);
+      document.head.appendChild(link);
+    } catch (err) {
+      setIconColorMessage(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIconColorBusy(false);
+    }
+  }
 
   const [keyStatus, setKeyStatus] = useState<KeyStatus>({ state: "loading" });
   const [keyInput, setKeyInput] = useState("");
@@ -466,6 +537,67 @@ export function GeneralSettings({ projectPath }: { projectPath?: string }) {
             Falls back to Project Directory Display Name, then to the
             directory name. Nothing else in-app uses this string.
           </div>
+        </div>
+      )}
+
+      {/* Project Favicon Color */}
+      {projectBasename && (
+        <div>
+          <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2 block">
+            Project Favicon Color
+          </label>
+          <div className="flex items-center gap-3 px-4 py-3 bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 rounded-lg">
+            <SwatchIcon className="w-5 h-5 text-slate-600 dark:text-slate-400 flex-shrink-0" />
+            <div className="flex-1 min-w-0 text-xs text-slate-500 dark:text-slate-400">
+              Tints the SpAIglass favicon's background for this project — easy
+              visual differentiation when you have multiple tabs open across
+              different projects. Default keeps the stock dark icon.
+            </div>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {/* Default tile */}
+            <button
+              type="button"
+              onClick={() => setIconColor(null)}
+              disabled={iconColorBusy || iconColorSaved === null}
+              aria-label="Default (no color)"
+              title="Default"
+              className={`w-8 h-8 rounded-lg border-2 transition-all duration-150 ${
+                iconColorSaved === null
+                  ? "border-blue-500 ring-2 ring-blue-300 dark:ring-blue-700"
+                  : "border-slate-300 dark:border-slate-600 hover:border-slate-500"
+              }`}
+              style={{ background: "#131318" }}
+            >
+              <span className="sr-only">Default</span>
+            </button>
+            {ICON_COLORS.map((c) => {
+              const isActive = iconColorSaved === c.id;
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => setIconColor(c.id)}
+                  disabled={iconColorBusy || isActive}
+                  aria-label={c.label}
+                  title={c.label}
+                  className={`w-8 h-8 rounded-lg border-2 transition-all duration-150 ${
+                    isActive
+                      ? "border-slate-900 dark:border-white ring-2 ring-blue-300 dark:ring-blue-700"
+                      : "border-transparent hover:border-slate-400"
+                  }`}
+                  style={{ background: c.hex }}
+                >
+                  <span className="sr-only">{c.label}</span>
+                </button>
+              );
+            })}
+          </div>
+          {iconColorMessage && (
+            <div className="mt-2 text-xs text-emerald-600 dark:text-emerald-400">
+              {iconColorMessage}
+            </div>
+          )}
         </div>
       )}
 

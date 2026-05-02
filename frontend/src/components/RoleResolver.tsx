@@ -112,16 +112,14 @@ export function RoleResolver() {
         return;
       }
 
-      // Role resolution:
-      //   - Segment matched (new role-less URL, e.g. /vm/<slug>/<dir>/) →
-      //     probe /api/roles and pick developer.md (or first available).
-      //     `sg.role` here is noise from the inject script's hyphen-split
-      //     of a hyphenated directory name ("AgentEPC-origin" → role="origin").
-      //   - Legacy match (<project>-<role>/) → `sg.role` is real; use it.
-      //   - No role known → probe for a default.
-      //
-      // Backend session dir is keyed by (projectPath, roleFile) so a
-      // roleFile is required; without one, session_start never fires.
+      // Role resolution (optional as of 2026-05-02):
+      //   - Legacy <project>-<role>/ URL → honor the explicit role.
+      //   - Segment-only URL → probe /api/roles, prefer developer.md if
+      //     present, else first available, else leave null.
+      //   - No role file in the project → resolvedRole stays null and the
+      //     session starts with the SDK's default behavior + any
+      //     project-local CLAUDE.md. roleFile is no longer required for
+      //     session_start.
       let resolvedRole: string | null =
         !segmentMatched && sg.role ? `${sg.role}.md` : null;
       if (!resolvedRole) {
@@ -138,7 +136,7 @@ export function RoleResolver() {
             resolvedRole = dev?.filename || list[0]?.filename || null;
           }
         } catch {
-          // Leave resolvedRole null; ChatPage will surface a role picker.
+          // Leave resolvedRole null — chat works fine without a role file.
         }
       }
 

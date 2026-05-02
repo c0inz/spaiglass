@@ -37,6 +37,8 @@ const FILE = join(DIR, "project-display-names.json");
 interface ProjectOverrides {
   displayName?: string;
   tabName?: string;
+  /** Per-project favicon color id from shared/colors.ts (e.g. "violet"). */
+  iconColor?: string;
 }
 
 type Store = Record<string, ProjectOverrides>;
@@ -55,9 +57,11 @@ function readStore(): Store {
           const entry: ProjectOverrides = {};
           const dn = (v as ProjectOverrides).displayName;
           const tn = (v as ProjectOverrides).tabName;
+          const ic = (v as ProjectOverrides).iconColor;
           if (typeof dn === "string" && dn.trim()) entry.displayName = dn.trim();
           if (typeof tn === "string" && tn.trim()) entry.tabName = tn.trim();
-          if (entry.displayName || entry.tabName) out[k] = entry;
+          if (typeof ic === "string" && ic.trim()) entry.iconColor = ic.trim();
+          if (entry.displayName || entry.tabName || entry.iconColor) out[k] = entry;
         }
       }
       return out;
@@ -76,7 +80,7 @@ function writeStore(data: Store): void {
 function updateField(
   store: Store,
   project: string,
-  field: "displayName" | "tabName",
+  field: "displayName" | "tabName" | "iconColor",
   value: string | null,
 ): Store {
   const entry: ProjectOverrides = { ...(store[project] || {}) };
@@ -85,7 +89,7 @@ function updateField(
   } else {
     delete entry[field];
   }
-  if (!entry.displayName && !entry.tabName) {
+  if (!entry.displayName && !entry.tabName && !entry.iconColor) {
     delete store[project];
   } else {
     store[project] = entry;
@@ -151,4 +155,34 @@ export async function handleSetProjectDirectoryTabName(c: Context) {
   const store = updateField(readStore(), project, "tabName", tabName);
   writeStore(store);
   return c.json({ ok: true, project, tabName });
+}
+
+function flattenIconColors(store: Store): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(store)) {
+    if (v.iconColor) out[k] = v.iconColor;
+  }
+  return out;
+}
+
+export function handleGetProjectIconColors(c: Context) {
+  return c.json({ iconColors: flattenIconColors(readStore()) });
+}
+
+export async function handleSetProjectIconColor(c: Context) {
+  let body: { project?: string; iconColor?: string | null };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+  const project = typeof body.project === "string" ? body.project.trim() : "";
+  if (!project) return c.json({ error: "project is required" }, 400);
+  const iconColor =
+    typeof body.iconColor === "string" && body.iconColor.trim()
+      ? body.iconColor.trim()
+      : null;
+  const store = updateField(readStore(), project, "iconColor", iconColor);
+  writeStore(store);
+  return c.json({ ok: true, project, iconColor });
 }

@@ -7,6 +7,7 @@ import {
 } from "@heroicons/react/24/outline";
 import type { ProjectInfo, SessionStats } from "../types";
 import type { ErrorFrame, UserContentBlock } from "../../../shared/frames";
+import { iconHexFor } from "../../../shared/colors";
 import { useChatState } from "../hooks/chat/useChatState";
 import { useFrameChatState } from "../hooks/chat/useFrameChatState";
 import { usePermissions } from "../hooks/chat/usePermissions";
@@ -117,6 +118,11 @@ export function ChatPage() {
   const [projectTabNames, setProjectTabNames] = useState<
     Record<string, string>
   >({});
+  // Per-directory favicon color id (from shared/colors.ts ICON_COLORS).
+  // Empty/undefined means "use the default dark icon."
+  const [projectIconColors, setProjectIconColors] = useState<
+    Record<string, string>
+  >({});
   useEffect(() => {
     fetch("/api/settings/project-display-names")
       .then((r) => (r.ok ? r.json() : null))
@@ -128,6 +134,12 @@ export function ChatPage() {
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (data?.tabNames) setProjectTabNames(data.tabNames);
+      })
+      .catch(() => {});
+    fetch("/api/settings/project-icon-colors")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.iconColors) setProjectIconColors(data.iconColors);
       })
       .catch(() => {});
   }, []);
@@ -177,6 +189,41 @@ export function ChatPage() {
       base;
     document.title = tab;
   }, [workingDirectory, projectTabNames, projectDisplayNames]);
+
+  // Per-project favicon. Same SpAIglass eye icon, but the rounded-square
+  // background tints to the project's chosen color. Settings panel exposes
+  // an 8-swatch picker; an unset value falls back to the default dark.
+  // We remove and re-append the <link rel="icon"> rather than mutating
+  // href in place — some browsers cache by element identity and won't
+  // refetch on href change.
+  useEffect(() => {
+    if (!workingDirectory) return;
+    const base =
+      workingDirectory
+        .replace(/\/+$/, "")
+        .split(/[\\/]/)
+        .filter(Boolean)
+        .pop() || workingDirectory;
+    const colorId = projectIconColors[base];
+    const hex = iconHexFor(colorId);
+    const svg =
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">` +
+      `<rect width="64" height="64" rx="12" fill="${hex}"/>` +
+      `<g fill="#fff">` +
+      `<path fill-rule="evenodd" d="M2,32C7,15 20,12 32,12C44,12 57,15 62,32C57,49 44,52 32,52C20,52 7,49 2,32ZM9,32C13,21 22,17 32,17C42,17 51,21 55,32C51,43 42,47 32,47C22,47 13,43 9,32Z"/>` +
+      `<path d="M21.5,26.5C16,28 9,30 9,32C9,34 16,36 21.5,37.5A11,11 0 0,0 21.5,26.5Z"/>` +
+      `<path fill-rule="evenodd" d="M20,32A11,11 0 1,1 42,32A11,11 0 1,1 20,32ZM24,32A7,7 0 1,0 38,32A7,7 0 1,0 24,32Z"/>` +
+      `<path d="M31,32L27,28A5,5 0 1,1 26,33Z"/>` +
+      `</g></svg>`;
+    document
+      .querySelectorAll('link[rel="icon"]')
+      .forEach((el) => el.remove());
+    const link = document.createElement("link");
+    link.rel = "icon";
+    link.type = "image/svg+xml";
+    link.href = "data:image/svg+xml," + encodeURIComponent(svg);
+    document.head.appendChild(link);
+  }, [workingDirectory, projectIconColors]);
 
   // File change polling — only `setExternallyModified` is read here; the
   // other return values are intentionally unused (the polling fires the
@@ -518,12 +565,14 @@ export function ChatPage() {
   ]);
 
   // Hydrate the Context tab's list from the persistent index so it survives
-  // hard refresh. Runs once when (workingDirectory, roleFile) are known.
+  // hard refresh. Runs once when workingDirectory is known. roleFile is
+  // optional — context files are tracked per-tuple but the role part may be
+  // empty for role-less projects.
   useEffect(() => {
-    if (!workingDirectory || !roleFile) return;
+    if (!workingDirectory) return;
     const url =
       `/api/session/context-files?workingDirectory=${encodeURIComponent(workingDirectory)}` +
-      `&roleFile=${encodeURIComponent(roleFile)}`;
+      `&roleFile=${encodeURIComponent(roleFile || "")}`;
     fetch(url)
       .then((r) => (r.ok ? r.json() : { files: [] }))
       .then((data: { files?: Array<{ path: string; filename: string; lastTouched: number }> }) => {
@@ -552,17 +601,19 @@ export function ChatPage() {
       .catch(() => {});
   }, [workingDirectory, roleFile]);
 
-  // Start/join session once WS is connected and we have roleFile + workingDirectory.
+  // Start/join session once WS is connected and we have a workingDirectory.
+  // roleFile is optional — projects without a .claude/agents/<role>.md file
+  // get the SDK's default behavior + any project-local CLAUDE.md.
   // If the URL carries a sessionId (picked from the Session Picker, or auto-resumed
   // by /api/session/last), pass it as resumeSessionId so the backend spawns the
   // Claude CLI with `resume: <id>` — matches `claude --resume` behaviour: full
   // transcript becomes context, model already knows the conversation.
   useEffect(() => {
-    if (!ws.connected || !roleFile || !workingDirectory) return;
+    if (!ws.connected || !workingDirectory) return;
     if (!contextChecked) return;
     if (ws.attached) return; // already in a session
     ws.startSession(
-      roleFile,
+      roleFile || "",
       workingDirectory,
       activeContext?.content,
       sessionId || undefined,

@@ -69,7 +69,7 @@ export function createWSHandler(sessionManager: SessionManager) {
             break;
 
           case "interrupt":
-            if (state.roleFile && state.workingDirectory) {
+            if (state.workingDirectory && state.roleFile !== null) {
               await sessionManager.interrupt(
                 state.userId,
                 state.workingDirectory,
@@ -83,7 +83,7 @@ export function createWSHandler(sessionManager: SessionManager) {
             // Routed by SessionManager to the matching pending request via
             // its original_request_id; the SDK tool handler resolves and
             // returns the value to Claude as the tool result.
-            if (state.roleFile && state.workingDirectory) {
+            if (state.workingDirectory && state.roleFile !== null) {
               sessionManager.handleToolResult(
                 state.userId,
                 state.workingDirectory,
@@ -109,7 +109,7 @@ export function createWSHandler(sessionManager: SessionManager) {
 
     onClose(ws: WSContext) {
       const state = wsStateMap.get(ws);
-      if (state && state.roleFile && state.workingDirectory) {
+      if (state && state.workingDirectory && state.roleFile !== null) {
         sessionManager.removeConsumer(
           state.userId,
           state.workingDirectory,
@@ -126,7 +126,7 @@ export function createWSHandler(sessionManager: SessionManager) {
     onError(ws: WSContext, error: Event) {
       logger.app.error("WebSocket error: {error}", { error });
       const state = wsStateMap.get(ws);
-      if (state && state.roleFile && state.workingDirectory) {
+      if (state && state.workingDirectory && state.roleFile !== null) {
         sessionManager.removeConsumer(
           state.userId,
           state.workingDirectory,
@@ -148,16 +148,19 @@ async function handleSessionStart(
   msg: Record<string, unknown>,
   sessionManager: SessionManager,
 ): Promise<void> {
-  const roleFile = msg.roleFile as string;
+  // roleFile is optional — projects without a .claude/agents/<role>.md file
+  // get the SDK's built-in default behavior + any project-local CLAUDE.md.
+  // Empty string is normalized to "" so the session-key tuple stays stable.
+  const roleFile = (msg.roleFile as string) || "";
   const workingDirectory = msg.workingDirectory as string;
   const contextContent = msg.contextContent as string | undefined;
   const resumeSessionId = msg.resumeSessionId as string | undefined;
 
-  if (!roleFile || !workingDirectory) {
+  if (!workingDirectory) {
     ws.send(
       JSON.stringify({
         type: "error",
-        message: "roleFile and workingDirectory required",
+        message: "workingDirectory required",
       }),
     );
     return;
@@ -211,15 +214,16 @@ async function handleSessionRestart(
   msg: Record<string, unknown>,
   sessionManager: SessionManager,
 ): Promise<void> {
-  const roleFile = (msg.roleFile as string) || state.roleFile;
+  const roleFile =
+    (msg.roleFile as string | undefined) ?? state.roleFile ?? "";
   const workingDirectory =
     (msg.workingDirectory as string) || state.workingDirectory;
 
-  if (!roleFile || !workingDirectory) {
+  if (!workingDirectory) {
     ws.send(
       JSON.stringify({
         type: "error",
-        message: "roleFile and workingDirectory required",
+        message: "workingDirectory required",
       }),
     );
     return;
@@ -278,15 +282,15 @@ async function handleResume(
   msg: Record<string, unknown>,
   sessionManager: SessionManager,
 ): Promise<void> {
-  const roleFile = msg.roleFile as string;
+  const roleFile = (msg.roleFile as string) || "";
   const workingDirectory = msg.workingDirectory as string;
   const lastCursor = typeof msg.lastCursor === "number" ? msg.lastCursor : 0;
 
-  if (!roleFile || !workingDirectory) {
+  if (!workingDirectory) {
     ws.send(
       JSON.stringify({
         type: "error",
-        message: "roleFile and workingDirectory required for resume",
+        message: "workingDirectory required for resume",
       }),
     );
     return;
@@ -368,12 +372,8 @@ async function handleMessage(
   msg: Record<string, unknown>,
   sessionManager: SessionManager,
 ): Promise<void> {
-  if (!state.roleFile) {
-    throw new Error("No active session — send session_start first");
-  }
-
   if (!state.workingDirectory) {
-    throw new Error("No active working directory — send session_start first");
+    throw new Error("No active session — send session_start first");
   }
 
   const content = (msg.content as string) || "";

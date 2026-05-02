@@ -62,6 +62,8 @@ import {
   handleSetProjectDisplayName,
   handleGetProjectDirectoryTabNames,
   handleSetProjectDirectoryTabName,
+  handleGetProjectIconColors,
+  handleSetProjectIconColor,
 } from "./handlers/project-display-names.ts";
 import { createAuthMiddleware } from "./middleware/auth.ts";
 import { readBinaryFile } from "./utils/fs.ts";
@@ -195,6 +197,12 @@ export function createApp(
   );
   app.put("/api/settings/project-directory-tab-name", (c) =>
     handleSetProjectDirectoryTabName(c),
+  );
+  app.get("/api/settings/project-icon-colors", (c) =>
+    handleGetProjectIconColors(c),
+  );
+  app.put("/api/settings/project-icon-color", (c) =>
+    handleSetProjectIconColor(c),
   );
 
   // SpAIglass doctor — read-only audit of local configuration
