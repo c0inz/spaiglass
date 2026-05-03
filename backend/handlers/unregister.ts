@@ -34,7 +34,13 @@ export async function handleUnregisterProject(c: Context) {
     return c.json({ error: "path is required (string)" }, 400);
   }
   const raw = body.path.trim();
-  if (!raw.startsWith("/")) {
+  // Accept both POSIX absolute paths (/...) and Windows absolute paths
+  // (C:\... / C:/...). Without the Windows variant the endpoint can't
+  // unregister stored Windows paths, so a stale entry from a malformed
+  // earlier registration becomes unfixable via API.
+  const isPosixAbs = raw.startsWith("/");
+  const isWindowsAbs = /^[A-Za-z]:[\\/]/.test(raw);
+  if (!isPosixAbs && !isWindowsAbs) {
     return c.json({ error: "path must be absolute" }, 400);
   }
 

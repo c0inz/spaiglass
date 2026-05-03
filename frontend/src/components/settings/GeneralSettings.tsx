@@ -6,6 +6,8 @@ import {
   TagIcon,
   WindowIcon,
   SwatchIcon,
+  ArrowRightOnRectangleIcon,
+  UserCircleIcon,
 } from "@heroicons/react/24/outline";
 import { useSettings } from "../../hooks/useSettings";
 import { getProjectDisplayName as getLocalDisplayName } from "../../utils/projectDisplayName";
@@ -325,8 +327,75 @@ export function GeneralSettings({ projectPath }: { projectPath?: string }) {
     }
   }
 
+  // ── Account / sign-out (relay only) ───────────────────────────────────
+  const [currentUser, setCurrentUser] = useState<{
+    login?: string;
+    name?: string | null;
+  } | null>(null);
+  const [signOutBusy, setSignOutBusy] = useState(false);
+  useEffect(() => {
+    if (!isRelay) return;
+    let cancelled = false;
+    fetch("/api/auth/me")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled) return;
+        if (data?.authenticated && data.user) setCurrentUser(data.user);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isRelay]);
+
+  async function handleSignOut() {
+    setSignOutBusy(true);
+    try {
+      await fetch("/auth/logout", { method: "POST" });
+    } catch {
+      // Even on error, drop to / so the relay re-routes to GitHub OAuth.
+    }
+    // Hard redirect to clear in-memory state and re-trigger the relay
+    // landing flow (which redirects to GitHub OAuth when no session).
+    window.location.href = "/";
+  }
+
   return (
     <div className="space-y-4">
+      {/* Account — relay-only. Shows the GitHub identity and a Sign Out
+          button. The backend route POST /auth/logout has existed for a
+          while but no UI surface called it; this is the documented hook. */}
+      {isRelay && currentUser && (
+        <div>
+          <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2 block">
+            Account
+          </label>
+          <div className="flex items-center gap-3 px-4 py-3 bg-slate-50 dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 rounded-lg">
+            <UserCircleIcon className="w-5 h-5 text-slate-600 dark:text-slate-400 flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+              <div className="text-xs text-slate-500 dark:text-slate-400">
+                Signed in as{" "}
+                <span className="font-mono text-slate-700 dark:text-slate-300">
+                  {currentUser.login}
+                </span>
+                {currentUser.name && (
+                  <span className="ml-1">({currentUser.name})</span>
+                )}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleSignOut}
+              disabled={signOutBusy}
+              className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-md disabled:opacity-50 transition-colors"
+            >
+              <ArrowRightOnRectangleIcon className="w-4 h-4" />
+              {signOutBusy ? "Signing out…" : "Sign out"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Server Display Name — relay-only. Cosmetic label shown for this
           connector in the page header, Server dropdown, last-used buttons,
           and mobile picker. */}

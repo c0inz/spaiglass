@@ -1,7 +1,6 @@
 import { render, screen, waitFor, act } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
-import { ProjectSelector } from "./components/ProjectSelector";
 import { ChatPage } from "./components/ChatPage";
 import { SettingsProvider } from "./contexts/SettingsContext";
 
@@ -18,19 +17,11 @@ describe("App Routing", () => {
     });
   });
 
-  it("renders project selection page at root path", async () => {
-    render(
-      <MemoryRouter initialEntries={["/"]}>
-        <Routes>
-          <Route path="/" element={<ProjectSelector />} />
-        </Routes>
-      </MemoryRouter>,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText("Select a project")).toBeInTheDocument();
-    });
-  });
+  // The "/" → ProjectSelector test was removed when the relay started
+  // intercepting bare /vm/<slug>/ and redirecting straight to a chat
+  // (see relay/src/server.ts handler for /vm/:slug/, 2026-05-03).
+  // ProjectSelector is no longer mounted; the SPA's "/" branch falls
+  // through to RoleResolver which is the same path as any other URL.
 
   it("renders chat page when navigating to projects path", async () => {
     await act(async () => {

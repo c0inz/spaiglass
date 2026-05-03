@@ -18,7 +18,12 @@ import WebSocket from "ws";
 import { config } from "dotenv";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { hostname as osHostname, networkInterfaces, userInfo, platform as osPlatform } from "node:os";
+import {
+  hostname as osHostname,
+  networkInterfaces,
+  userInfo,
+  platform as osPlatform,
+} from "node:os";
 
 /**
  * Collect SSH discovery hints to send on auth. The relay stores these
