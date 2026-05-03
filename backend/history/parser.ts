@@ -65,6 +65,27 @@ function extractText(content: unknown): string {
 }
 
 /**
+ * Strip injected `<system-reminder>...</system-reminder>` blocks from a
+ * user-message text. The Claude Code harness wraps internal reminders
+ * (e.g. "respond with just the action", auto-memory loaders) in this tag
+ * and embeds them in the user-content stream so the model sees them — but
+ * for picker previews the *user's actual prompt* is what we want to show.
+ *
+ * Removes any tag or its contents (including malformed/unterminated
+ * blocks), collapses whitespace, and trims.
+ */
+function stripSystemReminders(text: string): string {
+  if (!text) return text;
+  // Greedy-then-non-greedy: drop any pair, then drop any orphan opening
+  // tag run-to-end (occasionally observed when content was truncated).
+  return text
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "")
+    .replace(/<system-reminder>[\s\S]*$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
  * Parse a single JSONL file and extract conversation data
  * @private - Internal function used by parseAllHistoryFiles
  */
@@ -129,8 +150,14 @@ async function parseHistoryFile(
         const isSidechain = parsed.isSidechain === true;
 
         if (parsed.message?.role === "user" && !isSidechain) {
-          const text = extractText(parsed.message.content);
-          // Ignore tool-result-only user turns (no plain text).
+          const rawText = extractText(parsed.message.content);
+          // Strip <system-reminder> blocks the harness injects into user
+          // turns — those are not what the user actually said and they
+          // dominate the picker preview when present (auto-memory hooks,
+          // "respond with just the action" reminders, etc).
+          const text = stripSystemReminders(rawText);
+          // Ignore tool-result-only or reminder-only user turns (no plain
+          // text after stripping).
           if (text) {
             userTurnCount++;
             if (!firstUserMessage) firstUserMessage = text.slice(0, 160);
