@@ -3353,7 +3353,13 @@ app.get("/vm/:slug/api/__relay/fleet/:targetSlug/roles", async (c) => {
     for (const p of projectList) {
       if (!p?.path || typeof p.path !== "string") continue;
       if (isSpaiglassInternalPath(p.path)) continue;
-      const basename = p.path.split("/").filter(Boolean).pop() || "";
+      // Split on BOTH / and \\ so Windows paths (C:\\Users\\...\\sandbox)
+      // resolve to the basename instead of the entire path. Pre-fix this
+      // returned the full path as basename, then used it verbatim as a URL
+      // segment, producing /vm/<slug>/C:\\Users\\.../ which the browser
+      // parses as the C: protocol scheme and silently abandons → user was
+      // bounced to whatever URL they came from.
+      const basename = p.path.split(/[/\\]/).filter(Boolean).pop() || "";
       if (!basename || seenSegments.has(basename)) continue;
       seenSegments.add(basename);
       const hasRoles = roles.some((r) => r.project === basename);
