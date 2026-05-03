@@ -3490,6 +3490,83 @@ app.get("/vm/:slug", (c) => {
   return c.redirect(`/vm/${c.req.param("slug")}/`);
 });
 
+// Bare /vm/:slug/ (no project segment) — auto-redirect to the user's
+// first registered project on that connector. The dedicated
+// "Pick a server and a directory" landing page (rendered by the SPA's
+// ProjectSelector when no segment is present) was redundant: ChatPage's
+// AgentSwitcher already exposes server + directory dropdowns, the
+// session picker handles past-session selection, and the relay's home
+// (renderFleetRelay) already redirects users into a chat. Hitting
+// /vm/<conn>/ should land on a chat, not a separate picker UI.
+app.get("/vm/:slug/", async (c) => {
+  const auth = await vmAuth(c);
+  if (auth instanceof Response) return auth;
+  const { connector } = auth;
+
+  const cm = getChannelManager();
+  if (!cm.isOnline(connector.id)) {
+    // Connector not connected — fall through to the normal proxy path
+    // below, which renders the VM-offline error page.
+    return c.notFound();
+  }
+
+  // Resolve canonical slug for the redirect URL — match the format the
+  // browser already uses (login.connectorname for owned, bare for
+  // direct-named lookups).
+  const slug = c.req.param("slug")!;
+  const owner = getUserById(connector.user_id);
+  const canonicalSlug = slug.includes(".")
+    ? slug
+    : owner
+      ? `${owner.github_login}.${connector.name}`
+      : connector.name;
+
+  try {
+    const projectsRes = await proxyGetJson(cm, connector.id, "/api/projects");
+    const projectList: Array<{ path?: string }> = Array.isArray(
+      projectsRes?.projects,
+    )
+      ? projectsRes.projects
+      : [];
+
+    // Pick the first project whose basename is non-empty (skips spaiglass-
+    // internal entries and malformed paths). Same `/[/\\]/` split as the
+    // fleet/roles handler so Windows paths resolve correctly.
+    for (const p of projectList) {
+      if (!p?.path || typeof p.path !== "string") continue;
+      if (isSpaiglassInternalPath(p.path)) continue;
+      const basename = p.path.split(/[/\\]/).filter(Boolean).pop() || "";
+      if (!basename) continue;
+      return c.redirect(`/vm/${canonicalSlug}/${basename}/`);
+    }
+  } catch {
+    // proxyGetJson failed — fall through to the no-projects message below.
+  }
+
+  // No registered projects on this connector. Render a focused "register
+  // a project" message instead of falling back to the deprecated picker.
+  return c.html(
+    `<!DOCTYPE html>
+<html><head><title>No directories yet</title>
+${FAVICON}
+<style>body{font-family:system-ui;max-width:640px;margin:80px auto;padding:0 20px;color:#1a1a2e;background:#f0f0f5;line-height:1.5;}
+code{background:#e6e6ee;padding:2px 6px;border-radius:4px;font-size:0.9em;}
+a{color:#3060b8;}</style>
+</head><body>
+<h1>No directories yet on ${connector.display_name || connector.name}</h1>
+<p>This connector is online, but no project directories are registered.</p>
+<p>From a shell on the host, register one with:</p>
+<pre style="background:#1a1a2e;color:#f0f0f5;padding:12px;border-radius:6px;overflow-x:auto;">
+curl -X POST http://127.0.0.1:8080/api/projects/register \\
+  -H 'content-type: application/json' \\
+  -d '{"name":"<your-project-folder-name>"}'</pre>
+<p>The folder must already exist under <code>~/projects/</code> on the host (or pass <code>"path"</code> instead of <code>"name"</code>).</p>
+<p><a href="/fleetrelay?skip_last_used=1">Pick a different server</a></p>
+</body></html>`,
+    200,
+  );
+});
+
 // HTTP proxy: all /vm/:slug/* requests are forwarded to the VM backend
 // via HTTP-over-WebSocket through the connector tunnel
 app.all("/vm/:slug/*", async (c) => {
