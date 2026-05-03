@@ -32,13 +32,16 @@ export function GeneralSettings({ projectPath }: { projectPath?: string }) {
   const { enterBehavior, toggleEnterBehavior } = useSettings();
 
   const projectBasename = projectPath
-    ? projectPath.replace(/\/+$/, "").split(/[\\/]/).filter(Boolean).pop() || null
+    ? projectPath.replace(/\/+$/, "").split(/[\\/]/).filter(Boolean).pop() ||
+      null
     : null;
 
   // ── Project Directory Display Name ────────────────────────────────────
   const [projDisplayInput, setProjDisplayInput] = useState("");
   const [projDisplaySaved, setProjDisplaySaved] = useState<string | null>(null);
-  const [projDisplayMessage, setProjDisplayMessage] = useState<string | null>(null);
+  const [projDisplayMessage, setProjDisplayMessage] = useState<string | null>(
+    null,
+  );
   const [projDisplayBusy, setProjDisplayBusy] = useState(false);
 
   useEffect(() => {
@@ -57,7 +60,9 @@ export function GeneralSettings({ projectPath }: { projectPath?: string }) {
       .catch(() => {
         if (!cancelled) setProjDisplayInput(projectBasename);
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [projectBasename]);
 
   // ── Project Directory Tab Name ─────────────────────────────────────────
@@ -78,7 +83,9 @@ export function GeneralSettings({ projectPath }: { projectPath?: string }) {
         setTabNameSaved(apiName);
       })
       .catch(() => {});
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [projectBasename]);
 
   // ── Project Favicon Color ──────────────────────────────────────────────
@@ -96,7 +103,9 @@ export function GeneralSettings({ projectPath }: { projectPath?: string }) {
         setIconColorSaved(data?.iconColors?.[projectBasename] || null);
       })
       .catch(() => {});
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [projectBasename]);
 
   async function setIconColor(colorId: string | null) {
@@ -146,7 +155,9 @@ export function GeneralSettings({ projectPath }: { projectPath?: string }) {
   const [serverNameInput, setServerNameInput] = useState("");
   const [serverNameBusy, setServerNameBusy] = useState(false);
   const [serverNameError, setServerNameError] = useState<string | null>(null);
-  const [serverNameMessage, setServerNameMessage] = useState<string | null>(null);
+  const [serverNameMessage, setServerNameMessage] = useState<string | null>(
+    null,
+  );
 
   useEffect(() => {
     if (!isRelay) return;
@@ -220,10 +231,7 @@ export function GeneralSettings({ projectPath }: { projectPath?: string }) {
       }
       setTabNameSaved(tabName);
       // Live-update the browser tab so the user sees the change immediately.
-      const effective =
-        tabName ||
-        projDisplaySaved ||
-        projectBasename;
+      const effective = tabName || projDisplaySaved || projectBasename;
       document.title = effective;
       setTabNameMessage(
         tabName
@@ -332,7 +340,9 @@ export function GeneralSettings({ projectPath }: { projectPath?: string }) {
             <div className="flex-1 min-w-0">
               <div className="text-xs text-slate-500 dark:text-slate-400">
                 URL slug:{" "}
-                <span className="font-mono text-slate-700 dark:text-slate-300">{self.name}</span>
+                <span className="font-mono text-slate-700 dark:text-slate-300">
+                  {self.name}
+                </span>
                 {" · "}
                 Shown as:{" "}
                 <span className="font-mono text-slate-700 dark:text-slate-300">
@@ -377,9 +387,9 @@ export function GeneralSettings({ projectPath }: { projectPath?: string }) {
           )}
           <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
             Top-left server name on the chat page, Server dropdown entries,
-            "last used" quick-switch buttons, and the mobile Agent Picker.
-            The URL slug (<code>{self.name}</code>) is immutable — only the
-            label changes. Clear to fall back to the slug.
+            "last used" quick-switch buttons, and the mobile Agent Picker. The
+            URL slug (<code>{self.name}</code>) is immutable — only the label
+            changes. Clear to fall back to the slug.
           </div>
         </div>
       )}
@@ -419,27 +429,40 @@ export function GeneralSettings({ projectPath }: { projectPath?: string }) {
                 setProjDisplayBusy(true);
                 setProjDisplayMessage(null);
                 const next = projDisplayInput.trim();
-                const displayName = (!next || next === projectBasename) ? null : next;
+                const displayName =
+                  !next || next === projectBasename ? null : next;
                 try {
-                  const res = await fetch("/api/settings/project-display-name", {
-                    method: "PUT",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ project: projectBasename, displayName }),
-                  });
+                  const res = await fetch(
+                    "/api/settings/project-display-name",
+                    {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        project: projectBasename,
+                        displayName,
+                      }),
+                    },
+                  );
                   if (!res.ok) {
                     const data = await res.json().catch(() => ({}));
-                    setProjDisplayMessage(data?.error ?? `Failed (${res.status})`);
+                    setProjDisplayMessage(
+                      data?.error ?? `Failed (${res.status})`,
+                    );
                     return;
                   }
                   setProjDisplaySaved(displayName);
                   if (!displayName) {
                     setProjDisplayInput(projectBasename);
-                    setProjDisplayMessage("Display Name cleared — using directory name.");
+                    setProjDisplayMessage(
+                      "Display Name cleared — using directory name.",
+                    );
                   } else {
                     setProjDisplayMessage("Display Name saved.");
                   }
                 } catch (err) {
-                  setProjDisplayMessage(err instanceof Error ? err.message : String(err));
+                  setProjDisplayMessage(
+                    err instanceof Error ? err.message : String(err),
+                  );
                 } finally {
                   setProjDisplayBusy(false);
                 }
@@ -460,10 +483,10 @@ export function GeneralSettings({ projectPath }: { projectPath?: string }) {
             </div>
           )}
           <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-            Top-left project label on the chat page, Directory dropdown
-            entries, "last used" buttons, and the mobile Agent Picker. The
-            real working directory path is not renamed — only the label.
-            Clear to revert to the directory name.
+            Top-left project label on the chat page, Directory dropdown entries,
+            "last used" buttons, and the mobile Agent Picker. The real working
+            directory path is not renamed — only the label. Clear to revert to
+            the directory name.
           </div>
         </div>
       )}
@@ -501,8 +524,7 @@ export function GeneralSettings({ projectPath }: { projectPath?: string }) {
               type="button"
               onClick={saveTabName}
               disabled={
-                tabNameBusy ||
-                tabNameInput.trim() === (tabNameSaved ?? "")
+                tabNameBusy || tabNameInput.trim() === (tabNameSaved ?? "")
               }
               className="px-4 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-lg shadow-sm hover:shadow-md transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
             >
@@ -515,9 +537,9 @@ export function GeneralSettings({ projectPath }: { projectPath?: string }) {
             </div>
           )}
           <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-            Browser tab title only (also used when you bookmark the page).
-            Falls back to Project Directory Display Name, then to the
-            directory name. Nothing else in-app uses this string.
+            Browser tab title only (also used when you bookmark the page). Falls
+            back to Project Directory Display Name, then to the directory name.
+            Nothing else in-app uses this string.
           </div>
         </div>
       )}

@@ -69,13 +69,7 @@ const ansiConverter = new AnsiToHtml({
  * to inject because escapeXML=true means user text can never emit arbitrary
  * HTML — only the SGR-generated spans do.
  */
-function AnsiOutput({
-  text,
-  className,
-}: {
-  text: string;
-  className?: string;
-}) {
+function AnsiOutput({ text, className }: { text: string; className?: string }) {
   const html = useMemo(
     () => ansiConverter.toHtml(collapseCarriageReturns(text)),
     [text],
@@ -161,18 +155,7 @@ export function TermText({
 // Braille dots — see StatusLine.tsx for rationale. All ten frames render
 // at the same width in any monospace font so the adjacent label stays
 // rock-steady as the spinner advances.
-const SPINNER_FRAMES = [
-  "⠋",
-  "⠙",
-  "⠹",
-  "⠸",
-  "⠼",
-  "⠴",
-  "⠦",
-  "⠧",
-  "⠇",
-  "⠏",
-];
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 interface TermSpinnerProps {
   label?: string;

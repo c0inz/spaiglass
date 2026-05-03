@@ -108,10 +108,10 @@ export async function openSessionPersistence(
     if (closed) return;
     chain = chain.then(() =>
       fs.appendFile(framesPath, frameJson + "\n", "utf8").catch((err) => {
-        logger.app.error(
-          "Failed to append frame to {path}: {msg}",
-          { path: framesPath, msg: String(err) },
-        );
+        logger.app.error("Failed to append frame to {path}: {msg}", {
+          path: framesPath,
+          msg: String(err),
+        });
       }),
     );
   };
@@ -120,14 +120,14 @@ export async function openSessionPersistence(
     if (closed) return;
     meta = { ...meta, ...patch, lastActivity: Date.now() };
     chain = chain.then(() =>
-      fs.writeFile(metaPath, JSON.stringify(meta, null, 2), "utf8").catch(
-        (err) => {
-          logger.app.error(
-            "Failed to write meta to {path}: {msg}",
-            { path: metaPath, msg: String(err) },
-          );
-        },
-      ),
+      fs
+        .writeFile(metaPath, JSON.stringify(meta, null, 2), "utf8")
+        .catch((err) => {
+          logger.app.error("Failed to write meta to {path}: {msg}", {
+            path: metaPath,
+            msg: String(err),
+          });
+        }),
     );
   };
 
@@ -197,7 +197,9 @@ export async function readFramesAfter(
   }
 }
 
-export async function readSessionMeta(dir: string): Promise<SessionMeta | null> {
+export async function readSessionMeta(
+  dir: string,
+): Promise<SessionMeta | null> {
   try {
     const raw = await fs.readFile(join(dir, "meta.json"), "utf8");
     return JSON.parse(raw) as SessionMeta;
@@ -290,10 +292,10 @@ export async function touchContextFile(
       settled(entry);
     })
     .catch((err) => {
-      logger.app.error(
-        "Failed to update context_files.json in {dir}: {msg}",
-        { dir, msg: String(err) },
-      );
+      logger.app.error("Failed to update context_files.json in {dir}: {msg}", {
+        dir,
+        msg: String(err),
+      });
       settled({
         path: filePath,
         filename,
@@ -321,10 +323,7 @@ export interface QueueEntry {
 const QUEUE_FILE = "queue.json";
 const queueLocks = new Map<string, Promise<unknown>>();
 
-async function withQueueLock<T>(
-  dir: string,
-  fn: () => Promise<T>,
-): Promise<T> {
+async function withQueueLock<T>(dir: string, fn: () => Promise<T>): Promise<T> {
   const prev = queueLocks.get(dir) ?? Promise.resolve();
   const next = prev.then(fn, fn);
   queueLocks.set(

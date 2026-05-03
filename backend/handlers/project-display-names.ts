@@ -58,10 +58,12 @@ function readStore(): Store {
           const dn = (v as ProjectOverrides).displayName;
           const tn = (v as ProjectOverrides).tabName;
           const ic = (v as ProjectOverrides).iconColor;
-          if (typeof dn === "string" && dn.trim()) entry.displayName = dn.trim();
+          if (typeof dn === "string" && dn.trim())
+            entry.displayName = dn.trim();
           if (typeof tn === "string" && tn.trim()) entry.tabName = tn.trim();
           if (typeof ic === "string" && ic.trim()) entry.iconColor = ic.trim();
-          if (entry.displayName || entry.tabName || entry.iconColor) out[k] = entry;
+          if (entry.displayName || entry.tabName || entry.iconColor)
+            out[k] = entry;
         }
       }
       return out;

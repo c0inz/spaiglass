@@ -19,9 +19,14 @@ interface RolesSettingsProps {
   onRoleCreated?: () => void;
 }
 
-export function RolesSettings({ projectPath, onRoleCreated }: RolesSettingsProps) {
+export function RolesSettings({
+  projectPath,
+  onRoleCreated,
+}: RolesSettingsProps) {
   const [roles, setRoles] = useState<RoleInfo[]>([]);
-  const [globalPlugins, setGlobalPlugins] = useState<Record<string, boolean>>({});
+  const [globalPlugins, setGlobalPlugins] = useState<Record<string, boolean>>(
+    {},
+  );
   const [loading, setLoading] = useState(true);
   const [expandedRole, setExpandedRole] = useState<string | null>(null);
   const [saving, setSaving] = useState<string | null>(null);
@@ -38,7 +43,9 @@ export function RolesSettings({ projectPath, onRoleCreated }: RolesSettingsProps
     if (!projectPath) return;
     setLoading(true);
     try {
-      const res = await fetch(`/api/roles?path=${encodeURIComponent(projectPath)}`);
+      const res = await fetch(
+        `/api/roles?path=${encodeURIComponent(projectPath)}`,
+      );
       if (!res.ok) throw new Error("Failed to fetch roles");
       const data = await res.json();
       setRoles(data.roles || []);
@@ -68,9 +75,10 @@ export function RolesSettings({ projectPath, onRoleCreated }: RolesSettingsProps
   const toggleRolePlugin = async (role: RoleInfo, pluginId: string) => {
     const updatedPlugins = { ...role.plugins };
     // If not in role config, default to global value then flip
-    const currentVal = pluginId in updatedPlugins
-      ? updatedPlugins[pluginId]
-      : (globalPlugins[pluginId] ?? true);
+    const currentVal =
+      pluginId in updatedPlugins
+        ? updatedPlugins[pluginId]
+        : (globalPlugins[pluginId] ?? true);
     updatedPlugins[pluginId] = !currentVal;
 
     setSaving(role.filename);
@@ -117,7 +125,8 @@ export function RolesSettings({ projectPath, onRoleCreated }: RolesSettingsProps
           body: JSON.stringify({
             name: newName.trim(),
             description: newDescription.trim(),
-            plugins: Object.keys(newPlugins).length > 0 ? newPlugins : undefined,
+            plugins:
+              Object.keys(newPlugins).length > 0 ? newPlugins : undefined,
           }),
         },
       );
@@ -204,7 +213,9 @@ export function RolesSettings({ projectPath, onRoleCreated }: RolesSettingsProps
                     <div className="text-xs text-slate-400 dark:text-slate-500 font-mono truncate">
                       {role.filename}
                       <span className="ml-2 text-slate-300 dark:text-slate-600">
-                        {role.source === "native" ? ".claude/agents/" : "agents/"}
+                        {role.source === "native"
+                          ? ".claude/agents/"
+                          : "agents/"}
                       </span>
                     </div>
                   </div>
@@ -247,7 +258,9 @@ export function RolesSettings({ projectPath, onRoleCreated }: RolesSettingsProps
                                 <input
                                   type="checkbox"
                                   checked={enabled}
-                                  onChange={() => toggleRolePlugin(role, pluginId)}
+                                  onChange={() =>
+                                    toggleRolePlugin(role, pluginId)
+                                  }
                                   disabled={isSaving}
                                   className="w-3.5 h-3.5 rounded border-slate-300 dark:border-slate-600 text-blue-500 cursor-pointer disabled:opacity-50"
                                 />
@@ -303,7 +316,18 @@ export function RolesSettings({ projectPath, onRoleCreated }: RolesSettingsProps
               className="w-full px-3 py-2 text-sm bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
             <div className="mt-1 text-[10px] text-slate-400">
-              Creates <code>.claude/agents/{newName ? newName.trim().toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "") : "name"}.md</code>
+              Creates{" "}
+              <code>
+                .claude/agents/
+                {newName
+                  ? newName
+                      .trim()
+                      .toLowerCase()
+                      .replace(/\s+/g, "-")
+                      .replace(/[^a-z0-9-]/g, "")
+                  : "name"}
+                .md
+              </code>
             </div>
           </div>
 
@@ -330,7 +354,8 @@ export function RolesSettings({ projectPath, onRoleCreated }: RolesSettingsProps
                   const pluginName = pluginId
                     .split("@")[0]
                     .replace(/[-_]/g, " ");
-                  const checked = newPlugins[pluginId] ?? (globalPlugins[pluginId] ?? true);
+                  const checked =
+                    newPlugins[pluginId] ?? globalPlugins[pluginId] ?? true;
                   return (
                     <label
                       key={pluginId}
@@ -360,7 +385,9 @@ export function RolesSettings({ projectPath, onRoleCreated }: RolesSettingsProps
           <div className="flex gap-2 pt-1">
             <button
               onClick={createRole}
-              disabled={!newName.trim() || !newDescription.trim() || saving === "new"}
+              disabled={
+                !newName.trim() || !newDescription.trim() || saving === "new"
+              }
               className="px-4 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-700 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {saving === "new" ? "Creating..." : "Create Role"}

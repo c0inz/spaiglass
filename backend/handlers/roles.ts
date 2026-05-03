@@ -9,17 +9,14 @@
  */
 
 import type { Context } from "hono";
-import {
-  readdir,
-  readFile,
-  writeFile,
-  mkdir,
-  unlink,
-} from "node:fs/promises";
+import { readdir, readFile, writeFile, mkdir, unlink } from "node:fs/promises";
 import { existsSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
-import { parseAgentFile, type AgentFrontmatter } from "../utils/agent-config.ts";
+import {
+  parseAgentFile,
+  type AgentFrontmatter,
+} from "../utils/agent-config.ts";
 
 /* ── Types ────────────────────────────────────────────────────────── */
 
@@ -87,9 +84,7 @@ async function scanRoles(projectPath: string): Promise<RoleInfo[]> {
           const filePath = join(dir, entry.name);
           const content = await readFile(filePath, "utf-8");
           const parsed = parseAgentFile(content);
-          const name = entry.name
-            .replace(/\.md$/, "")
-            .replace(/[-_]/g, " ");
+          const name = entry.name.replace(/\.md$/, "").replace(/[-_]/g, " ");
           const body = content.replace(/^---[\s\S]*?---\s*/, "");
           const preview = body.slice(0, 200).trim();
 
@@ -317,7 +312,11 @@ export async function handleDeleteRole(c: Context) {
   const filename = roleName.endsWith(".md") ? roleName : `${roleName}.md`;
 
   // Reject path traversal — filename must stay within the agents directory.
-  if (filename.includes("/") || filename.includes("\\") || filename.includes("..")) {
+  if (
+    filename.includes("/") ||
+    filename.includes("\\") ||
+    filename.includes("..")
+  ) {
     return c.json({ error: "invalid role name" }, 400);
   }
 

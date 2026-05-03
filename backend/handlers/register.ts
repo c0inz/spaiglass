@@ -71,9 +71,7 @@ export async function handleRegisterProject(c: Context) {
   const rawPath = typeof body.path === "string" ? body.path.trim() : "";
   const rawName = typeof body.name === "string" ? body.name.trim() : "";
   const rawRole =
-    typeof body.role === "string"
-      ? body.role.trim().replace(/\.md$/, "")
-      : "";
+    typeof body.role === "string" ? body.role.trim().replace(/\.md$/, "") : "";
 
   if (!rawPath && !rawName) {
     return c.json({ error: "either 'name' or 'path' is required" }, 400);
@@ -119,8 +117,10 @@ export async function handleRegisterProject(c: Context) {
       writeFileSync(roleFile, roleContent + "\n", "utf-8");
     }
 
-    let claudeJson: { projects?: Record<string, unknown>; [k: string]: unknown } =
-      { projects: {} };
+    let claudeJson: {
+      projects?: Record<string, unknown>;
+      [k: string]: unknown;
+    } = { projects: {} };
     if (existsSync(claudeJsonPath)) {
       try {
         claudeJson = JSON.parse(readFileSync(claudeJsonPath, "utf-8"));

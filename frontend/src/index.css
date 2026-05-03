@@ -235,11 +235,21 @@ html.black-glass .bg-blue-700 {
 }
 
 /* White text hierarchy */
-html.black-glass [class*="text-slate-100"] { color: #ffffff !important; }
-html.black-glass [class*="text-slate-200"] { color: #e5e5e5 !important; }
-html.black-glass [class*="text-slate-300"] { color: #d4d4d4 !important; }
-html.black-glass [class*="text-slate-400"] { color: #a3a3a3 !important; }
-html.black-glass [class*="text-slate-500"] { color: #737373 !important; }
+html.black-glass [class*="text-slate-100"] {
+  color: #ffffff !important;
+}
+html.black-glass [class*="text-slate-200"] {
+  color: #e5e5e5 !important;
+}
+html.black-glass [class*="text-slate-300"] {
+  color: #d4d4d4 !important;
+}
+html.black-glass [class*="text-slate-400"] {
+  color: #a3a3a3 !important;
+}
+html.black-glass [class*="text-slate-500"] {
+  color: #737373 !important;
+}
 
 /* Code blocks — darker ground for contrast */
 html.black-glass pre[class*="bg-"],

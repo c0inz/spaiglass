@@ -24,7 +24,12 @@ const { startup } =
   };
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
-import { basename, extname, isAbsolute, resolve as resolvePath } from "node:path";
+import {
+  basename,
+  extname,
+  isAbsolute,
+  resolve as resolvePath,
+} from "node:path";
 import { AsyncQueue } from "./queue.ts";
 import {
   pushFrame,
@@ -281,7 +286,12 @@ export class SessionManager {
       });
 
     // Start the SDK session in the background
-    this.startSession(session, workingDirectory, contextContent, resumeSessionId);
+    this.startSession(
+      session,
+      workingDirectory,
+      contextContent,
+      resumeSessionId,
+    );
 
     const info = this.toSessionInfo(session);
 
@@ -292,10 +302,10 @@ export class SessionManager {
     logger.app.info(
       "New session {sessionId} for {userId}/{workingDirectory}/{roleFile}",
       {
-      sessionId: session.id,
-      userId,
-      workingDirectory,
-      roleFile,
+        sessionId: session.id,
+        userId,
+        workingDirectory,
+        roleFile,
       },
     );
 
@@ -334,7 +344,10 @@ export class SessionManager {
       const mcpServers = {
         spaiglass: interactiveServer,
         ...(fm.mcpServers || {}),
-      } as Record<string, import("@anthropic-ai/claude-agent-sdk").McpServerConfig>;
+      } as Record<
+        string,
+        import("@anthropic-ai/claude-agent-sdk").McpServerConfig
+      >;
 
       // Use startup() for reliable initialization.
       //
@@ -361,12 +374,16 @@ export class SessionManager {
         options: {
           cwd: workingDirectory,
           pathToClaudeCodeExecutable: this.cliPath,
-          permissionMode: (fm.permissionMode as "bypassPermissions" | undefined) || "bypassPermissions" as const,
+          permissionMode:
+            (fm.permissionMode as "bypassPermissions" | undefined) ||
+            ("bypassPermissions" as const),
           allowDangerouslySkipPermissions: true,
           mcpServers,
           ...(resumeSessionId ? { resume: resumeSessionId } : {}),
           ...(fm.tools ? { allowedTools: fm.tools } : {}),
-          ...(fm.disallowedTools ? { disallowedTools: fm.disallowedTools } : {}),
+          ...(fm.disallowedTools
+            ? { disallowedTools: fm.disallowedTools }
+            : {}),
           ...(fm.model ? { model: fm.model } : {}),
           ...(fm.maxTurns ? { maxTurns: fm.maxTurns } : {}),
           systemPrompt: {
@@ -725,9 +742,7 @@ export class SessionManager {
     roleFile: string,
     consumer: SessionConsumer,
     lastCursor: number,
-  ): Promise<
-    { resumed: true; replayedFrames: number } | { resumed: false }
-  > {
+  ): Promise<{ resumed: true; replayedFrames: number } | { resumed: false }> {
     const key = this.sessionKey(userId, workingDirectory, roleFile);
     const session = this.sessions.get(key);
 
@@ -1003,9 +1018,7 @@ export class SessionManager {
                   ? rawFrame.action
                   : undefined,
               details:
-                typeof rawFrame.details === "string"
-                  ? rawFrame.details
-                  : null,
+                typeof rawFrame.details === "string" ? rawFrame.details : null,
               choices: Array.isArray(rawFrame.choices)
                 ? (rawFrame.choices as string[])
                 : undefined,
@@ -1171,10 +1184,9 @@ export class SessionManager {
         this.broadcastFrame(session, frame);
       })
       .catch((err) => {
-        logger.app.error(
-          "Context file update failed: {msg}",
-          { msg: String(err) },
-        );
+        logger.app.error("Context file update failed: {msg}", {
+          msg: String(err),
+        });
       });
   }
 

@@ -241,9 +241,7 @@ function AssistantRowView({
   });
   if (!hasRenderableContent) return null;
   const lastToolIdx =
-    toolUseIndices.length > 0
-      ? toolUseIndices[toolUseIndices.length - 1]
-      : -1;
+    toolUseIndices.length > 0 ? toolUseIndices[toolUseIndices.length - 1] : -1;
 
   const hiddenToolIndices = new Set<number>();
   if (!showAllTools) {
@@ -265,7 +263,7 @@ function AssistantRowView({
   // Position the badge at the first hidden tool call's location
   const firstHiddenIdx =
     hiddenCount > 0
-      ? toolUseIndices.find((i) => hiddenToolIndices.has(i)) ?? -1
+      ? (toolUseIndices.find((i) => hiddenToolIndices.has(i)) ?? -1)
       : -1;
 
   return (
@@ -414,16 +412,13 @@ function InlineToolCard({
   const [collapsed, setCollapsed] = useState(true);
 
   const status = call?.status ?? "running";
-  const input = (call?.input as Record<string, unknown> | undefined) ??
+  const input =
+    (call?.input as Record<string, unknown> | undefined) ??
     (typeof fallbackInput === "object" && fallbackInput !== null
       ? (fallbackInput as Record<string, unknown>)
       : undefined);
   const cardStatus: "running" | "ok" | "error" =
-    status === "running"
-      ? "running"
-      : status === "ok"
-        ? "ok"
-        : "error";
+    status === "running" ? "running" : status === "ok" ? "ok" : "error";
 
   // Preserve the "bug #3" rule from the legacy adapter: successful
   // tool results are visual noise. Only show expanded output if the call
@@ -483,7 +478,10 @@ function FileDeliveryRowView({
       {hasDiff && (
         <div className="mt-1 ml-3">
           <TermDiff
-            diff={lineDiff(frame.oldString as string, frame.newString as string)}
+            diff={lineDiff(
+              frame.oldString as string,
+              frame.newString as string,
+            )}
             filename={frame.filename}
           />
         </div>
@@ -591,8 +589,12 @@ function RecapRowView({ row }: { row: RecapRow }): ReactNode {
     parts.push(`${secs}s`);
   }
   if (row.inputTokens != null || row.outputTokens != null) {
-    const inp = row.inputTokens ? `${(row.inputTokens / 1000).toFixed(1)}k` : "0";
-    const out = row.outputTokens ? `${(row.outputTokens / 1000).toFixed(1)}k` : "0";
+    const inp = row.inputTokens
+      ? `${(row.inputTokens / 1000).toFixed(1)}k`
+      : "0";
+    const out = row.outputTokens
+      ? `${(row.outputTokens / 1000).toFixed(1)}k`
+      : "0";
     parts.push(`${inp} in · ${out} out`);
   }
   if (row.costUsd != null) {
@@ -617,11 +619,7 @@ function RecapRowView({ row }: { row: RecapRow }): ReactNode {
 // System notice — SDK system subtypes (compact_boundary, status, …)
 // ---------------------------------------------------------------------------
 
-function SystemNoticeRowView({
-  row,
-}: {
-  row: SystemNoticeRow;
-}): ReactNode {
+function SystemNoticeRowView({ row }: { row: SystemNoticeRow }): ReactNode {
   const color =
     row.frame.level === "warning"
       ? "text-amber-600 dark:text-amber-400"

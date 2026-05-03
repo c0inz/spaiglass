@@ -144,7 +144,11 @@ function startPingTimer() {
     if (lastPongAt && Date.now() - lastPongAt > RELAY_PONG_TIMEOUT_MS) {
       const silentSec = Math.round((Date.now() - lastPongAt) / 1000);
       log(`No pong from relay for ${silentSec}s, forcing reconnect`);
-      try { relayWs.close(); } catch { /* ignore */ }
+      try {
+        relayWs.close();
+      } catch {
+        /* ignore */
+      }
       return;
     }
     try {

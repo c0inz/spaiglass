@@ -253,7 +253,9 @@ export function ChatPage() {
       const tryLoadRole = async () => {
         for (const rolePath of [nativePath, legacyPath]) {
           try {
-            const res = await fetch(`/api/files/read?path=${encodeURIComponent(rolePath)}`);
+            const res = await fetch(
+              `/api/files/read?path=${encodeURIComponent(rolePath)}`,
+            );
             if (!res.ok) continue;
             const data = await res.json();
             if (!data) continue;
@@ -282,7 +284,16 @@ export function ChatPage() {
 
   // Compute current agent URL from relay context for the agent switcher
   const currentAgentUrl = (() => {
-    const sg = (window as Window & { __SG?: { slug?: string; segment?: string; project?: string; role?: string } }).__SG;
+    const sg = (
+      window as Window & {
+        __SG?: {
+          slug?: string;
+          segment?: string;
+          project?: string;
+          role?: string;
+        };
+      }
+    ).__SG;
     if (!sg?.slug || !sg?.segment) return undefined;
     return `/vm/${sg.slug}/${sg.segment}/`;
   })();
@@ -291,7 +302,16 @@ export function ChatPage() {
   // label is just the directory name — the legacy "<project>-<role>" shape
   // was appending "-default" for role-less entries which was misleading.
   useEffect(() => {
-    const sg = (window as Window & { __SG?: { slug?: string; segment?: string; project?: string; role?: string } }).__SG;
+    const sg = (
+      window as Window & {
+        __SG?: {
+          slug?: string;
+          segment?: string;
+          project?: string;
+          role?: string;
+        };
+      }
+    ).__SG;
     if (!sg?.slug || !sg?.segment || !sg?.project) return;
     const label = sg.role ? `${sg.project}-${sg.role}` : sg.project;
     fleet.recordAgent({
@@ -523,7 +543,10 @@ export function ChatPage() {
       },
       onSessionId: (sid: string) => {
         setCurrentSessionId(sid);
-        sessionStatsRef.current = { ...sessionStatsRef.current, sessionId: sid };
+        sessionStatsRef.current = {
+          ...sessionStatsRef.current,
+          sessionId: sid,
+        };
         setSessionStats(sessionStatsRef.current);
       },
       onFileDelivery: () => setSidebarRefreshKey((k) => k + 1),
@@ -555,29 +578,37 @@ export function ChatPage() {
       `&roleFile=${encodeURIComponent(roleFile || "")}`;
     fetch(url)
       .then((r) => (r.ok ? r.json() : { files: [] }))
-      .then((data: { files?: Array<{ path: string; filename: string; lastTouched: number }> }) => {
-        const files = data.files ?? [];
-        if (files.length === 0) return;
-        setContextFilesList((prev) => {
-          const seen = new Set(prev.map((e) => e.path));
-          const merged = [...prev];
-          for (const f of files) {
-            if (!seen.has(f.path)) {
-              merged.push({
-                path: f.path,
-                name: f.filename,
-                touchedAt: f.lastTouched,
-              });
+      .then(
+        (data: {
+          files?: Array<{
+            path: string;
+            filename: string;
+            lastTouched: number;
+          }>;
+        }) => {
+          const files = data.files ?? [];
+          if (files.length === 0) return;
+          setContextFilesList((prev) => {
+            const seen = new Set(prev.map((e) => e.path));
+            const merged = [...prev];
+            for (const f of files) {
+              if (!seen.has(f.path)) {
+                merged.push({
+                  path: f.path,
+                  name: f.filename,
+                  touchedAt: f.lastTouched,
+                });
+              }
             }
-          }
-          return merged;
-        });
-        setContextFiles((prev) => {
-          const s = new Set(prev);
-          for (const f of files) s.add(f.path);
-          return s;
-        });
-      })
+            return merged;
+          });
+          setContextFiles((prev) => {
+            const s = new Set(prev);
+            for (const f of files) s.add(f.path);
+            return s;
+          });
+        },
+      )
       .catch(() => {});
   }, [workingDirectory, roleFile]);
 
@@ -655,7 +686,13 @@ export function ChatPage() {
     announcedModeRef.current = false; // re-announce mode on the next attach
     emitLocalNotice("New session started.");
     setSessionFocusBump((n) => n + 1);
-  }, [frameChat, roleFile, workingDirectory, ws.restartSession, emitLocalNotice]);
+  }, [
+    frameChat,
+    roleFile,
+    workingDirectory,
+    ws.restartSession,
+    emitLocalNotice,
+  ]);
 
   const sendMessage = useCallback(
     async (
@@ -973,17 +1010,14 @@ export function ChatPage() {
           ? "files"
           : "chat";
 
-  const handleMobileTabSelect = useCallback(
-    (tab: MobileTab) => {
-      setShowSidebar(tab === "files");
-      setShowArchViewer(tab === "arch");
-      setShowAgents(tab === "agents");
-      if (tab !== "editor") setEditingFile(null);
-      // Selecting "chat" while a file is open keeps the file in memory but
-      // collapses to chat — same as desktop behavior with both flags off.
-    },
-    [],
-  );
+  const handleMobileTabSelect = useCallback((tab: MobileTab) => {
+    setShowSidebar(tab === "files");
+    setShowArchViewer(tab === "arch");
+    setShowAgents(tab === "agents");
+    if (tab !== "editor") setEditingFile(null);
+    // Selecting "chat" while a file is open keeps the file in memory but
+    // collapses to chat — same as desktop behavior with both flags off.
+  }, []);
 
   return (
     <div className="h-[100dvh] flex flex-col bg-slate-50 dark:bg-slate-900 transition-colors duration-300 overflow-hidden">
@@ -1014,16 +1048,16 @@ export function ChatPage() {
                       className="text-blue-500 dark:text-blue-400 truncate"
                       title={workingDirectory || projectBase}
                     >
-                      {projectDisplayNames[projectBase] || getLocalDisplayName(projectBase) || projectBase}
+                      {projectDisplayNames[projectBase] ||
+                        getLocalDisplayName(projectBase) ||
+                        projectBase}
                     </span>
                   </span>
                 );
               })()}
             </div>
             {workingDirectory && !isMobile && (
-              <div
-                className="text-xs font-mono text-slate-500 dark:text-slate-400 max-w-full block text-left select-text cursor-text"
-              >
+              <div className="text-xs font-mono text-slate-500 dark:text-slate-400 max-w-full block text-left select-text cursor-text">
                 {workingDirectory.replace(/^\/home\/[^/]+/, "~")}
                 {vmConfig && (vmConfig.vmName || vmConfig.ipv4) && (
                   <span className="ml-2 text-slate-400 dark:text-slate-500">
@@ -1111,7 +1145,13 @@ export function ChatPage() {
         {showSidebar &&
           workingDirectory &&
           (!isMobile || mobileTab === "files") && (
-            <div className={isMobile ? "flex-1 min-w-0" : "w-56 flex-shrink-0 border-r border-slate-200 dark:border-slate-700"}>
+            <div
+              className={
+                isMobile
+                  ? "flex-1 min-w-0"
+                  : "w-56 flex-shrink-0 border-r border-slate-200 dark:border-slate-700"
+              }
+            >
               <FileSidebar
                 key={sidebarRefreshKey}
                 projectPath={workingDirectory}
@@ -1325,7 +1365,12 @@ export function ChatPage() {
       )}
 
       {/* Settings Modal */}
-      <SettingsModal isOpen={isSettingsOpen} onClose={handleSettingsClose} projectPath={workingDirectory || undefined} onRoleCreated={fleet.fetchFleet} />
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={handleSettingsClose}
+        projectPath={workingDirectory || undefined}
+        onRoleCreated={fleet.fetchFleet}
+      />
 
       {/* Session Picker Modal */}
       <SessionPickerModal
@@ -1340,7 +1385,6 @@ export function ChatPage() {
         }}
         currentSessionId={currentSessionId}
       />
-
     </div>
   );
 }

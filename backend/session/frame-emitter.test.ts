@@ -151,7 +151,11 @@ describe("FrameEmitter", () => {
                 type: "tool_use",
                 id: "tu-2",
                 name: "Edit",
-                input: { file_path: "/foo.ts", old_string: "a", new_string: "b" },
+                input: {
+                  file_path: "/foo.ts",
+                  old_string: "a",
+                  new_string: "b",
+                },
               },
               { type: "text", text: "Done." },
             ],
@@ -754,7 +758,9 @@ describe("FrameEmitter", () => {
           type: "assistant",
           message: {
             id: "m",
-            content: [{ type: "tool_use", id: "tu-1", name: "Bash", input: {} }],
+            content: [
+              { type: "tool_use", id: "tu-1", name: "Bash", input: {} },
+            ],
           },
         },
         makeCtx(1, 1000),

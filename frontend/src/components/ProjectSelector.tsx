@@ -54,7 +54,9 @@ export function ProjectSelector() {
       const data: ProjectsResponse = await response.json();
       setProjects(data.projects);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load directories");
+      setError(
+        err instanceof Error ? err.message : "Failed to load directories",
+      );
     } finally {
       setLoading(false);
     }
@@ -72,8 +74,7 @@ export function ProjectSelector() {
     // loading my last session automatically" / "all creating new sessions".
     // ChatPage will call /api/session/last on mount and resume the prior
     // session for this directory if one exists.
-    const base =
-      (window as Window & { __SG_BASE?: string }).__SG_BASE || "";
+    const base = (window as Window & { __SG_BASE?: string }).__SG_BASE || "";
     window.location.href = `${base}/${basename}/`;
   };
 
@@ -138,12 +139,17 @@ export function ProjectSelector() {
             Directory
           </div>
           {loading ? (
-            <div className="text-sm text-slate-400 py-2">Loading directories...</div>
+            <div className="text-sm text-slate-400 py-2">
+              Loading directories...
+            </div>
           ) : error ? (
-            <div className="text-sm text-red-600 dark:text-red-400 py-2">{error}</div>
+            <div className="text-sm text-red-600 dark:text-red-400 py-2">
+              {error}
+            </div>
           ) : projects.length === 0 ? (
             <div className="text-sm py-3 px-4 rounded-lg bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-200 border border-amber-200 dark:border-amber-800">
-              Ask your install agent to fix this server and add project directories.
+              Ask your install agent to fix this server and add project
+              directories.
             </div>
           ) : (
             <div className="space-y-2">
@@ -163,7 +169,10 @@ export function ProjectSelector() {
           )}
         </div>
 
-        <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+        <SettingsModal
+          isOpen={isSettingsOpen}
+          onClose={() => setIsSettingsOpen(false)}
+        />
       </div>
     </div>
   );

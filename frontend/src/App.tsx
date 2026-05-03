@@ -8,17 +8,17 @@ import { SettingsProvider } from "./contexts/SettingsContext";
 function App() {
   return (
     <ErrorBoundary>
-    <SettingsProvider>
-      <Router
-        basename={(window as Window & { __SG_BASE?: string }).__SG_BASE || ""}
-      >
-        <Routes>
-          <Route path="/" element={<ProjectSelector />} />
-          <Route path="/projects/*" element={<ChatPage />} />
-          <Route path="*" element={<RoleResolver />} />
-        </Routes>
-      </Router>
-    </SettingsProvider>
+      <SettingsProvider>
+        <Router
+          basename={(window as Window & { __SG_BASE?: string }).__SG_BASE || ""}
+        >
+          <Routes>
+            <Route path="/" element={<ProjectSelector />} />
+            <Route path="/projects/*" element={<ChatPage />} />
+            <Route path="*" element={<RoleResolver />} />
+          </Routes>
+        </Router>
+      </SettingsProvider>
     </ErrorBoundary>
   );
 }

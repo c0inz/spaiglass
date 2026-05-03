@@ -69,7 +69,9 @@ export function parseAgentFile(content: string): ParsedAgent {
         if (!Array.isArray(currentValue)) {
           currentValue = [];
         }
-        (currentValue as unknown[]).push(parseYamlScalar(stripped.slice(2).trim()));
+        (currentValue as unknown[]).push(
+          parseYamlScalar(stripped.slice(2).trim()),
+        );
       } else if (stripped.includes(":")) {
         if (currentValue === null || Array.isArray(currentValue)) {
           currentValue = {};
@@ -115,8 +117,10 @@ function parseYamlScalar(val: string): unknown {
   if (val === "true") return true;
   if (val === "false") return false;
   if (val === "null" || val === "~") return null;
-  if ((val.startsWith('"') && val.endsWith('"')) ||
-      (val.startsWith("'") && val.endsWith("'"))) {
+  if (
+    (val.startsWith('"') && val.endsWith('"')) ||
+    (val.startsWith("'") && val.endsWith("'"))
+  ) {
     return val.slice(1, -1);
   }
   const num = Number(val);

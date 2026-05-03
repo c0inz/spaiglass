@@ -171,12 +171,7 @@ export interface SessionSnapshot {
   /** True once we've seen session_init and not yet session_end. */
   attached: boolean;
   /** Present after session_end. */
-  endReason:
-    | "user"
-    | "error"
-    | "timeout"
-    | "replaced"
-    | null;
+  endReason: "user" | "error" | "timeout" | "replaced" | null;
 }
 
 function emptySession(): SessionSnapshot {
@@ -289,9 +284,9 @@ export function applyFrame(state: FrameState, frame: Frame): FrameState {
       // enough to push the user past ~2 pages of scrolling (~2000 chars).
       const RECAP_CHAR_THRESHOLD = 2000;
       let rows = state.rows;
-      const lastAssistant = [...state.rows].reverse().find(
-        (r): r is AssistantRow => r.kind === "assistant",
-      );
+      const lastAssistant = [...state.rows]
+        .reverse()
+        .find((r): r is AssistantRow => r.kind === "assistant");
       if (lastAssistant) {
         let charCount = 0;
         for (const block of lastAssistant.content) {
@@ -469,7 +464,9 @@ export function applyFrame(state: FrameState, frame: Frame): FrameState {
       if (!call) return { ...state, lastSeq };
       const nextCall: ToolCallState = {
         ...call,
-        output: frame.outputAppend ? call.output + frame.outputAppend : call.output,
+        output: frame.outputAppend
+          ? call.output + frame.outputAppend
+          : call.output,
         errorOutput: frame.errorAppend
           ? call.errorOutput + frame.errorAppend
           : call.errorOutput,

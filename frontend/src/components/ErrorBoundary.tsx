@@ -37,7 +37,9 @@ export class ErrorBoundary extends Component<Props, State> {
           }}
         >
           <div style={{ maxWidth: 480, textAlign: "center" }}>
-            <h1 style={{ fontSize: 24, marginBottom: 8 }}>Something went wrong</h1>
+            <h1 style={{ fontSize: 24, marginBottom: 8 }}>
+              Something went wrong
+            </h1>
             <p style={{ color: "#94a3b8", marginBottom: 16 }}>
               {this.state.error?.message || "An unexpected error occurred."}
             </p>

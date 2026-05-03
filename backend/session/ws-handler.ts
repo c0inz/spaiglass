@@ -214,8 +214,7 @@ async function handleSessionRestart(
   msg: Record<string, unknown>,
   sessionManager: SessionManager,
 ): Promise<void> {
-  const roleFile =
-    (msg.roleFile as string | undefined) ?? state.roleFile ?? "";
+  const roleFile = (msg.roleFile as string | undefined) ?? state.roleFile ?? "";
   const workingDirectory =
     (msg.workingDirectory as string) || state.workingDirectory;
 

@@ -386,9 +386,7 @@ function SensitivityBadge({ level }: { level?: string }) {
   const l = level.toLowerCase();
   if (l === "confidential")
     return (
-      <Pill cls="bg-red-500/15 text-red-400 border-red-500/25">
-        {level}
-      </Pill>
+      <Pill cls="bg-red-500/15 text-red-400 border-red-500/25">{level}</Pill>
     );
   if (l === "internal")
     return (
@@ -646,8 +644,7 @@ function ConnectionsSection({
   return (
     <div className="space-y-1">
       {connections.map((c, i) => {
-        const arrow =
-          c.mode === "bidirectional" ? "◄━━►" : "━━━►";
+        const arrow = c.mode === "bidirectional" ? "◄━━►" : "━━━►";
         return (
           <div
             key={c.id || i}
@@ -704,11 +701,7 @@ function InfraSection({ infra }: { infra: ArchInfra[] }) {
   );
 }
 
-function DatastoresSection({
-  datastores,
-}: {
-  datastores: ArchDatastore[];
-}) {
+function DatastoresSection({ datastores }: { datastores: ArchDatastore[] }) {
   const t = T.datastores;
   return (
     <div className="space-y-1.5">
@@ -822,9 +815,7 @@ function SiteMapTree({ nodes }: { nodes: ArchSiteMapNode[] }) {
 
   return (
     <div>
-      {nodes.map((node, i) =>
-        renderNode(node, 0, i === nodes.length - 1, ""),
-      )}
+      {nodes.map((node, i) => renderNode(node, 0, i === nodes.length - 1, ""))}
     </div>
   );
 }
@@ -914,11 +905,7 @@ function FeaturesSection({ features }: { features: ArchFeature[] }) {
   );
 }
 
-function ExternalSection({
-  systems,
-}: {
-  systems: ArchExternalSystem[];
-}) {
+function ExternalSection({ systems }: { systems: ArchExternalSystem[] }) {
   const t = T.external;
   return (
     <div className="space-y-1.5">
@@ -964,9 +951,7 @@ function DeploymentsSection({
                 {d.method}
               </Pill>
             )}
-            {d.target && (
-              <span className="text-slate-500">→ {d.target}</span>
-            )}
+            {d.target && <span className="text-slate-500">→ {d.target}</span>}
             {d.script && (
               <span className="text-slate-500 text-[10px] truncate">
                 {d.script}
@@ -1053,9 +1038,7 @@ export function ArchitectureViewer({ projectPath }: ArchitectureViewerProps) {
           </code>{" "}
           in this project.
         </p>
-        <p>
-          Ask your install agent to create one for this project.
-        </p>
+        <p>Ask your install agent to create one for this project.</p>
       </div>
     );
   }

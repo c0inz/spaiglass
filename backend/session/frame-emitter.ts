@@ -126,8 +126,7 @@ function shortId(): string {
 // entire file inline in the chat transcript. Collapse the fenced body to a
 // single filename chip for display; Claude still sees the real content
 // because it's the SDK echo, not the upstream message, that's being edited.
-const ATTACHED_FILE_RE =
-  /\[Attached file: ([^\]]+)\]\n```\n[\s\S]*?\n```/g;
+const ATTACHED_FILE_RE = /\[Attached file: ([^\]]+)\]\n```\n[\s\S]*?\n```/g;
 function stripAttachedFileBody(text: string): string {
   return text.replace(ATTACHED_FILE_RE, "[$1]");
 }
@@ -166,7 +165,8 @@ function buildSystemNotice(
     (typeof sdk.text === "string" && sdk.text) ||
     (typeof sdk.content === "string" && sdk.content) ||
     (typeof (sdk.message as { text?: unknown } | undefined)?.text ===
-      "string" && (sdk.message as { text: string }).text) ||
+      "string" &&
+      (sdk.message as { text: string }).text) ||
     null;
   if (!text) return null;
   return { subtype, text, level: "info" };
@@ -293,10 +293,7 @@ export class FrameEmitter {
    *   - For a `user` message containing tool_result blocks, one
    *     `ToolCallEndFrame` per tool_result is emitted, in content order.
    */
-  public emitFromSdkMessage(
-    sdk: SdkMessageLike,
-    ctx: EmitContext,
-  ): Frame[] {
+  public emitFromSdkMessage(sdk: SdkMessageLike, ctx: EmitContext): Frame[] {
     switch (sdk.type) {
       case "system":
         return this.emitSystem(sdk, ctx);
@@ -369,11 +366,7 @@ export class FrameEmitter {
     const rawContent = sdk.message?.content;
 
     const contentBlocks: AssistantContentBlock[] = [];
-    const toolCallFrames: (
-      | ToolCallStartFrame
-      | PlanFrame
-      | TodoFrame
-    )[] = [];
+    const toolCallFrames: (ToolCallStartFrame | PlanFrame | TodoFrame)[] = [];
 
     if (Array.isArray(rawContent)) {
       for (const item of rawContent) {
@@ -509,7 +502,10 @@ export class FrameEmitter {
 
     for (const item of rawContent) {
       if (isTextItem(item)) {
-        userBlocks.push({ type: "text", text: stripAttachedFileBody(item.text) });
+        userBlocks.push({
+          type: "text",
+          text: stripAttachedFileBody(item.text),
+        });
       } else if (isToolResultItem(item)) {
         const endFrame = this.toolResultToEndFrame(item, toolUseResult, ctx);
         if (endFrame) toolEndFrames.push(endFrame);
@@ -568,8 +564,7 @@ export class FrameEmitter {
       toolCallId: toolUseId,
       status,
       output: output.length > 0 ? output : undefined,
-      errorOutput:
-        status === "error" && output.length > 0 ? output : undefined,
+      errorOutput: status === "error" && output.length > 0 ? output : undefined,
       structured,
       durationMs,
     };
@@ -587,7 +582,8 @@ export class FrameEmitter {
       type: "session_meta",
     };
     if (typeof sdk.num_turns === "number") frame.turns = sdk.num_turns;
-    if (typeof sdk.total_cost_usd === "number") frame.costUsd = sdk.total_cost_usd;
+    if (typeof sdk.total_cost_usd === "number")
+      frame.costUsd = sdk.total_cost_usd;
     if (typeof sdk.duration_ms === "number") frame.durationMs = sdk.duration_ms;
     if (sdk.usage) {
       if (typeof sdk.usage.input_tokens === "number")

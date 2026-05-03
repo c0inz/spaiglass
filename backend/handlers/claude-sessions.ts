@@ -49,7 +49,9 @@ function decodeProjectPath(encoded: string): string {
   return "/" + encoded.slice(1).replace(/-/g, "/");
 }
 
-async function loadSpaiglassSessionMap(): Promise<Map<string, SpaiglassSessionMeta>> {
+async function loadSpaiglassSessionMap(): Promise<
+  Map<string, SpaiglassSessionMeta>
+> {
   const root = join(homedir(), ".spaiglass", "sessions");
   const out = new Map<string, SpaiglassSessionMeta>();
   let entries: string[];

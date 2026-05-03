@@ -19,7 +19,12 @@ interface SettingsModalProps {
   onRoleCreated?: () => void;
 }
 
-export function SettingsModal({ isOpen, onClose, projectPath, onRoleCreated }: SettingsModalProps) {
+export function SettingsModal({
+  isOpen,
+  onClose,
+  projectPath,
+  onRoleCreated,
+}: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>("roles");
 
   useEffect(() => {
@@ -92,9 +97,14 @@ export function SettingsModal({ isOpen, onClose, projectPath, onRoleCreated }: S
         <div className="overflow-y-auto flex-1">
           <div className="p-6">
             {activeTab === "roles" && (
-              <RolesSettings projectPath={projectPath} onRoleCreated={onRoleCreated} />
+              <RolesSettings
+                projectPath={projectPath}
+                onRoleCreated={onRoleCreated}
+              />
             )}
-            {activeTab === "settings" && <GeneralSettings projectPath={projectPath} />}
+            {activeTab === "settings" && (
+              <GeneralSettings projectPath={projectPath} />
+            )}
             {activeTab === "theme" && <ThemeSettings />}
           </div>
         </div>

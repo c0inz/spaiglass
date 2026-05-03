@@ -20,7 +20,4 @@ export type PermissionMode =
   | "bypassPermissions";
 
 // Re-export shared types that frontend consumers reference via "../types"
-export type {
-  ProjectsResponse,
-  ProjectInfo,
-} from "../../shared/types";
+export type { ProjectsResponse, ProjectInfo } from "../../shared/types";

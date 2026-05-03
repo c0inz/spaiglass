@@ -299,8 +299,10 @@ async function* executeClaudeCommand(
                   action: item.name === "Write" ? "write" : "edit",
                 };
                 if (item.name === "Edit") {
-                  if (typeof input.old_string === "string") delivery.oldString = input.old_string;
-                  if (typeof input.new_string === "string") delivery.newString = input.new_string;
+                  if (typeof input.old_string === "string")
+                    delivery.oldString = input.old_string;
+                  if (typeof input.new_string === "string")
+                    delivery.newString = input.new_string;
                 }
                 yield {
                   type: "file_delivery",

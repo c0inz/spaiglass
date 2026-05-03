@@ -51,9 +51,9 @@ export function HelpButton() {
           Ask your agent that installed <Brand /> how to modify server and
           directory picklist items or resolve issues if they are not working
           correctly. <Brand />, like Telegram, does not start Claude for you.
-          You can make some changes to what is displayed on your screen,
-          browser tab and last used buttons by changing settings using the
-          Settings wheel button on the top right.
+          You can make some changes to what is displayed on your screen, browser
+          tab and last used buttons by changing settings using the Settings
+          wheel button on the top right.
         </div>
       )}
     </div>

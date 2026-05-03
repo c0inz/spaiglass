@@ -295,9 +295,7 @@ export function ConfirmWidget({
 // MermaidBlock — lazy-loaded diagram renderer
 // ---------------------------------------------------------------------------
 
-let mermaidInitPromise: Promise<
-  typeof import("mermaid").default
-> | null = null;
+let mermaidInitPromise: Promise<typeof import("mermaid").default> | null = null;
 
 function loadMermaid() {
   if (!mermaidInitPromise) {

@@ -46,7 +46,10 @@ async function writeSecrets(store: SecretsStore): Promise<void> {
 
 function withSecretsLock<T>(fn: () => Promise<T>): Promise<T> {
   const next = secretsLock.then(fn, fn);
-  secretsLock = next.then(() => {}, () => {});
+  secretsLock = next.then(
+    () => {},
+    () => {},
+  );
   return next;
 }
 

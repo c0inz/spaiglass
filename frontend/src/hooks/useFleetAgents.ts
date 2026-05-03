@@ -180,27 +180,24 @@ export function useFleetAgents() {
   }, [fetchFleet]);
 
   // Record that an agent was used (call on page load for current agent)
-  const recordAgent = useCallback(
-    (agent: Omit<RecentAgent, "timestamp">) => {
-      setRecentAgents((prev) => {
-        const filtered = prev.filter((a) => a.url !== agent.url);
-        const updated = [
-          { ...agent, timestamp: Date.now() },
-          ...filtered,
-        ].slice(0, MAX_RECENT);
-        saveRecent(updated);
-        return updated;
-      });
+  const recordAgent = useCallback((agent: Omit<RecentAgent, "timestamp">) => {
+    setRecentAgents((prev) => {
+      const filtered = prev.filter((a) => a.url !== agent.url);
+      const updated = [{ ...agent, timestamp: Date.now() }, ...filtered].slice(
+        0,
+        MAX_RECENT,
+      );
+      saveRecent(updated);
+      return updated;
+    });
 
-      // Persist last-used agent to relay for post-auth redirect
-      fetch("/api/__relay/last-agent", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: agent.url }),
-      }).catch(() => {});
-    },
-    [],
-  );
+    // Persist last-used agent to relay for post-auth redirect
+    fetch("/api/__relay/last-agent", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: agent.url }),
+    }).catch(() => {});
+  }, []);
 
   return {
     connectors,

@@ -88,7 +88,8 @@ function readDisplayStore(home: string): DisplayStore {
           const dn = (v as { displayName?: unknown }).displayName;
           const tn = (v as { tabName?: unknown }).tabName;
           const entry: { displayName?: string; tabName?: string } = {};
-          if (typeof dn === "string" && dn.trim()) entry.displayName = dn.trim();
+          if (typeof dn === "string" && dn.trim())
+            entry.displayName = dn.trim();
           if (typeof tn === "string" && tn.trim()) entry.tabName = tn.trim();
           if (entry.displayName || entry.tabName) out[k] = entry;
         }

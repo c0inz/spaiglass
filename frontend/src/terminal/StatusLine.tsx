@@ -17,18 +17,7 @@ import type { DisplayStatus } from "../utils/statusClassifier";
 // not jitter horizontally as the spinner advances. (The previous frames
 // "·+✦✿" mixed narrow ASCII with double-width symbols and made the action
 // word wiggle on every tick.)
-const SPINNER_FRAMES = [
-  "⠋",
-  "⠙",
-  "⠹",
-  "⠸",
-  "⠼",
-  "⠴",
-  "⠦",
-  "⠧",
-  "⠇",
-  "⠏",
-];
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 /**
  * Map DisplayStatus.kind to a Tailwind color class for the spinner + label.
@@ -65,7 +54,9 @@ interface StatusLineProps {
   status: DisplayStatus | null;
 }
 
-export const StatusLine = memo(function StatusLine({ status }: StatusLineProps) {
+export const StatusLine = memo(function StatusLine({
+  status,
+}: StatusLineProps) {
   const [frame, setFrame] = useState(0);
   const prevLabelRef = useRef<string | null>(null);
   const [fadeClass, setFadeClass] = useState("opacity-100");
@@ -106,7 +97,9 @@ export const StatusLine = memo(function StatusLine({ status }: StatusLineProps) 
       role="status"
       aria-live="polite"
     >
-      <span className={`font-mono text-sm inline-flex items-center gap-2 ${color}`}>
+      <span
+        className={`font-mono text-sm inline-flex items-center gap-2 ${color}`}
+      >
         {/* Fixed-width slot for the spinner glyph. Even though the braille
             frames are all single-cell-width in monospace, pinning the box
             width prevents subpixel rounding from nudging the label. */}

@@ -75,6 +75,8 @@ export async function handleUnregisterProject(c: Context) {
     return c.json({ error: "Failed to write ~/.claude.json" }, 500);
   }
 
-  logger.api.info(`Unregistered project path from ~/.claude.json: ${matchedKey}`);
+  logger.api.info(
+    `Unregistered project path from ~/.claude.json: ${matchedKey}`,
+  );
   return c.json({ ok: true, removed: true, path: matchedKey });
 }

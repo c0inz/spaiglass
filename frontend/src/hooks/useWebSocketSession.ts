@@ -331,7 +331,9 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
         // Buffer aged out — we've missed unrecoverable frames.
         lastCursorRef.current = 0;
         cbs.onFrame(
-          synthError("Reconnected, but some output was lost (buffer aged out)."),
+          synthError(
+            "Reconnected, but some output was lost (buffer aged out).",
+          ),
         );
         break;
 
@@ -549,21 +551,18 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
   /**
    * Send a user message (or slash command).
    */
-  const sendMessage = useCallback(
-    (content: string, attachments?: string[]) => {
-      const ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const sendMessage = useCallback((content: string, attachments?: string[]) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
-      ws.send(
-        JSON.stringify({
-          type: "message",
-          content,
-          ...(attachments?.length ? { attachments } : {}),
-        }),
-      );
-    },
-    [],
-  );
+    ws.send(
+      JSON.stringify({
+        type: "message",
+        content,
+        ...(attachments?.length ? { attachments } : {}),
+      }),
+    );
+  }, []);
 
   /**
    * Phase 6.4 — reply to an in-flight interactive MCP tool call.

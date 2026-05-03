@@ -172,17 +172,27 @@ async function parseHistoryFile(
             for (const item of msgContent) {
               if (!item || typeof item !== "object") continue;
               const itype = (item as { type?: unknown }).type;
-              if (itype === "text" && typeof (item as { text?: unknown }).text === "string") {
+              if (
+                itype === "text" &&
+                typeof (item as { text?: unknown }).text === "string"
+              ) {
                 if (!lastMessagePreview) {
-                  lastMessagePreview = String((item as { text: string }).text).slice(0, 100);
+                  lastMessagePreview = String(
+                    (item as { text: string }).text,
+                  ).slice(0, 100);
                 }
                 // Update to newest text block we see on later assistant turns
-                lastMessagePreview = String((item as { text: string }).text).slice(0, 100);
+                lastMessagePreview = String(
+                  (item as { text: string }).text,
+                ).slice(0, 100);
               } else if (itype === "tool_use") {
                 const toolName = (item as { name?: unknown }).name;
-                const input = (item as { input?: Record<string, unknown> }).input;
+                const input = (item as { input?: Record<string, unknown> })
+                  .input;
                 if (
-                  (toolName === "Write" || toolName === "Edit" || toolName === "MultiEdit") &&
+                  (toolName === "Write" ||
+                    toolName === "Edit" ||
+                    toolName === "MultiEdit") &&
                   input &&
                   typeof input.file_path === "string"
                 ) {

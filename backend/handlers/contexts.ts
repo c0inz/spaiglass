@@ -35,7 +35,11 @@ export async function handleContextsRequest(c: Context) {
     try {
       const entries = await readdir(agentsDir, { withFileTypes: true });
       for (const entry of entries) {
-        if (!entry.isDirectory() && entry.name.endsWith(".md") && !seen.has(entry.name)) {
+        if (
+          !entry.isDirectory() &&
+          entry.name.endsWith(".md") &&
+          !seen.has(entry.name)
+        ) {
           seen.add(entry.name);
           const filePath = join(agentsDir, entry.name);
           const content = await readFile(filePath, "utf-8");

@@ -1,5 +1,9 @@
 import { useState, useEffect, useRef } from "react";
-import { PlusIcon, CommandLineIcon, FolderIcon } from "@heroicons/react/24/outline";
+import {
+  PlusIcon,
+  CommandLineIcon,
+  FolderIcon,
+} from "@heroicons/react/24/outline";
 import type { ClaudeSessionRow } from "../../../shared/types";
 import { getClaudeSessionsUrl } from "../config/api";
 
@@ -71,9 +75,11 @@ export function SessionPickerModal({
 
   if (!open) return null;
 
-  const sg = (window as Window & {
-    __SG?: { slug?: string; segment?: string; project?: string };
-  }).__SG;
+  const sg = (
+    window as Window & {
+      __SG?: { slug?: string; segment?: string; project?: string };
+    }
+  ).__SG;
   const connectorSlug = sg?.slug;
   const currentSegment = sg?.segment;
 
@@ -148,7 +154,10 @@ export function SessionPickerModal({
               // Match `claude --resume`: lead with the LAST user message —
               // it's the most likely cue for "what was I working on?".
               const preview =
-                s.lastUserMessage || s.firstUserMessage || s.lastMessagePreview || "(no preview)";
+                s.lastUserMessage ||
+                s.firstUserMessage ||
+                s.lastMessagePreview ||
+                "(no preview)";
               const projectLabel = basename(s.projectPath) || s.projectPath;
               const isSpaiglass = s.source === "spaiglass";
               const model = shortModel(s.model);
@@ -204,7 +213,9 @@ export function SessionPickerModal({
                     <span className="font-mono">{turns} turns</span>
                     {model && (
                       <>
-                        <span className="text-slate-300 dark:text-slate-600">·</span>
+                        <span className="text-slate-300 dark:text-slate-600">
+                          ·
+                        </span>
                         <span className="font-mono">{model}</span>
                       </>
                     )}
@@ -218,4 +229,3 @@ export function SessionPickerModal({
     </div>
   );
 }
-

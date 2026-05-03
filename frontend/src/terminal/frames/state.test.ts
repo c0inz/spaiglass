@@ -173,9 +173,19 @@ describe("frame state reducer", () => {
       state,
       assistantMessage("a1", [
         { type: "text", text: "Let me check the config. " },
-        { type: "tool_use", toolCallId: "tc1", tool: "Read", input: { path: "/etc/foo" } },
+        {
+          type: "tool_use",
+          toolCallId: "tc1",
+          tool: "Read",
+          input: { path: "/etc/foo" },
+        },
         { type: "text", text: "Now I'll update it." },
-        { type: "tool_use", toolCallId: "tc2", tool: "Edit", input: { path: "/etc/foo" } },
+        {
+          type: "tool_use",
+          toolCallId: "tc2",
+          tool: "Edit",
+          input: { path: "/etc/foo" },
+        },
         { type: "text", text: "Done." },
       ]),
     );
@@ -188,7 +198,9 @@ describe("frame state reducer", () => {
     expect(row.content[3].type).toBe("tool_use");
     expect(row.content[4].type).toBe("text");
     // the critical invariant: text-between-tools stays in position
-    expect((row.content[2] as { text: string }).text).toBe("Now I'll update it.");
+    expect((row.content[2] as { text: string }).text).toBe(
+      "Now I'll update it.",
+    );
   });
 
   it("tool_call_start creates ToolCallState in the map, not a row", () => {
@@ -197,10 +209,18 @@ describe("frame state reducer", () => {
     state = applyFrame(
       state,
       assistantMessage("a1", [
-        { type: "tool_use", toolCallId: "tc1", tool: "Bash", input: { command: "ls" } },
+        {
+          type: "tool_use",
+          toolCallId: "tc1",
+          tool: "Bash",
+          input: { command: "ls" },
+        },
       ]),
     );
-    state = applyFrame(state, toolCallStart("tc1", "Bash", { command: "ls" }, "a1"));
+    state = applyFrame(
+      state,
+      toolCallStart("tc1", "Bash", { command: "ls" }, "a1"),
+    );
     expect(state.rows).toHaveLength(1); // only the assistant row
     expect(state.toolCalls.get("tc1")).toBeDefined();
     const call = state.toolCalls.get("tc1") as ToolCallState;
@@ -268,8 +288,14 @@ describe("frame state reducer", () => {
   it("assistant_message replacing an existing messageId replaces the row in place", () => {
     resetSeq();
     let state = initialFrameState();
-    state = applyFrame(state, assistantMessage("a1", [{ type: "text", text: "v1" }]));
-    state = applyFrame(state, assistantMessage("a1", [{ type: "text", text: "v2" }]));
+    state = applyFrame(
+      state,
+      assistantMessage("a1", [{ type: "text", text: "v1" }]),
+    );
+    state = applyFrame(
+      state,
+      assistantMessage("a1", [{ type: "text", text: "v2" }]),
+    );
     expect(state.rows).toHaveLength(1);
     const row = state.rows[0] as AssistantRow;
     expect((row.content[0] as { text: string }).text).toBe("v2");
@@ -284,9 +310,7 @@ describe("frame state reducer", () => {
       ts: 3500,
       type: "todo",
       toolCallId: "tw1",
-      todos: [
-        { content: "a", activeForm: "A", status: "pending" },
-      ],
+      todos: [{ content: "a", activeForm: "A", status: "pending" }],
     };
     const t2: Frame = {
       id: "todo-2",
@@ -294,9 +318,7 @@ describe("frame state reducer", () => {
       ts: 3600,
       type: "todo",
       toolCallId: "tw1",
-      todos: [
-        { content: "a", activeForm: "A", status: "completed" },
-      ],
+      todos: [{ content: "a", activeForm: "A", status: "completed" }],
     };
     state = applyFrame(state, t1);
     state = applyFrame(state, t2);

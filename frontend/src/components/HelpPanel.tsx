@@ -20,7 +20,12 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
-export function HelpPanel({ stats, slashCommands, projectPath, activeRole }: HelpPanelProps) {
+export function HelpPanel({
+  stats,
+  slashCommands,
+  projectPath,
+  activeRole,
+}: HelpPanelProps) {
   const cacheTotal = stats.cacheReadTokens + stats.cacheCreationTokens;
   const cacheHitPct =
     stats.inputTokens > 0
@@ -43,14 +48,21 @@ export function HelpPanel({ stats, slashCommands, projectPath, activeRole }: Hel
         setPlugins(data.plugins || []);
         // Find plugin config for the active role
         if (activeRole && data.roles) {
-          const role = (data.roles as Array<{ name: string; filename: string; plugins: Record<string, boolean> }>)
-            .find((r) => r.filename === activeRole || r.name === activeRole);
+          const role = (
+            data.roles as Array<{
+              name: string;
+              filename: string;
+              plugins: Record<string, boolean>;
+            }>
+          ).find((r) => r.filename === activeRole || r.name === activeRole);
           setRolePlugins(role?.plugins || {});
         }
         setPluginsLoaded(true);
       })
       .catch(() => {});
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [projectPath, activeRole]);
 
   /** Is a plugin enabled for the current role's session? */
@@ -83,13 +95,17 @@ export function HelpPanel({ stats, slashCommands, projectPath, activeRole }: Hel
           <div className="flex justify-between">
             <span className="text-slate-500">Tokens in</span>
             <span>
-              {stats.inputTokens > 0 ? formatTokens(stats.inputTokens) : "\u2014"}
+              {stats.inputTokens > 0
+                ? formatTokens(stats.inputTokens)
+                : "\u2014"}
             </span>
           </div>
           <div className="flex justify-between">
             <span className="text-slate-500">Tokens out</span>
             <span>
-              {stats.outputTokens > 0 ? formatTokens(stats.outputTokens) : "\u2014"}
+              {stats.outputTokens > 0
+                ? formatTokens(stats.outputTokens)
+                : "\u2014"}
             </span>
           </div>
           <div className="flex justify-between">
@@ -103,7 +119,9 @@ export function HelpPanel({ stats, slashCommands, projectPath, activeRole }: Hel
           <div className="flex justify-between">
             <span className="text-slate-500">Cost</span>
             <span>
-              {stats.totalCost > 0 ? `$${stats.totalCost.toFixed(4)}` : "\u2014"}
+              {stats.totalCost > 0
+                ? `$${stats.totalCost.toFixed(4)}`
+                : "\u2014"}
             </span>
           </div>
           <div className="flex justify-between">
@@ -129,7 +147,9 @@ export function HelpPanel({ stats, slashCommands, projectPath, activeRole }: Hel
         {!pluginsLoaded ? (
           <div className="text-xs text-slate-400 italic">Loading...</div>
         ) : plugins.length === 0 ? (
-          <div className="text-xs text-slate-400 italic">No plugins installed</div>
+          <div className="text-xs text-slate-400 italic">
+            No plugins installed
+          </div>
         ) : (
           <div className="space-y-1.5">
             {plugins.map((plugin) => {
@@ -146,7 +166,9 @@ export function HelpPanel({ stats, slashCommands, projectPath, activeRole }: Hel
                     disabled
                     className="w-3.5 h-3.5 rounded border-slate-300 dark:border-slate-600 text-blue-500 cursor-default"
                   />
-                  <span className={`text-xs font-mono ${enabled ? "text-slate-700 dark:text-slate-300" : "text-slate-400 dark:text-slate-500"}`}>
+                  <span
+                    className={`text-xs font-mono ${enabled ? "text-slate-700 dark:text-slate-300" : "text-slate-400 dark:text-slate-500"}`}
+                  >
                     {plugin.name}
                   </span>
                 </label>
@@ -161,12 +183,27 @@ export function HelpPanel({ stats, slashCommands, projectPath, activeRole }: Hel
             Plugin Commands
           </div>
           <div className="space-y-1 text-[11px] font-mono text-slate-500 dark:text-slate-400">
-            <div><span className="text-blue-600 dark:text-blue-400">/plugin</span> name <span className="text-emerald-600 dark:text-emerald-400">enable</span></div>
-            <div><span className="text-blue-600 dark:text-blue-400">/plugin</span> name <span className="text-red-500 dark:text-red-400">disable</span></div>
-            <div><span className="text-blue-600 dark:text-blue-400">/reload-plugins</span></div>
+            <div>
+              <span className="text-blue-600 dark:text-blue-400">/plugin</span>{" "}
+              name{" "}
+              <span className="text-emerald-600 dark:text-emerald-400">
+                enable
+              </span>
+            </div>
+            <div>
+              <span className="text-blue-600 dark:text-blue-400">/plugin</span>{" "}
+              name{" "}
+              <span className="text-red-500 dark:text-red-400">disable</span>
+            </div>
+            <div>
+              <span className="text-blue-600 dark:text-blue-400">
+                /reload-plugins
+              </span>
+            </div>
           </div>
           <div className="mt-1 text-[10px] text-slate-400 dark:text-slate-500">
-            Changes apply to the current session. Edit role settings to persist across sessions.
+            Changes apply to the current session. Edit role settings to persist
+            across sessions.
           </div>
         </div>
       </div>

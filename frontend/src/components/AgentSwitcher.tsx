@@ -105,9 +105,11 @@ export function AgentSwitcher({
   // (and fail to highlight in the dropdown). Fall back to project for legacy
   // <project>-<role>/ URLs where segment doesn't exist on-record as a dir.
   const currentDirectoryName = useMemo(() => {
-    const sg = (window as Window & {
-      __SG?: { project?: string; segment?: string };
-    }).__SG;
+    const sg = (
+      window as Window & {
+        __SG?: { project?: string; segment?: string };
+      }
+    ).__SG;
     return sg?.segment || sg?.project || null;
   }, []);
 
@@ -135,9 +137,7 @@ export function AgentSwitcher({
                 currentConnectorName.toLowerCase(),
             )
             .sort((a, b) =>
-              (a.displayName || a.name).localeCompare(
-                b.displayName || b.name,
-              ),
+              (a.displayName || a.name).localeCompare(b.displayName || b.name),
             )
         : [],
     [directories, currentConnectorName],
@@ -153,9 +153,7 @@ export function AgentSwitcher({
     window.location.href = pickServerTarget(conn, recentAgents);
   };
 
-  const handleDirectoryChange = (
-    ev: React.ChangeEvent<HTMLSelectElement>,
-  ) => {
+  const handleDirectoryChange = (ev: React.ChangeEvent<HTMLSelectElement>) => {
     const name = ev.target.value;
     if (!name || !currentConnectorName) return;
     const dir = directories.find(
@@ -352,20 +350,22 @@ export function AgentPickerFullPage({
     );
   const offlineConns = connectors.filter((c) => !c.online);
 
-  const sg = (window as Window & {
-    __SG?: { slug?: string; project?: string; segment?: string };
-  }).__SG;
+  const sg = (
+    window as Window & {
+      __SG?: { slug?: string; project?: string; segment?: string };
+    }
+  ).__SG;
   const currentConnectorName = sg?.slug
     ? sg.slug.includes(".")
       ? sg.slug.slice(sg.slug.indexOf(".") + 1)
       : sg.slug
     : null;
   const initialServer = currentConnectorName
-    ? connectors.find(
+    ? (connectors.find(
         (c) =>
           c.name.toLowerCase() === currentConnectorName.toLowerCase() &&
           c.online,
-      ) ?? null
+      ) ?? null)
     : null;
 
   const [step, setStep] = useState<WizardStep>(
@@ -431,14 +431,16 @@ export function AgentPickerFullPage({
   }
   function startNewSession() {
     if (!chosenDir) return;
-    const url = chosenDir.url + (chosenDir.url.includes("?") ? "&" : "?") + "new=1";
+    const url =
+      chosenDir.url + (chosenDir.url.includes("?") ? "&" : "?") + "new=1";
     window.location.href = url;
   }
   function resumeSession(s: ClaudeSessionRow) {
     if (!chosenDir) return;
     const params = new URLSearchParams({
       sessionId: s.sessionId,
-      cwd: s.spaiglassWorkingDirectory || s.projectPath || s.cwd || chosenDir.path,
+      cwd:
+        s.spaiglassWorkingDirectory || s.projectPath || s.cwd || chosenDir.path,
     });
     window.location.href = chosenDir.url + "?" + params.toString();
   }
