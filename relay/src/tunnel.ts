@@ -14,6 +14,7 @@ import {
   getConnectorByToken,
   getConnectorById,
   touchConnector,
+  updateConnectorHints,
   getConnectorAccess,
   type ConnectorRole,
 } from "./db.ts";
@@ -381,6 +382,18 @@ export function handleConnectorWs() {
         const version = (typeof msg.spaiglassVersion === "string" && msg.spaiglassVersion) || "unknown";
         cm.register(connector.id, connector.user_id, ws, version);
         touchConnector(connector.id);
+
+        // Persist SSH discovery hints if the connector reported them. Used by
+        // the fleet-rollout script to update VMs without a hard-coded
+        // inventory; missing fields leave prior values alone (older
+        // connectors that don't send hints don't blow away newer values).
+        const lanIp = typeof msg.lanIp === "string" ? msg.lanIp : undefined;
+        const hostname = typeof msg.hostname === "string" ? msg.hostname : undefined;
+        const sshUser = typeof msg.sshUser === "string" ? msg.sshUser : undefined;
+        const platform = typeof msg.platform === "string" ? msg.platform : undefined;
+        if (lanIp || hostname || sshUser || platform) {
+          updateConnectorHints(connector.id, { lanIp, hostname, sshUser, platform });
+        }
 
         // Store connector ID on the WS for cleanup
         connectorWsMap.set(ws, connector.id);

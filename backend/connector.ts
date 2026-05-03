@@ -18,6 +18,65 @@ import WebSocket from "ws";
 import { config } from "dotenv";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { hostname as osHostname, networkInterfaces, userInfo, platform as osPlatform } from "node:os";
+
+/**
+ * Collect SSH discovery hints to send on auth. The relay stores these
+ * so fleet-rollout-spaiglass.sh can update VMs without a hardcoded
+ * inventory list. None are required — fields stay null if we can't
+ * determine them, and the relay leaves the column unchanged on upsert.
+ */
+function collectSshHints(): {
+  lanIp?: string;
+  hostname?: string;
+  sshUser?: string;
+  platform?: string;
+} {
+  const out: ReturnType<typeof collectSshHints> = {};
+  try {
+    out.hostname = osHostname();
+  } catch {
+    /* ignore */
+  }
+  try {
+    out.sshUser = userInfo().username;
+  } catch {
+    /* ignore */
+  }
+  try {
+    out.platform = osPlatform(); // "linux" | "darwin" | "win32" | ...
+  } catch {
+    /* ignore */
+  }
+  // Pick a primary LAN IPv4: prefer non-internal, non-link-local.
+  // Order interfaces with `eth*`/`en*`/`Ethernet` first to bias toward
+  // the box's main NIC over a libvirt/docker bridge.
+  try {
+    const nics = networkInterfaces();
+    const ranked: Array<{ name: string; address: string }> = [];
+    for (const [name, addrs] of Object.entries(nics)) {
+      if (!addrs) continue;
+      for (const a of addrs) {
+        if (a.family !== "IPv4") continue;
+        if (a.internal) continue;
+        if (a.address.startsWith("169.254.")) continue;
+        ranked.push({ name, address: a.address });
+      }
+    }
+    const score = (n: string): number => {
+      if (/^(en|eth)\d/i.test(n)) return 0; // primary NIC
+      if (/^Ethernet|^Wi-?Fi/i.test(n)) return 0; // Windows
+      if (/^wl/i.test(n)) return 1; // wireless
+      if (/virbr|docker|br-|veth/i.test(n)) return 5; // virtual bridges
+      return 3;
+    };
+    ranked.sort((a, b) => score(a.name) - score(b.name));
+    if (ranked.length > 0) out.lanIp = ranked[0].address;
+  } catch {
+    /* ignore */
+  }
+  return out;
+}
 
 // Module-scope state — populated by startConnector() so this file can be
 // imported by cli/spaiglass-host.ts without auto-running, or executed
@@ -66,11 +125,19 @@ function connectToRelay() {
 
   relayWs.on("open", () => {
     log("Connected to relay, authenticating...");
+    const hints = collectSshHints();
     relayWs!.send(
       JSON.stringify({
         type: "auth",
         token: CONNECTOR_TOKEN,
         spaiglassVersion: SPAIGLASS_VERSION,
+        // SSH discovery hints — let the fleet-rollout script find this VM
+        // without a static inventory entry. All optional; relay ignores
+        // missing fields and leaves any prior values intact.
+        lanIp: hints.lanIp,
+        hostname: hints.hostname,
+        sshUser: hints.sshUser,
+        platform: hints.platform,
       }),
     );
   });

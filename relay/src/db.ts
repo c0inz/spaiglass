@@ -115,6 +115,20 @@ export function initDb(path = "./relay.db"): Database.Database {
   } catch {
     // Column already exists — ignore.
   }
+  // SSH discovery hints — populated by the connector on auth so the
+  // fleet-rollout script can SSH into VMs without a hard-coded inventory.
+  for (const stmt of [
+    "ALTER TABLE connectors ADD COLUMN vm_lan_ip TEXT",
+    "ALTER TABLE connectors ADD COLUMN vm_hostname TEXT",
+    "ALTER TABLE connectors ADD COLUMN vm_ssh_user TEXT",
+    "ALTER TABLE connectors ADD COLUMN vm_platform TEXT",
+  ]) {
+    try {
+      db.exec(stmt);
+    } catch {
+      // Column already exists — ignore.
+    }
+  }
 
   // Migration: hash any plaintext connector tokens (UUID format → SHA-256 hex).
   // Plaintext tokens are 36 chars with dashes; hashed tokens are 64 hex chars.
@@ -296,6 +310,50 @@ export function touchConnector(id: string, host?: string, port?: number): void {
   } else {
     getDb().prepare("UPDATE connectors SET last_seen = datetime('now') WHERE id = ?").run(id);
   }
+}
+
+/**
+ * Update SSH/discovery hints for a connector. Called from the auth
+ * handler when the connector reports its lan_ip / hostname / ssh_user
+ * via the auth message, so fleet-rollout-spaiglass.sh can discover the
+ * inventory dynamically without a hard-coded list.
+ *
+ * Each hint is optional. Missing fields leave the column unchanged so
+ * older connectors that don't report hints don't blow away values an
+ * earlier (newer) version stored.
+ */
+export function updateConnectorHints(
+  id: string,
+  hints: {
+    lanIp?: string;
+    hostname?: string;
+    sshUser?: string;
+    platform?: string;
+  },
+): void {
+  const sets: string[] = [];
+  const args: unknown[] = [];
+  if (hints.lanIp) {
+    sets.push("vm_lan_ip = ?");
+    args.push(hints.lanIp);
+  }
+  if (hints.hostname) {
+    sets.push("vm_hostname = ?");
+    args.push(hints.hostname);
+  }
+  if (hints.sshUser) {
+    sets.push("vm_ssh_user = ?");
+    args.push(hints.sshUser);
+  }
+  if (hints.platform) {
+    sets.push("vm_platform = ?");
+    args.push(hints.platform);
+  }
+  if (sets.length === 0) return;
+  args.push(id);
+  getDb()
+    .prepare(`UPDATE connectors SET ${sets.join(", ")} WHERE id = ?`)
+    .run(...args);
 }
 
 // --- Agent Keys ---
