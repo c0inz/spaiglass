@@ -390,7 +390,7 @@ async function handleMessage(
   await sessionManager.sendMessage(
     state.userId,
     state.workingDirectory,
-    state.roleFile,
+    state.roleFile ?? "",
     content,
     attachments,
   );

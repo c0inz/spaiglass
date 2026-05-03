@@ -78,9 +78,18 @@ export function registerProjects(): void {
 
   let registered = 0;
   let createdDirs = 0;
-  let entries: ReturnType<typeof readdirSync>;
+  // `withFileTypes: true` returns Dirent[]; we explicitly type as the
+  // string-named variant because in @types/node 20+ the default overload
+  // narrows to Buffer<ArrayBufferLike>, which makes `entry.name` typed as
+  // Buffer when consumed in path.join (TS error). Pinning the entry type
+  // to Dirent (which uses string names) keeps node-version drift
+  // out of this code path.
+  let entries: import("node:fs").Dirent[];
   try {
-    entries = readdirSync(projectsRoot, { withFileTypes: true });
+    entries = readdirSync(projectsRoot, {
+      withFileTypes: true,
+      encoding: "utf8",
+    }) as import("node:fs").Dirent[];
   } catch {
     return;
   }
