@@ -63,7 +63,10 @@ export function ProjectSelector() {
   };
 
   const handleDirectorySelect = (projectPath: string) => {
-    const basename = projectPath.split("/").filter(Boolean).pop() || "";
+    // Split on BOTH / and \\ so Windows paths (C:\\Users\\...\\sandbox)
+    // resolve to the basename instead of the entire path. Mirrors the
+    // relay-side fix in fleet/roles handler.
+    const basename = projectPath.split(/[/\\]/).filter(Boolean).pop() || "";
     if (!basename) return;
     // Full-page nav (not react-router navigate) so the relay re-injects
     // window.__SG with the new basename. Client-side routing leaves __SG.project
@@ -81,10 +84,20 @@ export function ProjectSelector() {
   const handleServerChange = (ev: React.ChangeEvent<HTMLSelectElement>) => {
     const newConnectorName = ev.target.value;
     if (!newConnectorName || !currentSlug) return;
-    const login = currentSlug.split(".")[0];
-    // Jump to the other connector's root. Full-page nav — not a router push —
-    // so __SG re-injects against the new slug and /api/* proxies to the new VM.
-    window.location.href = `/vm/${login}.${newConnectorName}/`;
+    // Preserve the login prefix only if it's actually present on the current
+    // slug. The relay redirects owned users to the BARE form `/vm/<name>/`
+    // (no `<login>.` prefix), so currentSlug = "<name>" with no dot. Splitting
+    // on "." returned the bare name as the login, producing
+    // `/vm/<bareName>.<otherName>/` which the relay can't resolve and hands
+    // back as "VM not found." Only prepend the login when we know it.
+    const dotIndex = currentSlug.indexOf(".");
+    const targetSlug =
+      dotIndex > 0
+        ? `${currentSlug.slice(0, dotIndex)}.${newConnectorName}`
+        : newConnectorName;
+    // Full-page nav — not a router push — so __SG re-injects against the new
+    // slug and /api/* proxies to the new VM.
+    window.location.href = `/vm/${targetSlug}/`;
   };
 
   return (
