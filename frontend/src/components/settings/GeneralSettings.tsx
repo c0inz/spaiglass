@@ -9,7 +9,7 @@ import {
 } from "@heroicons/react/24/outline";
 import { useSettings } from "../../hooks/useSettings";
 import { getProjectDisplayName as getLocalDisplayName } from "../../utils/projectDisplayName";
-import { ICON_COLORS } from "../../../../shared/colors";
+import { ICON_COLORS, applyFavicon } from "../../../../shared/colors";
 
 type KeyStatus =
   | { state: "loading" }
@@ -120,29 +120,11 @@ export function GeneralSettings({ projectPath }: { projectPath?: string }) {
           ? `Favicon set to ${ICON_COLORS.find((c) => c.id === colorId)?.label}.`
           : "Favicon reset to default.",
       );
-      // The favicon useEffect in ChatPage re-renders on iconColors change;
-      // we trigger a refetch by hard-reloading the iconColors map via a
-      // custom event. Simpler: just update the page-level state on next
-      // render. Since GeneralSettings doesn't own that state, the user will
-      // see the new favicon on next page navigation or refresh. For
-      // immediate feedback, swap the link element here too.
-      const { iconHexFor } = await import("../../../../shared/colors");
-      const hex = iconHexFor(colorId);
-      const svg =
-        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">` +
-        `<rect width="64" height="64" rx="12" fill="${hex}"/>` +
-        `<g fill="#fff">` +
-        `<path fill-rule="evenodd" d="M2,32C7,15 20,12 32,12C44,12 57,15 62,32C57,49 44,52 32,52C20,52 7,49 2,32ZM9,32C13,21 22,17 32,17C42,17 51,21 55,32C51,43 42,47 32,47C22,47 13,43 9,32Z"/>` +
-        `<path d="M21.5,26.5C16,28 9,30 9,32C9,34 16,36 21.5,37.5A11,11 0 0,0 21.5,26.5Z"/>` +
-        `<path fill-rule="evenodd" d="M20,32A11,11 0 1,1 42,32A11,11 0 1,1 20,32ZM24,32A7,7 0 1,0 38,32A7,7 0 1,0 24,32Z"/>` +
-        `<path d="M31,32L27,28A5,5 0 1,1 26,33Z"/>` +
-        `</g></svg>`;
-      document.querySelectorAll('link[rel="icon"]').forEach((el) => el.remove());
-      const link = document.createElement("link");
-      link.rel = "icon";
-      link.type = "image/svg+xml";
-      link.href = "data:image/svg+xml," + encodeURIComponent(svg);
-      document.head.appendChild(link);
+      // Apply immediately so the user sees the change without a reload.
+      // ChatPage's effect picks it up the next time iconColors refetches;
+      // both call-sites use the shared shared/colors.ts helper so the
+      // light-bg → black-eye logic is consistent.
+      applyFavicon(colorId);
     } catch (err) {
       setIconColorMessage(err instanceof Error ? err.message : String(err));
     } finally {
