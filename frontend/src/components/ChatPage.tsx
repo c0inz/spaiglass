@@ -1020,7 +1020,7 @@ export function ChatPage() {
                 );
               })()}
             </div>
-            {workingDirectory && (
+            {workingDirectory && !isMobile && (
               <div
                 className="text-xs font-mono text-slate-500 dark:text-slate-400 max-w-full block text-left select-text cursor-text"
               >

@@ -8,14 +8,21 @@
  * re-reads `/api/projects` from the VM's `~/.claude.json`).
  */
 
-import { useMemo } from "react";
-import { ServerIcon, FolderIcon } from "@heroicons/react/24/outline";
+import { useMemo, useState, useEffect } from "react";
+import {
+  ServerIcon,
+  FolderIcon,
+  PlusCircleIcon,
+  ChevronLeftIcon,
+  ChatBubbleLeftRightIcon,
+} from "@heroicons/react/24/outline";
 import type {
   RecentAgent,
   FleetRole,
   FleetDirectory,
   FleetConnector,
 } from "../hooks/useFleetAgents";
+import type { ClaudeSessionRow } from "../../../shared/types";
 
 interface AgentSwitcherProps {
   recentAgents: RecentAgent[];
@@ -286,14 +293,45 @@ export function AgentSwitcher({
   );
 }
 
+type WizardStep = "server" | "directory" | "session";
+
+function relativeTime(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 0 || isNaN(ms)) return "";
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.round(h / 24);
+  return `${d}d ago`;
+}
+
 /**
- * AgentPickerFullPage — mobile full-page picker. Mirrors desktop: two
- * prominent native selects (Server + Directory) at the top with the same
- * pickServerTarget semantics, plus a scrollable browse list below.
+ * AgentPickerFullPage — mobile full-page picker. Three-step wizard:
+ *   1. Pick a server   (one tap target per online connector)
+ *   2. Pick a directory on that server
+ *   3. Start a new session OR resume a recent session in that directory
+ *
+ * Replaces the prior dropdowns + flat tree layout, which surfaced too
+ * much fleet structure on a phone. Wizard keeps each screen focused on
+ * one decision; back link reverses one step at a time. The wizard
+ * pre-selects the user's current server when one is known (from the
+ * relay-injected `__SG.slug`), so the common case opens directly on
+ * Step 2.
+ *
+ * Step 3 fetches `/vm/<server>/api/claude-sessions` and filters to
+ * sessions whose recorded cwd matches the chosen directory's path.
+ * Same data and resume-by-cwd URL pattern as SessionPickerModal.
+ *
+ * Roles and the legacy "Recent" list are deliberately not surfaced here:
+ * roles are no longer required (since 2026-05-02), and the wizard is
+ * fewer taps than scanning a Recent strip.
  */
 export function AgentPickerFullPage({
-  recentAgents,
-  roles,
+  recentAgents: _recentAgents,
+  roles: _roles,
   directories,
   connectors,
   loading,
@@ -304,6 +342,9 @@ export function AgentPickerFullPage({
   connectors: FleetConnector[];
   loading: boolean;
 }) {
+  void _recentAgents;
+  void _roles;
+
   const onlineConns = connectors
     .filter((c) => c.online)
     .sort((a, b) =>
@@ -311,10 +352,6 @@ export function AgentPickerFullPage({
     );
   const offlineConns = connectors.filter((c) => !c.online);
 
-  // Current server + directory from __SG (same source of truth as desktop).
-  // `segment` wins over `project` so hyphenated directory names
-  // ("dezz-cms") highlight correctly instead of showing the hyphen-split
-  // stem ("dezz") and failing to match.
   const sg = (window as Window & {
     __SG?: { slug?: string; project?: string; segment?: string };
   }).__SG;
@@ -323,217 +360,312 @@ export function AgentPickerFullPage({
       ? sg.slug.slice(sg.slug.indexOf(".") + 1)
       : sg.slug
     : null;
-  const currentDirectoryName = sg?.segment || sg?.project || null;
-  const serverDirs = currentConnectorName
-    ? directories
-        .filter(
-          (d) =>
-            d.connectorName.toLowerCase() ===
-            currentConnectorName.toLowerCase(),
-        )
-        .sort((a, b) =>
-          (a.displayName || a.name).localeCompare(b.displayName || b.name),
-        )
-    : [];
+  const initialServer = currentConnectorName
+    ? connectors.find(
+        (c) =>
+          c.name.toLowerCase() === currentConnectorName.toLowerCase() &&
+          c.online,
+      ) ?? null
+    : null;
 
-  const handleServerChange = (ev: React.ChangeEvent<HTMLSelectElement>) => {
-    const name = ev.target.value;
-    if (!name || name === currentConnectorName) return;
-    const conn = connectors.find((c) => c.name === name);
-    if (!conn) return;
-    window.location.href = pickServerTarget(conn, recentAgents);
-  };
+  const [step, setStep] = useState<WizardStep>(
+    initialServer ? "directory" : "server",
+  );
+  const [chosenServer, setChosenServer] = useState<FleetConnector | null>(
+    initialServer,
+  );
+  const [chosenDir, setChosenDir] = useState<FleetDirectory | null>(null);
+  const [sessions, setSessions] = useState<ClaudeSessionRow[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
 
-  const handleDirectoryChange = (
-    ev: React.ChangeEvent<HTMLSelectElement>,
-  ) => {
-    const name = ev.target.value;
-    if (!name || !currentConnectorName) return;
-    const dir = directories.find(
-      (d) =>
-        d.name === name &&
-        d.connectorName.toLowerCase() ===
-          currentConnectorName.toLowerCase(),
-    );
-    if (!dir) return;
-    window.location.href = dir.url;
-  };
+  // Fetch sessions on entering step 3. Filtered to the chosen directory's
+  // cwd so only relevant rows appear. Cross-VM works because /vm/<conn>/
+  // is a relay-tunneled path.
+  useEffect(() => {
+    if (step !== "session" || !chosenServer || !chosenDir) return;
+    let cancelled = false;
+    setSessionsLoading(true);
+    setSessions([]);
+    fetch(`/vm/${chosenServer.name}/api/claude-sessions`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled) return;
+        const all: ClaudeSessionRow[] = data?.sessions || [];
+        const cwd = chosenDir.path;
+        const filtered = all.filter(
+          (s) =>
+            s.spaiglassWorkingDirectory === cwd ||
+            s.projectPath === cwd ||
+            s.cwd === cwd,
+        );
+        setSessions(filtered);
+      })
+      .catch(() => {
+        if (!cancelled) setSessions([]);
+      })
+      .finally(() => {
+        if (!cancelled) setSessionsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [step, chosenServer?.id, chosenDir?.url, chosenDir?.path]);
 
-  const selectMobile =
-    "w-full px-3 py-3 text-base rounded-md border bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-100 font-mono";
+  function pickServer(c: FleetConnector) {
+    setChosenServer(c);
+    setChosenDir(null);
+    setStep("directory");
+  }
+  function pickDirectory(d: FleetDirectory) {
+    setChosenDir(d);
+    setStep("session");
+  }
+  function backToServers() {
+    setChosenServer(initialServer);
+    setChosenDir(null);
+    setStep("server");
+  }
+  function backToDirectories() {
+    setChosenDir(null);
+    setStep("directory");
+  }
+  function startNewSession() {
+    if (!chosenDir) return;
+    const url = chosenDir.url + (chosenDir.url.includes("?") ? "&" : "?") + "new=1";
+    window.location.href = url;
+  }
+  function resumeSession(s: ClaudeSessionRow) {
+    if (!chosenDir) return;
+    const params = new URLSearchParams({
+      sessionId: s.sessionId,
+      cwd: s.spaiglassWorkingDirectory || s.projectPath || s.cwd || chosenDir.path,
+    });
+    window.location.href = chosenDir.url + "?" + params.toString();
+  }
 
-  return (
-    <div className="flex-1 overflow-auto bg-white dark:bg-slate-900">
-      {/* Prominent Server + Directory selects */}
-      <div className="p-4 space-y-3 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700">
-        <div>
-          <label className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">
-            <ServerIcon className="w-4 h-4" />
-            Server
-          </label>
-          <select
-            value={currentConnectorName || ""}
-            onChange={handleServerChange}
-            disabled={loading && onlineConns.length === 0}
-            className={selectMobile}
-          >
-            {!currentConnectorName && <option value="">(pick server)</option>}
+  // ─── Step 1: Server ──────────────────────────────────────────────────
+  if (step === "server") {
+    return (
+      <div className="flex-1 overflow-auto bg-white dark:bg-slate-900">
+        <div className="px-4 py-4 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
+            <ServerIcon className="w-5 h-5" />
+            Pick a server
+          </div>
+          <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            Step 1 of 3
+          </div>
+        </div>
+        {loading && onlineConns.length === 0 ? (
+          <div className="flex items-center justify-center py-12">
+            <div className="text-sm text-slate-400">Loading fleet…</div>
+          </div>
+        ) : (
+          <>
             {onlineConns.map((c) => (
-              <option key={c.id} value={c.name}>
-                {c.displayName || c.name}
-                {c.role !== "owner" ? ` [${c.role}]` : ""}
-              </option>
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => pickServer(c)}
+                className="w-full flex items-center gap-3 px-4 py-4 border-b border-slate-100 dark:border-slate-800 text-left hover:bg-slate-50 dark:hover:bg-slate-800/50 active:bg-slate-100 dark:active:bg-slate-800 transition-colors"
+              >
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 flex-shrink-0" />
+                <span className="text-base font-medium text-slate-800 dark:text-slate-100 truncate">
+                  {c.displayName || c.name}
+                </span>
+                {c.role !== "owner" && (
+                  <span className="ml-auto text-[11px] uppercase tracking-wider text-slate-400 dark:text-slate-500 flex-shrink-0">
+                    {c.role}
+                  </span>
+                )}
+              </button>
             ))}
             {offlineConns.length > 0 && (
-              <optgroup label="Offline">
-                {offlineConns.map((c) => (
-                  <option key={c.id} value={c.name} disabled>
-                    {c.displayName || c.name}
-                  </option>
-                ))}
-              </optgroup>
-            )}
-          </select>
-        </div>
-        <div>
-          <label className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">
-            <FolderIcon className="w-4 h-4" />
-            Directory
-          </label>
-          <select
-            value={
-              serverDirs.some((d) => d.name === currentDirectoryName)
-                ? currentDirectoryName || ""
-                : ""
-            }
-            onChange={handleDirectoryChange}
-            disabled={serverDirs.length === 0}
-            className={selectMobile}
-          >
-            {serverDirs.length === 0 ? (
-              <option value="">(ask install agent)</option>
-            ) : (
               <>
-                {!serverDirs.some((d) => d.name === currentDirectoryName) && (
-                  <option value="">(pick directory)</option>
-                )}
-                {serverDirs.map((d) => {
-                  const label = d.displayName || d.name;
-                  return (
-                    <option key={d.url} value={d.name}>
-                      {label} — {shortPath(d.path)}
-                    </option>
-                  );
-                })}
+                <div className="px-4 py-2 text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 bg-slate-50 dark:bg-slate-800/50 border-y border-slate-200 dark:border-slate-700">
+                  Offline
+                </div>
+                {offlineConns.map((c) => (
+                  <div
+                    key={c.id}
+                    className="flex items-center gap-3 px-4 py-3 border-b border-slate-100 dark:border-slate-800 text-slate-400 dark:text-slate-500"
+                  >
+                    <span className="w-2.5 h-2.5 rounded-full bg-slate-300 dark:bg-slate-600 flex-shrink-0" />
+                    <span className="text-base truncate">
+                      {c.displayName || c.name}
+                    </span>
+                  </div>
+                ))}
               </>
             )}
-          </select>
-        </div>
+          </>
+        )}
       </div>
+    );
+  }
 
-      {recentAgents.length > 0 && (
-        <div>
-          <div className="px-4 py-2 text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700">
-            Recent
+  // ─── Step 2: Directory ───────────────────────────────────────────────
+  if (step === "directory" && chosenServer) {
+    const dirs = directories
+      .filter(
+        (d) =>
+          d.connectorName.toLowerCase() === chosenServer.name.toLowerCase(),
+      )
+      .sort((a, b) =>
+        (a.displayName || a.name).localeCompare(b.displayName || b.name),
+      );
+    return (
+      <div className="flex-1 overflow-auto bg-white dark:bg-slate-900">
+        <button
+          type="button"
+          onClick={backToServers}
+          className="w-full flex items-center gap-2 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700"
+        >
+          <ChevronLeftIcon className="w-4 h-4" />
+          Servers
+        </button>
+        <div className="px-4 py-4 border-b border-slate-200 dark:border-slate-700">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
+            <FolderIcon className="w-5 h-5" />
+            Pick a directory on{" "}
+            <span className="text-blue-600 dark:text-blue-400">
+              {chosenServer.displayName || chosenServer.name}
+            </span>
           </div>
-          {recentAgents.map((agent) => (
-            <a
-              key={agent.url}
-              href={agent.url}
-              className="flex items-baseline gap-2 px-4 py-2 border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+          <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            Step 2 of 3
+          </div>
+        </div>
+        {dirs.length === 0 ? (
+          <div className="px-4 py-8 text-center">
+            <div className="text-sm text-slate-500 dark:text-slate-400">
+              No directories on this server yet.
+            </div>
+            <div className="mt-2 text-xs text-slate-400 dark:text-slate-500">
+              Register one with{" "}
+              <code className="font-mono bg-slate-100 dark:bg-slate-800 px-1 py-0.5 rounded">
+                POST /api/projects/register
+              </code>{" "}
+              on the VM, or ask your install agent.
+            </div>
+          </div>
+        ) : (
+          dirs.map((d) => (
+            <button
+              key={d.url}
+              type="button"
+              onClick={() => pickDirectory(d)}
+              className="w-full flex items-start gap-3 px-4 py-4 border-b border-slate-100 dark:border-slate-800 text-left hover:bg-slate-50 dark:hover:bg-slate-800/50 active:bg-slate-100 dark:active:bg-slate-800 transition-colors"
             >
-              <span className="text-sm font-medium text-slate-700 dark:text-slate-200 whitespace-nowrap">
-                {agent.label}
-              </span>
-            </a>
-          ))}
-        </div>
-      )}
-
-      {loading && onlineConns.length === 0 ? (
-        <div className="flex items-center justify-center py-12">
-          <div className="text-sm text-slate-400">Loading fleet...</div>
-        </div>
-      ) : (
-        onlineConns.map((conn) => {
-          const dirs = directories
-            .filter((d) => d.connectorName === conn.name)
-            .sort((a, b) =>
-              (a.displayName || a.name).localeCompare(
-                b.displayName || b.name,
-              ),
-            );
-          const rolesByDir = new Map<string, FleetRole[]>();
-          for (const r of roles) {
-            if (r.connectorName !== conn.name) continue;
-            if (!rolesByDir.has(r.project)) rolesByDir.set(r.project, []);
-            rolesByDir.get(r.project)!.push(r);
-          }
-          return (
-            <div key={conn.id}>
-              <div className="flex items-center gap-2 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700">
-                <ServerIcon className="w-4 h-4" />
-                {conn.displayName || conn.name}
-              </div>
-              {dirs.length === 0 ? (
-                <div className="px-4 py-3 text-xs text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/20 italic">
-                  Ask your install agent to fix this server and add project directories.
+              <FolderIcon className="w-5 h-5 mt-0.5 text-slate-400 flex-shrink-0" />
+              <div className="min-w-0 flex-1">
+                <div className="text-base font-medium text-blue-600 dark:text-blue-400 truncate">
+                  {d.displayName || d.name}
                 </div>
-              ) : (
-                dirs.map((dir) => {
-                  const dirRoles = rolesByDir.get(dir.name) || [];
-                  return (
-                    <div
-                      key={dir.url}
-                      className="border-b border-slate-100 dark:border-slate-800"
-                    >
-                      <a
-                        href={dir.url}
-                        className="flex items-start gap-2 px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
-                      >
-                        <FolderIcon className="w-4 h-4 mt-0.5 text-slate-400" />
-                        <div className="min-w-0 flex-1">
-                          <div className="text-sm font-medium text-blue-600 dark:text-blue-400 truncate">
-                            {dir.displayName || dir.name}
-                          </div>
-                          <div className="text-[11px] text-slate-400 dark:text-slate-500 font-mono truncate">
-                            {shortPath(dir.path)}
-                          </div>
-                        </div>
-                      </a>
-                      {dirRoles.map((role) => (
-                        <a
-                          key={role.url}
-                          href={role.url}
-                          className="block pl-10 pr-4 py-1 text-[11px] text-emerald-600 dark:text-emerald-400 hover:bg-slate-50 dark:hover:bg-slate-800/50"
-                        >
-                          ↳ {role.roleName}
-                        </a>
-                      ))}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          );
-        })
-      )}
+                <div className="mt-0.5 text-[11px] text-slate-400 dark:text-slate-500 font-mono truncate">
+                  {shortPath(d.path)}
+                </div>
+              </div>
+            </button>
+          ))
+        )}
+      </div>
+    );
+  }
 
-      {offlineConns.length > 0 && (
-        <div>
-          <div className="px-4 py-2 text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700">
-            Offline
+  // ─── Step 3: Session ─────────────────────────────────────────────────
+  if (step === "session" && chosenServer && chosenDir) {
+    return (
+      <div className="flex-1 overflow-auto bg-white dark:bg-slate-900">
+        <button
+          type="button"
+          onClick={backToDirectories}
+          className="w-full flex items-center gap-2 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700"
+        >
+          <ChevronLeftIcon className="w-4 h-4" />
+          {chosenServer.displayName || chosenServer.name}
+        </button>
+        <div className="px-4 py-4 border-b border-slate-200 dark:border-slate-700">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
+            <ChatBubbleLeftRightIcon className="w-5 h-5" />
+            <span className="text-blue-600 dark:text-blue-400 truncate">
+              {chosenDir.displayName || chosenDir.name}
+            </span>
           </div>
-          {offlineConns.map((c) => (
-            <div
-              key={c.id}
-              className="px-4 py-2 text-sm text-slate-400 dark:text-slate-500 border-b border-slate-100 dark:border-slate-800"
-            >
-              {c.displayName || c.name}
-            </div>
-          ))}
+          <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            Step 3 of 3 · {shortPath(chosenDir.path)}
+          </div>
         </div>
-      )}
+
+        {/* Primary CTA: start a new session */}
+        <button
+          type="button"
+          onClick={startNewSession}
+          className="w-full flex items-center justify-center gap-2 px-4 py-5 text-base font-semibold text-white bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 transition-colors"
+        >
+          <PlusCircleIcon className="w-5 h-5" />
+          Start a new session
+        </button>
+
+        {/* Resume list */}
+        {sessionsLoading ? (
+          <div className="flex items-center justify-center py-12">
+            <div className="text-sm text-slate-400">Loading sessions…</div>
+          </div>
+        ) : sessions.length > 0 ? (
+          <>
+            <div className="px-4 py-2 text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500 bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700">
+              Or resume a recent session
+            </div>
+            {sessions.map((s) => {
+              const preview =
+                s.lastUserMessage ||
+                s.firstUserMessage ||
+                s.lastMessagePreview ||
+                "(no preview)";
+              return (
+                <button
+                  key={s.sessionId}
+                  type="button"
+                  onClick={() => resumeSession(s)}
+                  className="w-full text-left px-4 py-3 border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 active:bg-slate-100 dark:active:bg-slate-800 transition-colors"
+                >
+                  <div className="text-sm text-slate-800 dark:text-slate-100 line-clamp-2">
+                    {preview}
+                  </div>
+                  <div className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
+                    {relativeTime(s.lastTime)}
+                    {typeof s.userTurnCount === "number" && (
+                      <>
+                        {" · "}
+                        {s.userTurnCount}↔{s.assistantTurnCount ?? 0} turns
+                      </>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </>
+        ) : (
+          <div className="px-4 py-6 text-center text-xs text-slate-400 dark:text-slate-500">
+            No past sessions in this directory.
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Fallback (shouldn't happen — chosenServer/chosenDir invariants are
+  // upheld by step transitions). Reset to step 1 if we land here.
+  return (
+    <div className="flex-1 overflow-auto bg-white dark:bg-slate-900 px-4 py-8 text-center">
+      <button
+        type="button"
+        onClick={backToServers}
+        className="text-sm text-blue-600 dark:text-blue-400"
+      >
+        Back to servers
+      </button>
     </div>
   );
 }
