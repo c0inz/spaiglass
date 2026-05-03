@@ -75,11 +75,7 @@ function AnsiOutput({ text, className }: { text: string; className?: string }) {
     [text],
   );
   return (
-    <pre
-      className={className}
-      // eslint-disable-next-line react/no-danger
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
+    <pre className={className} dangerouslySetInnerHTML={{ __html: html }} />
   );
 }
 

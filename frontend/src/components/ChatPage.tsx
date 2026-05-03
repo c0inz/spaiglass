@@ -700,7 +700,7 @@ export function ChatPage() {
       _tools?: string[],
       hideUserMessage = false,
     ) => {
-      let content = messageContent || input.trim();
+      const content = messageContent || input.trim();
       if (!content && pendingImages.length === 0) return;
 
       const trimmedLower = content.trim().toLowerCase();

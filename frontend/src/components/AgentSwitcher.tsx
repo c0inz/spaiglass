@@ -143,8 +143,6 @@ export function AgentSwitcher({
     [directories, currentConnectorName],
   );
 
-  if (!isRelay) return null;
-
   const handleServerChange = (ev: React.ChangeEvent<HTMLSelectElement>) => {
     const bareName = ev.target.value;
     if (!bareName || bareName === currentConnectorName) return;
@@ -202,6 +200,11 @@ export function AgentSwitcher({
     }
     return out;
   }, [recentAgents, connectors, directories, roles]);
+
+  // Early return moved AFTER all hooks (rules-of-hooks). When the SPA is
+  // running outside the relay (no __SG context), the desktop AgentSwitcher
+  // has nothing useful to show.
+  if (!isRelay) return null;
 
   return (
     <div className="flex items-center gap-1.5 min-w-0">

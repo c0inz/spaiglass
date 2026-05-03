@@ -366,7 +366,7 @@ export function MermaidBlock({ source }: { source: string }) {
 // ---------------------------------------------------------------------------
 
 const KEY_PATTERN =
-  /^(Ctrl|Control|Cmd|Command|⌘|⌃|⌥|⇧|Alt|Option|Shift|Tab|Enter|Return|Escape|Esc|Space|Backspace|Delete|Del|Up|Down|Left|Right|F\d{1,2})(\s*[+\-]\s*[A-Za-z0-9]+)+$/;
+  /^(Ctrl|Control|Cmd|Command|⌘|⌃|⌥|⇧|Alt|Option|Shift|Tab|Enter|Return|Escape|Esc|Space|Backspace|Delete|Del|Up|Down|Left|Right|F\d{1,2})(\s*[+-]\s*[A-Za-z0-9]+)+$/;
 
 export function isKeyboardShortcut(text: string): boolean {
   return KEY_PATTERN.test(text.trim());
@@ -375,7 +375,7 @@ export function isKeyboardShortcut(text: string): boolean {
 export function KbdChip({ children }: { children: string }) {
   const parts = children
     .trim()
-    .split(/\s*[+\-]\s*/)
+    .split(/\s*[+-]\s*/)
     .map((p) => p.trim())
     .filter(Boolean);
   return (
@@ -404,7 +404,7 @@ export function KbdChip({ children }: { children: string }) {
 // ---------------------------------------------------------------------------
 
 const FILE_PATTERN =
-  /((?:[a-zA-Z0-9_.\-~]+\/)+[a-zA-Z0-9_.\-]+\.[a-zA-Z0-9]+)(?::(\d+)(?::\d+)?)?/g;
+  /((?:[a-zA-Z0-9_.~-]+\/)+[a-zA-Z0-9_.-]+\.[a-zA-Z0-9]+)(?::(\d+)(?::\d+)?)?/g;
 
 export function FilePathText({
   text,
