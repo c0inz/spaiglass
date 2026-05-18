@@ -133,21 +133,28 @@ function UserRowView({
   // end-to-end — images/files render placeholder chips.
   return (
     <div
-      className="my-2 font-mono text-sm border-l-2 pl-3 border-blue-500/60 dark:border-blue-400/60 bg-slate-800/60 dark:bg-slate-800/60 rounded-r-md py-2 pr-2"
+      className="my-4 font-mono text-sm border-l-4 pl-4 border-amber-400 bg-amber-400/10 dark:bg-amber-400/[0.08] rounded-r-md py-2.5 pr-3 ring-1 ring-amber-400/20 shadow-sm"
       data-role="user"
     >
-      <div className="flex items-baseline justify-between mb-1 text-[10px] uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400">
-        <span>{label}@spaiglass</span>
+      <div className="flex items-baseline justify-between mb-1.5 text-[10px] uppercase tracking-[0.15em]">
+        <span className="inline-flex items-center gap-2">
+          <span className="px-1.5 py-0.5 bg-amber-400 text-slate-900 rounded text-[9px] font-bold tracking-widest leading-none">
+            YOU
+          </span>
+          <span className="text-slate-400 dark:text-slate-500 normal-case tracking-normal">
+            {label}
+          </span>
+        </span>
         <span className="tabular-nums normal-case tracking-normal text-slate-400 dark:text-slate-500">
           {formatClockTime(row.ts)}
         </span>
       </div>
       <div className="flex gap-2">
         <span
-          className="flex-shrink-0 text-blue-500 dark:text-blue-400"
+          className="flex-shrink-0 text-amber-400 font-bold"
           aria-hidden="true"
         >
-          $
+          ›
         </span>
         <div className="flex-1 min-w-0">
           {row.frame.content.map((block, idx) => {

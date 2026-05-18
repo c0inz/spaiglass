@@ -1,9 +1,11 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   PlusIcon,
   TrashIcon,
   ArrowRightIcon,
   XMarkIcon,
+  MagnifyingGlassIcon,
+  ChevronDoubleRightIcon,
 } from "@heroicons/react/24/outline";
 
 export interface QueueItem {
@@ -12,11 +14,37 @@ export interface QueueItem {
   createdAt: number;
 }
 
+export interface UserPromptEntry {
+  /** Stable row.key from the frame reducer — used to scroll the chat to
+   *  this exact message when the user clicks. */
+  rowKey: string;
+  text: string;
+  ts: number;
+}
+
 interface QueueTabProps {
   workingDirectory: string;
   roleFile: string;
   /** Pushes the item text into the chat composer. */
   onInjectText: (text: string) => void;
+  /** Last 10 user prompts in this session, newest-first. */
+  recentUserPrompts: UserPromptEntry[];
+  /** Every user prompt in this session, newest-first. Used by Search. */
+  allUserPrompts: UserPromptEntry[];
+  /** Scroll the chat to the row with this stable key, centered. */
+  onJumpToMessage: (rowKey: string) => void;
+}
+
+function formatRelativeTime(ts: number, now: number = Date.now()): string {
+  const diff = now - ts;
+  if (diff < 60_000) return "now";
+  const min = Math.floor(diff / 60_000);
+  if (min < 60) return `${min}m`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h`;
+  const day = Math.floor(hr / 24);
+  if (day < 7) return `${day}d`;
+  return new Date(ts).toLocaleDateString();
 }
 
 function queueUrl(wd: string, role: string, suffix = ""): string {
@@ -36,12 +64,24 @@ export function QueueTab({
   workingDirectory,
   roleFile,
   onInjectText,
+  recentUserPrompts,
+  allUserPrompts,
+  onJumpToMessage,
 }: QueueTabProps) {
   const [items, setItems] = useState<QueueItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [composing, setComposing] = useState(false);
   const [draft, setDraft] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const draftRef = useRef<HTMLTextAreaElement>(null);
+
+  const searchResults = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return [];
+    return allUserPrompts
+      .filter((p) => p.text.toLowerCase().includes(q))
+      .slice(0, 50);
+  }, [allUserPrompts, searchQuery]);
 
   const load = useCallback(async () => {
     if (!workingDirectory || !roleFile) return;
@@ -160,11 +200,18 @@ export function QueueTab({
 
       {/* List */}
       <div className="flex-1 overflow-auto py-1">
+        {/* Cue */}
+        <div className="px-2 pt-1 pb-0.5 text-[10px] uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400">
+          Cue
+          <span className="ml-1.5 text-slate-400 dark:text-slate-500 normal-case tracking-normal">
+            ({items.length})
+          </span>
+        </div>
         {loading && items.length === 0 ? (
           <div className="text-xs text-slate-400 px-3 py-2">Loading…</div>
         ) : items.length === 0 ? (
-          <div className="text-xs text-slate-400 px-3 py-4 text-center">
-            Have no cue
+          <div className="text-xs text-slate-400 px-3 py-2 italic">
+            No queued prompts.
           </div>
         ) : (
           items.map((item) => (
@@ -195,7 +242,128 @@ export function QueueTab({
             </div>
           ))
         )}
+
+        {/* History — last 10 user prompts in this session */}
+        <div className="mt-3 px-2 pt-1 pb-0.5 text-[10px] uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400 border-t border-slate-200 dark:border-slate-700">
+          History
+          <span className="ml-1.5 text-slate-400 dark:text-slate-500 normal-case tracking-normal">
+            (last {recentUserPrompts.length})
+          </span>
+        </div>
+        {recentUserPrompts.length === 0 ? (
+          <div className="text-xs text-slate-400 px-3 py-2 italic">
+            No prompts sent yet.
+          </div>
+        ) : (
+          recentUserPrompts.map((p) => (
+            <PromptRow
+              key={p.rowKey}
+              prompt={p}
+              onClick={() => onJumpToMessage(p.rowKey)}
+            />
+          ))
+        )}
+
+        {/* Search — across every user prompt in this session */}
+        <div className="mt-3 px-2 pt-1 pb-1 text-[10px] uppercase tracking-[0.15em] text-slate-500 dark:text-slate-400 border-t border-slate-200 dark:border-slate-700">
+          Search
+          <span className="ml-1.5 text-slate-400 dark:text-slate-500 normal-case tracking-normal">
+            ({allUserPrompts.length} total)
+          </span>
+        </div>
+        <div className="px-2 pb-1">
+          <div className="relative">
+            <MagnifyingGlassIcon className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Find a prior message…"
+              className="w-full pl-7 pr-7 py-1 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded focus:outline-none focus:ring-1 focus:ring-amber-500 text-slate-900 dark:text-slate-100 placeholder-slate-400"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery("")}
+                className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 rounded"
+                title="Clear"
+              >
+                <XMarkIcon className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
+        {searchQuery.trim() &&
+          (searchResults.length === 0 ? (
+            <div className="text-xs text-slate-400 px-3 py-2 italic">
+              No messages match “{searchQuery.trim()}”.
+            </div>
+          ) : (
+            <>
+              {searchResults.map((p) => (
+                <PromptRow
+                  key={p.rowKey}
+                  prompt={p}
+                  onClick={() => onJumpToMessage(p.rowKey)}
+                  highlight={searchQuery.trim()}
+                />
+              ))}
+              {allUserPrompts.filter((p) =>
+                p.text.toLowerCase().includes(searchQuery.trim().toLowerCase()),
+              ).length > 50 && (
+                <div className="text-[10px] text-slate-400 px-3 py-1 italic">
+                  showing first 50 matches — refine to narrow
+                </div>
+              )}
+            </>
+          ))}
       </div>
     </div>
+  );
+}
+
+function PromptRow({
+  prompt,
+  onClick,
+  highlight,
+}: {
+  prompt: UserPromptEntry;
+  onClick: () => void;
+  highlight?: string;
+}) {
+  const snippet = prompt.text.length > 120
+    ? prompt.text.slice(0, 117).trimEnd() + "…"
+    : prompt.text;
+  return (
+    <button
+      onClick={onClick}
+      title={prompt.text}
+      className="group w-full flex items-start gap-2 py-1.5 px-2 text-left hover:bg-amber-50 dark:hover:bg-amber-400/10 transition-colors"
+    >
+      <ChevronDoubleRightIcon className="flex-shrink-0 w-3 h-3 mt-0.5 text-amber-500 dark:text-amber-400 opacity-70 group-hover:opacity-100" />
+      <div className="flex-1 min-w-0">
+        <div className="text-xs text-slate-700 dark:text-slate-200 truncate">
+          {highlight ? renderHighlighted(snippet, highlight) : snippet}
+        </div>
+      </div>
+      <span className="flex-shrink-0 text-[10px] tabular-nums text-slate-400 dark:text-slate-500 mt-0.5">
+        {formatRelativeTime(prompt.ts)}
+      </span>
+    </button>
+  );
+}
+
+function renderHighlighted(text: string, query: string) {
+  const lower = text.toLowerCase();
+  const q = query.toLowerCase();
+  const idx = lower.indexOf(q);
+  if (idx === -1) return text;
+  return (
+    <>
+      {text.slice(0, idx)}
+      <mark className="bg-amber-200 dark:bg-amber-400/40 text-slate-900 dark:text-amber-100 rounded-sm px-0.5">
+        {text.slice(idx, idx + query.length)}
+      </mark>
+      {text.slice(idx + query.length)}
+    </>
   );
 }

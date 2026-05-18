@@ -18,13 +18,17 @@
  */
 
 import {
+  forwardRef,
   memo,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useMemo,
   useRef,
+  useState,
   type ReactNode,
 } from "react";
+import { ChevronDoubleDownIcon } from "@heroicons/react/24/solid";
 import type { DisplayStatus } from "../../utils/statusClassifier";
 import { StatusLine } from "../StatusLine";
 import {
@@ -33,6 +37,17 @@ import {
   type InteractiveToolResultStatus,
 } from "./FrameInterpreter";
 import type { AssistantRow, Row, ToolCallState } from "./state";
+
+export interface FrameChatViewHandle {
+  /** Smooth-scroll to the row with the given stable key, centered in the
+   *  viewport, with a 1.5s amber highlight. No-op if the key isn't in the
+   *  current DOM. */
+  scrollToRow(key: string): void;
+  /** Smooth-scroll to the live tail and re-pin auto-scroll. */
+  scrollToBottom(): void;
+  /** True iff the view is currently pinned to the bottom. */
+  isPinned(): boolean;
+}
 
 /**
  * An assistant row is "tool-only" if it has no text or thinking content —
@@ -68,16 +83,20 @@ interface FrameChatViewProps {
   onSubmitText?: (text: string) => void;
 }
 
-export function FrameChatView({
-  rows,
-  toolCalls,
-  isLoading,
-  currentStatus,
-  userLogin,
-  onOpenFile,
-  onToolResult,
-  onSubmitText,
-}: FrameChatViewProps) {
+export const FrameChatView = forwardRef<FrameChatViewHandle, FrameChatViewProps>(
+  function FrameChatView(
+    {
+      rows,
+      toolCalls,
+      isLoading,
+      currentStatus,
+      userLogin,
+      onOpenFile,
+      onToolResult,
+      onSubmitText,
+    },
+    ref,
+  ) {
   // Compute which assistant rows are "stale tool-only" and should be hidden.
   // A tool-only row (no text, just tool_use blocks) is hidden when ALL its
   // tools have completed ok AND a later tool-only assistant row exists.
@@ -113,6 +132,16 @@ export function FrameChatView({
   const endRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef<boolean>(true);
+  // State mirror of pinnedRef so the jump-to-bottom button can react to
+  // pin/unpin transitions. The ref stays for synchronous reads inside
+  // useEffect/useImperativeHandle bodies (where reading state would
+  // race with the latest scroll event).
+  const [isPinned, setIsPinned] = useState(true);
+  // Rows added since the user last scrolled away from the bottom.
+  // Reset to 0 whenever the view is pinned. Capped at 9+ in display.
+  const [unreadCount, setUnreadCount] = useState(0);
+  const lastSeenLenRef = useRef<number>(0);
+  const rowsLenRef = useRef<number>(0);
   // Timestamp of last *user-initiated* scroll interaction. While within the
   // cooldown window, auto-scroll is suppressed so the user can finish
   // reading text that just appeared near the bottom.
@@ -130,7 +159,9 @@ export function FrameChatView({
     const el = containerRef.current;
     if (!el) return;
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-    pinnedRef.current = distance <= NEAR_BOTTOM_PX;
+    const pinned = distance <= NEAR_BOTTOM_PX;
+    pinnedRef.current = pinned;
+    setIsPinned((prev) => (prev === pinned ? prev : pinned));
     // Only record user-initiated scrolls for cooldown purposes.
     // Programmatic scrolls (scrollIntoView) must not reset the timer.
     if (!programmaticScrollRef.current) {
@@ -148,6 +179,78 @@ export function FrameChatView({
       programmaticScrollRef.current = false;
     });
   }, []);
+
+  // Track unread (rows added while scrolled up). When pinned, the count
+  // is always 0 and lastSeen tracks rows.length. When unpinned, lastSeen
+  // freezes and the displayed count is the delta.
+  useEffect(() => {
+    rowsLenRef.current = rows.length;
+    if (pinnedRef.current) {
+      lastSeenLenRef.current = rows.length;
+      if (unreadCount !== 0) setUnreadCount(0);
+      return;
+    }
+    const next = Math.max(0, rows.length - lastSeenLenRef.current);
+    if (next !== unreadCount) setUnreadCount(next);
+  }, [rows, unreadCount]);
+
+  // When the view re-pins (user scrolled to bottom or hit End), zero the
+  // counter and snapshot the current length as the new baseline.
+  useEffect(() => {
+    if (isPinned) {
+      lastSeenLenRef.current = rowsLenRef.current;
+      if (unreadCount !== 0) setUnreadCount(0);
+    }
+  }, [isPinned, unreadCount]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      scrollToRow(key: string) {
+        const container = containerRef.current;
+        if (!container) return;
+        const el = container.querySelector<HTMLElement>(
+          `[data-row-key="${CSS.escape(key)}"]`,
+        );
+        if (!el) return;
+        // Jumping is an explicit "I want to read this, leave me here"
+        // intent. Drop pin so live frames don't yank us back, and stamp
+        // the user-scroll timestamp so the cooldown suppresses any
+        // pending auto-scrolls from in-flight tool streams.
+        pinnedRef.current = false;
+        setIsPinned(false);
+        lastUserScrollRef.current = Date.now();
+        programmaticScrollRef.current = true;
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        requestAnimationFrame(() => {
+          programmaticScrollRef.current = false;
+        });
+        // Transient highlight so the eye lands on the message after the
+        // smooth-scroll settles.
+        const HIGHLIGHT = [
+          "ring-2",
+          "ring-amber-300",
+          "ring-offset-2",
+          "ring-offset-slate-950",
+          "rounded-lg",
+        ];
+        el.classList.add(...HIGHLIGHT);
+        window.setTimeout(() => {
+          el.classList.remove(...HIGHLIGHT);
+        }, 1500);
+      },
+      scrollToBottom() {
+        pinnedRef.current = true;
+        setIsPinned(true);
+        lastSeenLenRef.current = rowsLenRef.current;
+        setUnreadCount(0);
+        lastUserScrollRef.current = 0;
+        scrollToEnd("smooth");
+      },
+      isPinned: () => pinnedRef.current,
+    }),
+    [scrollToEnd],
+  );
 
   useEffect(() => {
     const tail = rows.length > 0 ? rows[rows.length - 1] : null;
@@ -222,7 +325,7 @@ export function FrameChatView({
     <div
       ref={containerRef}
       onScroll={handleScroll}
-      className="sg-scroll flex-1 overflow-y-auto overflow-x-hidden min-w-0 bg-slate-950 text-slate-100 border border-slate-700 p-3 sm:p-5 mb-3 sm:mb-6 rounded-2xl shadow-sm flex flex-col touch-pan-y"
+      className="sg-scroll relative flex-1 overflow-y-auto overflow-x-hidden min-w-0 bg-slate-950 text-slate-100 border border-slate-700 p-3 sm:p-5 mb-3 sm:mb-6 rounded-2xl shadow-sm flex flex-col touch-pan-y"
     >
       {rows.length === 0 ? (
         <FrameEmptyState />
@@ -258,6 +361,62 @@ export function FrameChatView({
           <div ref={endRef} />
         </>
       )}
+      <JumpToBottomButton
+        visible={!isPinned}
+        unreadCount={unreadCount}
+        onClick={() => {
+          pinnedRef.current = true;
+          setIsPinned(true);
+          lastSeenLenRef.current = rowsLenRef.current;
+          setUnreadCount(0);
+          lastUserScrollRef.current = 0;
+          scrollToEnd("smooth");
+        }}
+      />
+    </div>
+  );
+});
+
+function JumpToBottomButton({
+  visible,
+  unreadCount,
+  onClick,
+}: {
+  visible: boolean;
+  unreadCount: number;
+  onClick: () => void;
+}) {
+  // Cap displayed count at 9+ so the badge stays compact.
+  const display = unreadCount > 9 ? "9+" : String(unreadCount);
+  // Sticky inside the scroll container, pinned to the bottom-right of the
+  // visible viewport. Self-aligns to the end of the flex column so it
+  // doesn't take its own row in the chat layout. Negative top margin pulls
+  // it back over the preceding flex-grow spacer / rows; a zero-height
+  // wrapper keeps it from displacing any rows.
+  return (
+    <div
+      className="sticky bottom-3 self-end mr-1 -mt-12 h-0 z-10"
+      aria-hidden={!visible}
+    >
+      <button
+        type="button"
+        onClick={onClick}
+        aria-label="Jump to latest"
+        title="Jump to latest (End)"
+        className={`relative flex items-center justify-center w-10 h-10 rounded-full bg-amber-400 text-slate-900 shadow-lg ring-1 ring-amber-300/50 hover:bg-amber-300 transition-opacity duration-150 ${
+          visible
+            ? "opacity-100 pointer-events-auto"
+            : "opacity-0 pointer-events-none"
+        }`}
+        tabIndex={visible ? 0 : -1}
+      >
+        <ChevronDoubleDownIcon className="w-5 h-5" />
+        {unreadCount > 0 && (
+          <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-slate-900 text-amber-300 text-[10px] font-bold leading-none flex items-center justify-center ring-1 ring-amber-300/40">
+            {display}
+          </span>
+        )}
+      </button>
     </div>
   );
 }
@@ -293,7 +452,11 @@ function RowView({
   };
   const node = renderFrameRow(row, opts);
   if (node == null) return null;
-  return <div className="min-w-0 max-w-full">{node}</div>;
+  return (
+    <div className="min-w-0 max-w-full" data-row-key={row.key}>
+      {node}
+    </div>
+  );
 }
 
 /**

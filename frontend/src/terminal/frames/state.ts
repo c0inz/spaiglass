@@ -172,6 +172,15 @@ export interface SessionSnapshot {
   attached: boolean;
   /** Present after session_end. */
   endReason: "user" | "error" | "timeout" | "replaced" | null;
+  /** Current branch of workingDirectory git repo, when applicable. */
+  gitBranch: string | null;
+  /** Output-style override (role frontmatter or settings), when set. */
+  outputStyle: string | null;
+  /** SDK thinking config the backend resolved at startup. Drives the
+   *  header status badge's `think:<budget>` segment. */
+  resolvedThinking:
+    | { type: "adaptive" | "enabled" | "disabled"; budgetTokens?: number }
+    | null;
 }
 
 function emptySession(): SessionSnapshot {
@@ -191,6 +200,9 @@ function emptySession(): SessionSnapshot {
     durationMs: null,
     attached: false,
     endReason: null,
+    gitBranch: null,
+    outputStyle: null,
+    resolvedThinking: null,
   };
 }
 
@@ -276,6 +288,10 @@ export function applyFrame(state: FrameState, frame: Frame): FrameState {
           slashCommands: [...frame.slashCommands],
           attached: true,
           endReason: null,
+          gitBranch: frame.gitBranch ?? state.session.gitBranch,
+          outputStyle: frame.outputStyle ?? state.session.outputStyle,
+          resolvedThinking:
+            frame.resolvedThinking ?? state.session.resolvedThinking,
         },
       };
 

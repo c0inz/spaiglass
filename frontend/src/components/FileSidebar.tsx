@@ -8,7 +8,7 @@ import {
 } from "@heroicons/react/24/outline";
 import type { SessionStats } from "../types";
 import { HelpPanel } from "./HelpPanel";
-import { QueueTab } from "./QueueTab";
+import { QueueTab, type UserPromptEntry } from "./QueueTab";
 // SecretsPanel hidden for now — see research/secrets_roadmap.md
 // import { SecretsPanel } from "./SecretsPanel";
 
@@ -41,6 +41,10 @@ interface FileSidebarProps {
   queueWorkingDirectory?: string;
   queueRoleFile?: string;
   onInjectQueueText?: (text: string) => void;
+  /** History data for the Queue tab. */
+  recentUserPrompts?: UserPromptEntry[];
+  allUserPrompts?: UserPromptEntry[];
+  onJumpToMessage?: (rowKey: string) => void;
 }
 
 function TreeNode({
@@ -166,6 +170,9 @@ export function FileSidebar({
   queueWorkingDirectory,
   queueRoleFile,
   onInjectQueueText,
+  recentUserPrompts = [],
+  allUserPrompts = [],
+  onJumpToMessage,
 }: FileSidebarProps) {
   const [tree, setTree] = useState<TreeEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -342,6 +349,9 @@ export function FileSidebar({
               workingDirectory={queueWorkingDirectory}
               roleFile={queueRoleFile}
               onInjectText={onInjectQueueText}
+              recentUserPrompts={recentUserPrompts}
+              allUserPrompts={allUserPrompts}
+              onJumpToMessage={onJumpToMessage ?? (() => {})}
             />
           )}
       </div>

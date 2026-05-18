@@ -1,10 +1,23 @@
-import React, { useRef, useEffect, useState } from "react";
+import React, {
+  forwardRef,
+  useRef,
+  useEffect,
+  useState,
+  useImperativeHandle,
+} from "react";
 import { StopIcon, PaperClipIcon, XMarkIcon } from "@heroicons/react/24/solid";
 import { UI_CONSTANTS, KEYBOARD_SHORTCUTS } from "../../utils/constants";
 import { useEnterBehavior } from "../../hooks/useSettings";
 import { PermissionInputPanel } from "./PermissionInputPanel";
 import { PlanPermissionInputPanel } from "./PlanPermissionInputPanel";
 import type { PermissionMode } from "../../types";
+
+export interface ChatInputHandle {
+  getValue(): string;
+  setValue(next: string | ((prev: string) => string)): void;
+  clear(): void;
+  focus(): void;
+}
 
 interface PermissionData {
   patterns: string[];
@@ -38,10 +51,8 @@ interface PlanPermissionData {
 }
 
 interface ChatInputProps {
-  input: string;
   isLoading: boolean;
   currentRequestId?: string | null;
-  onInputChange: (value: string) => void;
   onSubmit: () => void;
   onAbort: () => void;
   // Permission mode props
@@ -59,8 +70,8 @@ interface ChatInputProps {
   onImageAdd?: (files: File[]) => void;
   onImageRemove?: (index: number) => void;
   // Thinking level
-  thinkingLevel?: "off" | "brief" | "extended";
-  onThinkingLevelChange?: (level: "off" | "brief" | "extended") => void;
+  thinkingLevel?: "off" | "brief" | "extended" | "auto";
+  onThinkingLevelChange?: (level: "off" | "brief" | "extended" | "auto") => void;
   // Slash commands from SDK
   slashCommands?: string[];
   // Re-asserts focus on the textarea whenever this value changes. ChatPage
@@ -69,34 +80,52 @@ interface ChatInputProps {
   focusTrigger?: number;
 }
 
-export function ChatInput({
-  input,
-  isLoading,
-  onInputChange,
-  onSubmit,
-  onAbort,
-  permissionMode,
-  onPermissionModeChange,
-  showPermissions = false,
-  permissionData,
-  planPermissionData,
-  mentionDropdown,
-  onMentionTrigger,
-  onMentionClose,
-  pendingImages,
-  onImageAdd,
-  onImageRemove,
-  thinkingLevel = "off",
-  onThinkingLevelChange,
-  slashCommands = [],
-  focusTrigger = 0,
-}: ChatInputProps) {
+export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(function ChatInput(
+  {
+    isLoading,
+    onSubmit,
+    onAbort,
+    permissionMode,
+    onPermissionModeChange,
+    showPermissions = false,
+    permissionData,
+    planPermissionData,
+    mentionDropdown,
+    onMentionTrigger,
+    onMentionClose,
+    pendingImages,
+    onImageAdd,
+    onImageRemove,
+    thinkingLevel = "auto",
+    onThinkingLevelChange,
+    slashCommands = [],
+    focusTrigger = 0,
+  },
+  ref,
+) {
+  // Input value lives here so keystrokes don't re-render the parent
+  // (ChatPage) and the entire chat transcript below it. The parent reads
+  // and writes via the imperative ChatInputHandle exposed below.
+  const [input, setInput] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isComposing, setIsComposing] = useState(false);
   const [slashMenu, setSlashMenu] = useState<{ query: string } | null>(null);
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
   const { enterBehavior } = useEnterBehavior();
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      getValue: () => input,
+      setValue: (next) => {
+        setInput((prev) => (typeof next === "function" ? next(prev) : next));
+      },
+      clear: () => setInput(""),
+      focus: () => inputRef.current?.focus({ preventScroll: true }),
+    }),
+    [input],
+  );
 
   // Focus input when not loading and not in permission mode. focusTrigger is
   // bumped by ChatPage on layout-state changes (arch viewer / file editor /
@@ -197,7 +226,7 @@ export function ChatInput({
       }
       if ((e.key === "Tab" || e.key === "Enter") && filtered.length > 0) {
         e.preventDefault();
-        onInputChange(`/${filtered[slashSelectedIndex]} `);
+        setInput(`/${filtered[slashSelectedIndex]} `);
         setSlashMenu(null);
         return;
       }
@@ -380,7 +409,7 @@ export function ChatInput({
                         : "text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
                     }`}
                     onClick={() => {
-                      onInputChange(`/${cmd} `);
+                      setInput(`/${cmd} `);
                       setSlashMenu(null);
                       inputRef.current?.focus();
                     }}
@@ -413,7 +442,7 @@ export function ChatInput({
           value={input}
           onChange={(e) => {
             const val = e.target.value;
-            onInputChange(val);
+            setInput(val);
 
             // Check for @-mention trigger
             if (onMentionTrigger && onMentionClose) {
@@ -547,7 +576,8 @@ export function ChatInput({
             <button
               type="button"
               onClick={() => {
-                const levels: Array<"off" | "brief" | "extended"> = [
+                const levels: Array<"off" | "brief" | "extended" | "auto"> = [
+                  "auto",
                   "off",
                   "brief",
                   "extended",
@@ -557,17 +587,19 @@ export function ChatInput({
                 onThinkingLevelChange(next);
               }}
               className="text-[10px] font-mono text-purple-500 dark:text-purple-400 hover:text-purple-700 dark:hover:text-purple-300 transition-colors cursor-pointer"
-              title="Click to cycle thinking level"
+              title="Click to cycle thinking level. 'auto' defers to the VM's ~/.claude/settings.json baseline."
             >
               {thinkingLevel === "off"
                 ? "thinking off"
                 : thinkingLevel === "brief"
                   ? "thinking brief (5k)"
-                  : "thinking extended (32k)"}
+                  : thinkingLevel === "extended"
+                    ? "thinking extended (32k)"
+                    : "thinking auto (settings.json)"}
             </button>
           )}
         </div>
       </div>
     </div>
   );
-}
+});

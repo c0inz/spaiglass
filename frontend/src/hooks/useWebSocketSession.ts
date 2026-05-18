@@ -109,6 +109,31 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
   // sees the error. If it stays down, we surface a single error.
   const offlineSinceRef = useRef<number | null>(null);
   const offlineTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * Locally-issued clientMessageIds that are still pending an echo. When
+   * the backend round-trips a user_message frame stamped with one of
+   * these ids, this client treats it as its own echo and drops the frame
+   * (we already added the optimistic UserMessageFrame). Echoes from OTHER
+   * clients on the same session don't match anything in this set, so they
+   * flow through to the reducer normally — that's how mobile/desktop
+   * mirroring works.
+   */
+  const localClientMessageIdsRef = useRef<Set<string>>(new Set());
+  /**
+   * Latest SDK-assigned claudeSessionId. Updated on every session_init frame
+   * (which fires when the SDK starts AND every time it allocates a new id).
+   * Used by the reconnect / resume_failed paths to ask the new backend
+   * process to resume into the SAME claudeSessionId — without this the
+   * frontend would replay a stale resumeSessionId from page-load (or none),
+   * and the SDK would start a fresh conversation, losing in-flight context.
+   */
+  const currentClaudeSessionIdRef = useRef<string | null>(null);
+  /**
+   * Whether we're in a transient reconnect/reload window (WS disconnected
+   * AND we had an active session before). Drives the "Reloading session…"
+   * banner in the chat header. Cleared on successful re-attach.
+   */
+  const [reloading, setReloading] = useState(false);
   /** How long to silently retry before telling the user the VM is offline. */
   const OFFLINE_GRACE_MS = 12_000;
 
@@ -170,6 +195,10 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
 
     ws.onclose = () => {
       setState((s) => ({ ...s, connected: false }));
+      // If we had an active session before the close, surface a "reloading"
+      // indicator so the user knows we're re-attaching (instead of typing
+      // into a void). Cleared once the new session_init lands.
+      if (currentClaudeSessionIdRef.current) setReloading(true);
       wsRef.current = null;
       if (pingTimerRef.current) {
         clearInterval(pingTimerRef.current);
@@ -259,6 +288,8 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
           slashCommands: (msg.slashCommands as string[]) || [],
           attached: true,
         }));
+        // Re-attached cleanly — the chat is alive again.
+        setReloading(false);
         break;
 
       case "resume_ack": {
@@ -268,6 +299,7 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
           offlineTimerRef.current = null;
         }
         setState((s) => ({ ...s, attached: true }));
+        setReloading(false);
         // `stale: true` means the backend replayed scrollback from disk but
         // has no live CLI session. Auto-start one so the user can keep
         // chatting without losing their visible history.
@@ -378,17 +410,24 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
    */
   const handleFrame = useCallback(
     (frame: Frame, cbs: NonNullable<typeof callbacksRef.current>) => {
-      // User messages are added to the scrollback locally the moment the
-      // user presses Enter (ChatPage synthesizes a UserMessageFrame via
-      // frameChat.addFrame). The backend still echoes them back as a real
-      // user_message frame a beat later — swallow it so the row isn't
-      // duplicated. Hidden continuations (permission "continue", plan
-      // "accept") are sent via ws.sendMessage with hideUserMessage=true;
-      // they do NOT get a local frame, so they'd leak through here. We
-      // currently accept that trade-off: the backend will echo them back
-      // in replay anyway, and suppressing echo-only frames would require
-      // per-message tracking the hook doesn't carry.
-      if (frame.type === "user_message") return;
+      // User messages: when this client sent the message itself, ChatPage
+      // already added an optimistic UserMessageFrame to scrollback the
+      // moment Enter was pressed; the backend then echoes the message
+      // back stamped with the same `clientMessageId` we issued, and we
+      // drop that echo to prevent a duplicate row. Frames carrying a
+      // clientMessageId we did NOT issue (i.e. echoes of messages typed
+      // on a sibling client sharing this session — desktop ↔ mobile
+      // mirroring) and frames with no clientMessageId at all (queued
+      // prompts, hidden continuations) flow through to the reducer.
+      if (frame.type === "user_message") {
+        const cid = frame.clientMessageId;
+        if (cid && localClientMessageIdsRef.current.has(cid)) {
+          localClientMessageIdsRef.current.delete(cid);
+          return;
+        }
+        // Fall through to onFrame — sibling-client message or backend-
+        // originated user message; render it.
+      }
 
       cbs.onFrame(frame);
 
@@ -411,6 +450,20 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
               window.history.replaceState({}, "", url.toString());
             } catch {
               // URL manipulation failed (sandbox?) — non-fatal
+            }
+            // Track the LATEST sdk-assigned claudeSessionId so a later
+            // reconnect (after a connector restart) can pass it back as
+            // `resumeSessionId` — the SDK then reloads the full JSONL and
+            // the agent keeps its memory of the conversation. Without this,
+            // resume_failed → fresh session_start would lose context. This
+            // is also written into lastSessionParamsRef so the reconnect
+            // paths below pick it up automatically.
+            currentClaudeSessionIdRef.current = frame.sessionId;
+            if (lastSessionParamsRef.current) {
+              lastSessionParamsRef.current = {
+                ...lastSessionParamsRef.current,
+                resumeSessionId: frame.sessionId,
+              };
             }
           }
           break;
@@ -504,6 +557,10 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
       workingDirectory: string,
       contextContent?: string,
       resumeSessionId?: string,
+      opts?: {
+        permissionMode?: "default" | "plan" | "acceptEdits" | "bypassPermissions";
+        thinkingLevel?: "off" | "brief" | "extended" | "auto";
+      },
     ) => {
       lastSessionParamsRef.current = {
         roleFile,
@@ -521,6 +578,8 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
           workingDirectory,
           contextContent,
           ...(resumeSessionId ? { resumeSessionId } : {}),
+          ...(opts?.permissionMode ? { permissionMode: opts.permissionMode } : {}),
+          ...(opts?.thinkingLevel ? { thinkingLevel: opts.thinkingLevel } : {}),
         }),
       );
     },
@@ -531,7 +590,14 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
    * Restart with a fresh session.
    */
   const restartSession = useCallback(
-    (roleFile: string, workingDirectory: string) => {
+    (
+      roleFile: string,
+      workingDirectory: string,
+      opts?: {
+        permissionMode?: "default" | "plan" | "acceptEdits" | "bypassPermissions";
+        thinkingLevel?: "off" | "brief" | "extended" | "auto";
+      },
+    ) => {
       lastCursorRef.current = 0;
       lastSessionParamsRef.current = { roleFile, workingDirectory };
       const ws = wsRef.current;
@@ -542,6 +608,8 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
           type: "session_restart",
           roleFile,
           workingDirectory,
+          ...(opts?.permissionMode ? { permissionMode: opts.permissionMode } : {}),
+          ...(opts?.thinkingLevel ? { thinkingLevel: opts.thinkingLevel } : {}),
         }),
       );
     },
@@ -550,19 +618,46 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
 
   /**
    * Send a user message (or slash command).
+   *
+   * `clientMessageId` is an opaque per-message id the caller picks (also
+   * used as the local optimistic UserMessageFrame's id). The backend
+   * stamps it on the round-tripped user_message echo so we can dedupe
+   * our own echo against the optimistic add — without dropping echoes
+   * from OTHER clients in the same session, which is what mobile/desktop
+   * mirroring depends on.
    */
-  const sendMessage = useCallback((content: string, attachments?: string[]) => {
-    const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const sendMessage = useCallback(
+    (
+      content: string,
+      attachments?: string[],
+      clientMessageId?: string,
+      hideUserMessage?: boolean,
+    ) => {
+      const ws = wsRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
-    ws.send(
-      JSON.stringify({
-        type: "message",
-        content,
-        ...(attachments?.length ? { attachments } : {}),
-      }),
-    );
-  }, []);
+      if (clientMessageId) {
+        localClientMessageIdsRef.current.add(clientMessageId);
+        // Garbage-collect stale entries — the echo normally lands within
+        // a couple seconds; 60s is generous and bounds memory.
+        const id = clientMessageId;
+        setTimeout(() => {
+          localClientMessageIdsRef.current.delete(id);
+        }, 60_000);
+      }
+
+      ws.send(
+        JSON.stringify({
+          type: "message",
+          content,
+          ...(attachments?.length ? { attachments } : {}),
+          ...(clientMessageId ? { clientMessageId } : {}),
+          ...(hideUserMessage ? { hideUserMessage: true } : {}),
+        }),
+      );
+    },
+    [],
+  );
 
   /**
    * Phase 6.4 — reply to an in-flight interactive MCP tool call.
@@ -671,5 +766,9 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
     sendMessage,
     sendToolResult,
     interrupt,
+    /** True during the brief gap when the connector restarted and we're
+     *  re-attaching to the same conversation. UI shows a "reloading"
+     *  banner; clears on session_ack / resume_ack. */
+    reloading,
   };
 }

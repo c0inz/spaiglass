@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useState, useRef } from "react";
+import { useEffect, useCallback, useMemo, useState, useRef } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
   FolderIcon,
@@ -12,14 +12,22 @@ import { useChatState } from "../hooks/chat/useChatState";
 import { useFrameChatState } from "../hooks/chat/useFrameChatState";
 import { usePermissions } from "../hooks/chat/usePermissions";
 import { usePermissionMode } from "../hooks/chat/usePermissionMode";
+import { useThinkingLevel } from "../hooks/useThinkingLevel";
 import { useAutoHistoryLoader } from "../hooks/useHistoryLoader";
 import { useWebSocketSession } from "../hooks/useWebSocketSession";
 import { SettingsButton } from "./SettingsButton";
+import { SessionStatusBar } from "./SessionStatusBar";
+import { SkillsChipRow } from "./SkillsChipRow";
 import { HelpButton } from "./HelpButton";
 import { Brand } from "./Brand";
 import { SettingsModal } from "./SettingsModal";
-import { ChatInput } from "./chat/ChatInput";
-import { FrameChatView } from "../terminal/frames/FrameChatView";
+import { ChatInput, type ChatInputHandle } from "./chat/ChatInput";
+import {
+  FrameChatView,
+  type FrameChatViewHandle,
+} from "../terminal/frames/FrameChatView";
+import type { InteractiveToolResultStatus } from "../terminal/frames/FrameInterpreter";
+import type { UserPromptEntry } from "./QueueTab";
 import { FileSidebar } from "./FileSidebar";
 import { FileEditor } from "./FileEditor";
 import { FileMention } from "./FileMention";
@@ -76,16 +84,24 @@ export function ChatPage() {
     position: { top: number; left: number };
   } | null>(null);
   const [staleFiles, setStaleFiles] = useState<string[]>([]);
-  const [sidebarRefreshKey, setSidebarRefreshKey] = useState(0);
+  // sidebarRefreshKey was used to force-remount FileSidebar on agent
+  // activity (file polling tick, file_delivery frame). That remount
+  // collapsed every expanded TreeNode because each node owned its
+  // expanded state via local useState. Per user rule: only the user
+  // should change the file-tree layout/focus. The state is gone; both
+  // remount triggers below have been deleted.
   const [showArchViewer, setShowArchViewer] = useState(false);
   const [showSessionPicker, setShowSessionPicker] = useState(false);
   const [showAgents, setShowAgents] = useState(false);
   const [pendingImages, setPendingImages] = useState<
     { file: File; preview: string }[]
   >([]);
-  const [thinkingLevel, setThinkingLevel] = useState<
-    "off" | "brief" | "extended"
-  >("off");
+  // thinkingLevel persists across reloads (localStorage) and is forwarded
+  // to the backend in the session_start WS payload — see useThinkingLevel.
+  // Mid-session toggle does not retroactively reconfigure the running SDK;
+  // a notice tells the user that on toggle.
+  const { thinkingLevel, setThinkingLevel: setThinkingLevelRaw } =
+    useThinkingLevel();
   const [slashCommands, setSlashCommands] = useState<string[]>([]);
   const sessionStatsRef = useRef<SessionStats>({
     model: "",
@@ -212,7 +228,6 @@ export function ChatPage() {
     projectPath: workingDirectory,
     intervalMs: 3000,
     onFilesChanged: (changed, _added, deleted) => {
-      setSidebarRefreshKey((k) => k + 1);
       if (editingFile) {
         const editingRel = editingFile.path;
         if (
@@ -379,8 +394,14 @@ export function ChatPage() {
     ws.connect();
   }, [ws.connect]);
 
-  // Permission mode state management
-  const { permissionMode, setPermissionMode } = usePermissionMode();
+  // Permission mode state management. The raw setter from the hook
+  // updates UI + localStorage but the running SDK was already spawned
+  // with whatever mode was active at session_start — config can't be
+  // changed mid-process. The wrapped setters below emit a notice so the
+  // user knows a /reset (or fresh session) is needed for the change to
+  // take effect.
+  const { permissionMode, setPermissionMode: setPermissionModeRaw } =
+    usePermissionMode();
 
   // Get encoded name for current working directory
   const getEncodedName = useCallback(() => {
@@ -415,22 +436,33 @@ export function ChatPage() {
     sessionId || undefined,
   );
 
-  // Initialize chat state — input/loading/session only; rows live in
-  // the frame-native reducer below.
+  // Initialize chat state — loading/session/status only. The text input
+  // value lives inside ChatInput (accessed via chatInputRef) so that
+  // keystrokes don't re-render this component or the chat transcript.
   const {
-    input,
     isLoading,
     currentSessionId,
-    setInput,
     setCurrentSessionId,
     updateStatus,
     currentStatus,
-    clearInput,
     resetRequestState,
     startRequest,
   } = useChatState({
     initialSessionId: loadedSessionId || undefined,
   });
+
+  const chatInputRef = useRef<ChatInputHandle>(null);
+  // Carries the local id of the next outgoing user message between the
+  // optimistic-frame add and the ws.sendMessage call below, so both use
+  // the same value as the round-trip dedup key.
+  const pendingClientMessageIdRef = useRef<string | null>(null);
+  const getInput = useCallback(
+    () => chatInputRef.current?.getValue() ?? "",
+    [],
+  );
+  const clearInput = useCallback(() => {
+    chatInputRef.current?.clear();
+  }, []);
 
   // Frame-native scrollback — the single source of truth for rows.
   const frameChat = useFrameChatState();
@@ -487,6 +519,38 @@ export function ChatPage() {
       frameChat.addFrame(frame);
     },
     [frameChat],
+  );
+
+  // Wrapped setters that emit a notice when the user toggles a setting
+  // mid-session. The running SDK was spawned at session_start with the
+  // value that was active then; live re-config isn't supported. The
+  // notice tells the user to /reset to apply.
+  const setPermissionMode = useCallback(
+    (mode: typeof permissionMode) => {
+      const wasInSession = ws.attached;
+      const changed = mode !== permissionMode;
+      setPermissionModeRaw(mode);
+      if (wasInSession && changed) {
+        emitLocalNotice(
+          `Permission mode → ${mode}. Applies on next session — type /reset to apply now.`,
+        );
+      }
+    },
+    [permissionMode, setPermissionModeRaw, ws.attached, emitLocalNotice],
+  );
+
+  const setThinkingLevel = useCallback(
+    (level: typeof thinkingLevel) => {
+      const wasInSession = ws.attached;
+      const changed = level !== thinkingLevel;
+      setThinkingLevelRaw(level);
+      if (wasInSession && changed) {
+        emitLocalNotice(
+          `Thinking → ${level}. Applies on next session — type /reset to apply now.`,
+        );
+      }
+    },
+    [thinkingLevel, setThinkingLevelRaw, ws.attached, emitLocalNotice],
   );
 
   // Save session when a new sessionId is received from Claude
@@ -549,7 +613,9 @@ export function ChatPage() {
         };
         setSessionStats(sessionStatsRef.current);
       },
-      onFileDelivery: () => setSidebarRefreshKey((k) => k + 1),
+      // onFileDelivery intentionally a no-op: agent file writes must not
+      // mutate the file-tree's layout or focus. User-initiated only.
+      onFileDelivery: () => {},
       onSlashCommands: (cmds: string[]) => {
         const withNative = cmds.includes("reset") ? cmds : ["reset", ...cmds];
         setSlashCommands(withNative);
@@ -628,7 +694,12 @@ export function ChatPage() {
       workingDirectory,
       activeContext?.content,
       sessionId || undefined,
+      { permissionMode, thinkingLevel },
     );
+    // permissionMode/thinkingLevel intentionally omitted from the dep array:
+    // they're applied at session-start time only. Mid-session toggle does
+    // NOT re-fire this effect (which would race with WS state); the user
+    // sees a notice on toggle and applies via /reset.
   }, [
     ws.connected,
     ws.attached,
@@ -638,6 +709,7 @@ export function ChatPage() {
     activeContext?.content,
     sessionId,
     ws.startSession,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   ]);
 
   const {
@@ -681,7 +753,7 @@ export function ChatPage() {
   const handleNewSession = useCallback(() => {
     frameChat.resetFrames();
     if (roleFile && workingDirectory) {
-      ws.restartSession(roleFile, workingDirectory);
+      ws.restartSession(roleFile, workingDirectory, { permissionMode, thinkingLevel });
     }
     announcedModeRef.current = false; // re-announce mode on the next attach
     emitLocalNotice("New session started.");
@@ -700,7 +772,7 @@ export function ChatPage() {
       _tools?: string[],
       hideUserMessage = false,
     ) => {
-      const content = messageContent || input.trim();
+      const content = messageContent || getInput().trim();
       if (!content && pendingImages.length === 0) return;
 
       const trimmedLower = content.trim().toLowerCase();
@@ -710,7 +782,7 @@ export function ChatPage() {
         clearInput();
         frameChat.resetFrames();
         if (roleFile && workingDirectory) {
-          ws.restartSession(roleFile, workingDirectory);
+          ws.restartSession(roleFile, workingDirectory, { permissionMode, thinkingLevel });
         }
         emitLocalNotice("New session started.");
         return;
@@ -725,15 +797,19 @@ export function ChatPage() {
         return;
       }
 
-      // /btw — send a side-message without interrupting; Claude reads it
-      // from the queue when it next checks for input. The backend echoes
-      // the message back as a user_message frame once it lands in the
-      // queue, so we don't need to pre-render it locally.
-      if (trimmedLower.startsWith("/btw ") || trimmedLower === "/btw") {
-        const btw = content.trim().slice(4).trim();
-        if (!btw) return;
-        clearInput();
-        ws.sendMessage(btw);
+      // /btw — send a side-message without interrupting. Claude reads it
+      // from the queue when it next checks for input. /btw is otherwise
+      // identical to a normal send: neither interrupts, both queue. So we
+      // only strip the prefix here and fall through to the regular path,
+      // which gets the optimistic local frame and clientMessageId
+      // round-trip. (Earlier code skipped both, leaving /btw invisible in
+      // scrollback because the SDK does not echo a user_message frame for
+      // plain-text inputs.)
+      let outboundContent = content;
+      if (trimmedLower.startsWith("/btw ")) {
+        outboundContent = content.trim().slice(4).trim();
+        if (!outboundContent) return;
+      } else if (trimmedLower === "/btw") {
         return;
       }
 
@@ -769,7 +845,7 @@ export function ChatPage() {
       }
 
       // Need either text or attachments
-      if (!content && attachmentPaths.length === 0) return;
+      if (!outboundContent && attachmentPaths.length === 0) return;
 
       // Echo the user's message into scrollback immediately via a
       // client-side UserMessageFrame. The backend will also emit a
@@ -798,16 +874,24 @@ export function ChatPage() {
           nonImageNames.length > 0
             ? `${nonImageNames.map((n) => `[${n}]`).join(" ")}\n`
             : "";
-        const text = (prefix + (content || "")).trim();
+        const text = (prefix + (outboundContent || "")).trim();
         if (text) blocks.push({ type: "text", text });
         if (blocks.length > 0) {
+          // Same id is used as the optimistic frame's id AND as the
+          // clientMessageId we hand to the WS send. The backend echoes it
+          // back on the user_message frame so this client can drop its own
+          // echo while sibling clients (desktop ↔ mobile mirroring) still
+          // render the message.
+          const localId = `local-user-${Math.random().toString(36).slice(2, 10)}`;
           frameChat.addFrame({
-            id: `local-user-${Math.random().toString(36).slice(2, 10)}`,
+            id: localId,
             seq: 0,
             ts: Date.now(),
             type: "user_message",
             content: blocks,
+            clientMessageId: localId,
           });
+          pendingClientMessageIdRef.current = localId;
         }
       }
 
@@ -819,14 +903,22 @@ export function ChatPage() {
         startRequest();
       }
 
-      // Send via WebSocket — responses arrive through the callbacks
+      // Send via WebSocket — responses arrive through the callbacks.
+      // outboundContent is the same as `content` for normal sends, and
+      // is the prefix-stripped body for /btw. hideUserMessage tells the
+      // backend to suppress its authoritative UserMessageFrame broadcast
+      // (used for permission "continue" / plan "accept" so they don't
+      // surface as visible user turns).
       ws.sendMessage(
-        content,
+        outboundContent,
         attachmentPaths.length > 0 ? attachmentPaths : undefined,
+        pendingClientMessageIdRef.current ?? undefined,
+        hideUserMessage,
       );
+      pendingClientMessageIdRef.current = null;
     },
     [
-      input,
+      getInput,
       isLoading,
       ws,
       roleFile,
@@ -845,6 +937,75 @@ export function ChatPage() {
     ws.interrupt();
     resetRequestState();
   }, [ws, resetRequestState]);
+
+  // Stable callbacks for FrameChatView. These are passed down to MemoRow,
+  // whose memo comparator checks reference identity — inline arrows here
+  // would invalidate every row's memo on every keystroke (input lives at
+  // the top of this component), forcing the entire transcript to re-render
+  // per character. Anchoring identity to the actual deps keeps typing fast
+  // regardless of how long the chat has run.
+  const handleOpenFile = useCallback((path: string, name: string) => {
+    setShowSidebar(true);
+    setEditingFile({ path, name });
+    setShowArchViewer(false);
+  }, []);
+
+  const addFrame = frameChat.addFrame;
+  const handleToolResult = useCallback(
+    (
+      requestId: string,
+      status: InteractiveToolResultStatus,
+      data?: unknown,
+      reason?: string,
+    ) => {
+      ws.sendToolResult(requestId, status, data, reason);
+      addFrame({
+        id: `local-resolved-${Math.random().toString(36).slice(2, 10)}`,
+        seq: 0,
+        ts: Date.now(),
+        type: "interactive_resolved",
+        requestId,
+        resolution: status,
+      });
+    },
+    [ws, addFrame],
+  );
+
+  const handleSubmitText = useCallback(
+    (text: string) => {
+      sendMessage(text);
+    },
+    [sendMessage],
+  );
+
+  // Frame chat imperative handle — used by the Queue-tab History/Search to
+  // scroll the transcript to a specific user message.
+  const frameChatRef = useRef<FrameChatViewHandle>(null);
+  const handleJumpToMessage = useCallback((rowKey: string) => {
+    frameChatRef.current?.scrollToRow(rowKey);
+  }, []);
+
+  // Derive user-prompt lists for the Queue tab. Newest-first; each entry
+  // carries the row.key (stable across renders) so clicking it can scroll
+  // to the exact DOM node via data-row-key.
+  const allUserPrompts = useMemo<UserPromptEntry[]>(() => {
+    const out: UserPromptEntry[] = [];
+    for (const r of frameChat.state.rows) {
+      if (r.kind !== "user") continue;
+      const text = r.frame.content
+        .filter((b) => b.type === "text")
+        .map((b) => (b as { text: string }).text)
+        .join(" ")
+        .trim();
+      if (!text) continue;
+      out.push({ rowKey: r.key, text, ts: r.ts });
+    }
+    return out.reverse();
+  }, [frameChat.state.rows]);
+  const recentUserPrompts = useMemo(
+    () => allUserPrompts.slice(0, 20),
+    [allUserPrompts],
+  );
 
   // Permission request handlers
   const handlePermissionAllow = useCallback(() => {
@@ -1076,6 +1237,19 @@ export function ChatPage() {
                 )}
               </div>
             )}
+            {!isMobile && (
+              <SessionStatusBar session={frameChat.state.session} />
+            )}
+            {ws.reloading && (
+              <div
+                className="mt-1 inline-flex items-center gap-2 px-2 py-0.5 rounded text-[11px] font-medium bg-amber-100 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-700"
+                role="status"
+                aria-live="polite"
+              >
+                <span className="inline-block w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                Session reloading — please wait a moment before sending.
+              </div>
+            )}
           </div>
         </div>
         {/* Agent switcher — middle section (desktop only) */}
@@ -1153,7 +1327,6 @@ export function ChatPage() {
               }
             >
               <FileSidebar
-                key={sidebarRefreshKey}
                 projectPath={workingDirectory}
                 onFileSelect={handleFileSelect}
                 contextFiles={contextFiles}
@@ -1165,8 +1338,13 @@ export function ChatPage() {
                 queueWorkingDirectory={workingDirectory}
                 queueRoleFile={roleFile || undefined}
                 onInjectQueueText={(text) =>
-                  setInput((prev) => (prev ? `${prev}\n${text}` : text))
+                  chatInputRef.current?.setValue((prev) =>
+                    prev ? `${prev}\n${text}` : text,
+                  )
                 }
+                recentUserPrompts={recentUserPrompts}
+                allUserPrompts={allUserPrompts}
+                onJumpToMessage={handleJumpToMessage}
               />
             </div>
           )}
@@ -1243,39 +1421,29 @@ export function ChatPage() {
                   onDismiss={() => setStaleFiles([])}
                 />
                 <FrameChatView
+                  ref={frameChatRef}
                   rows={frameChat.state.rows}
                   toolCalls={frameChat.state.toolCalls}
                   isLoading={isLoading}
                   currentStatus={currentStatus}
                   userLogin={ws.login}
-                  onOpenFile={(path, name) => {
-                    setShowSidebar(true);
-                    setEditingFile({ path, name });
-                    setShowArchViewer(false);
+                  onOpenFile={handleOpenFile}
+                  onToolResult={handleToolResult}
+                  onSubmitText={handleSubmitText}
+                />
+
+                <SkillsChipRow
+                  onInvoke={(slash) => {
+                    chatInputRef.current?.setValue(
+                      (prev) => (prev ? `${prev}\n${slash}` : slash),
+                    );
+                    chatInputRef.current?.focus();
                   }}
-                  onToolResult={(requestId, status, data, reason) => {
-                    // Tell the backend what the user picked.
-                    ws.sendToolResult(requestId, status, data, reason);
-                    // Optimistically flip the matching interactive row to
-                    // resolved so a stray replay/reconnect can't re-open
-                    // the widget. The backend will confirm with a real
-                    // interactive_resolved frame shortly.
-                    frameChat.addFrame({
-                      id: `local-resolved-${Math.random().toString(36).slice(2, 10)}`,
-                      seq: 0,
-                      ts: Date.now(),
-                      type: "interactive_resolved",
-                      requestId,
-                      resolution: status,
-                    });
-                  }}
-                  onSubmitText={(text) => sendMessage(text)}
                 />
 
                 <ChatInput
-                  input={input}
+                  ref={chatInputRef}
                   isLoading={isLoading}
-                  onInputChange={setInput}
                   onSubmit={() => sendMessage()}
                   onAbort={handleAbort}
                   permissionMode={permissionMode}
@@ -1336,12 +1504,12 @@ export function ChatPage() {
                         query={mentionState.query}
                         position={mentionState.position}
                         onSelect={(filePath) => {
-                          const atIndex = input.lastIndexOf("@");
-                          if (atIndex !== -1) {
-                            const newInput =
-                              input.slice(0, atIndex) + filePath + " ";
-                            setInput(newInput);
-                          }
+                          chatInputRef.current?.setValue((prev) => {
+                            const atIndex = prev.lastIndexOf("@");
+                            return atIndex === -1
+                              ? prev
+                              : prev.slice(0, atIndex) + filePath + " ";
+                          });
                           setMentionState(null);
                         }}
                         onClose={() => setMentionState(null)}

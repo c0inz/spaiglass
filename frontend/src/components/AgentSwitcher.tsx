@@ -296,6 +296,20 @@ export function AgentSwitcher({
 
 type WizardStep = "server" | "directory" | "session";
 
+function stripTrailingSlash(p: string): string {
+  return p.replace(/\/+$/, "");
+}
+
+/**
+ * Lossy path signature mirroring the Claude SDK's project-name encoding
+ * (`/`, `\`, ':', '.', '_' all collapse to '-'). Used as a fallback
+ * comparator when matching a session's reverse-decoded `projectPath`
+ * against a registered directory path that the SDK had encoded.
+ */
+function lossyPathSig(p: string): string {
+  return stripTrailingSlash(p).replace(/[/\\:._]/g, "-").toLowerCase();
+}
+
 function relativeTime(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
   if (ms < 0 || isNaN(ms)) return "";
@@ -384,6 +398,17 @@ export function AgentPickerFullPage({
   // Fetch sessions on entering step 3. Filtered to the chosen directory's
   // cwd so only relevant rows appear. Cross-VM works because /vm/<conn>/
   // is a relay-tunneled path.
+  //
+  // Path comparison has two tiers:
+  //   1. Exact match (after trailing-slash strip) on any candidate path.
+  //      `spaiglassWorkingDirectory` is recorded verbatim in spaiglass meta,
+  //      so it always wins this fast path when the row is spaiglass-source.
+  //   2. Lossy-collapse match. Claude-CLI rows only carry a `projectPath`
+  //      that was reverse-decoded from `~/.claude/projects/<encoded>/`. The
+  //      SDK encoding is lossy: '/', '\\', ':', '.', '_' all → '-'. A path
+  //      like "/home/x/my_project" round-trips as "/home/x/my/project" and
+  //      fails strict equality even though it really is the chosen
+  //      directory. Apply the same lossy collapse on both sides.
   useEffect(() => {
     if (step !== "session" || !chosenServer || !chosenDir) return;
     let cancelled = false;
@@ -394,13 +419,24 @@ export function AgentPickerFullPage({
       .then((data) => {
         if (cancelled) return;
         const all: ClaudeSessionRow[] = data?.sessions || [];
-        const cwd = chosenDir.path;
-        const filtered = all.filter(
-          (s) =>
-            s.spaiglassWorkingDirectory === cwd ||
-            s.projectPath === cwd ||
-            s.cwd === cwd,
-        );
+        const cwdExact = stripTrailingSlash(chosenDir.path);
+        const cwdLossy = lossyPathSig(chosenDir.path);
+        const filtered = all.filter((s) => {
+          const candidates = [
+            s.spaiglassWorkingDirectory,
+            s.projectPath,
+            s.cwd,
+          ].filter(
+            (p): p is string => typeof p === "string" && p.length > 0,
+          );
+          for (const p of candidates) {
+            if (stripTrailingSlash(p) === cwdExact) return true;
+          }
+          for (const p of candidates) {
+            if (lossyPathSig(p) === cwdLossy) return true;
+          }
+          return false;
+        });
         setSessions(filtered);
       })
       .catch(() => {
