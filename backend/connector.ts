@@ -506,11 +506,27 @@ export function startConnector(): void {
 // bun-compiled single binary — there, cli/spaiglass-host.ts is the unique
 // entry point and calls startConnector() explicitly after the backend is
 // listening.
-const here =
-  import.meta.dirname ?? fileURLToPath(new URL(".", import.meta.url));
-const isCompiledBundle = here.startsWith("/$bunfs");
+//
+// We can't use `import.meta.dirname.startsWith("/$bunfs")` to detect the
+// compiled binary: that prefix is unix-only. On Windows the bun virtual FS
+// uses `B:/~BUN/...`, so the check returns false inside the compiled binary
+// and the auto-run fires — opening a second relay-connector WebSocket with
+// the same CONNECTOR_ID as the explicit startConnector() call in
+// cli/spaiglass-host.ts. The relay's one-connection-per-ID rule evicts each
+// in turn, producing a ~3s connect/auth/disconnect loop. Mirrors the fix
+// in cli/node.ts (see comment block there, issue 2026-05-01).
+//
+// The reliable signal: under legacy `node connector.js`, process.execPath
+// is the node binary; under bun-compiled spaiglass-host, process.execPath
+// is the compiled binary itself. Auto-run only when execPath looks like
+// node.
+const execName =
+  process.execPath.replace(/\\/g, "/").split("/").pop()?.toLowerCase() ?? "";
+const isLegacyNodeRun = execName === "node" || execName === "node.exe";
 
-if (!isCompiledBundle) {
+if (isLegacyNodeRun) {
+  const here =
+    import.meta.dirname ?? fileURLToPath(new URL(".", import.meta.url));
   config({ path: resolve(here, ".env") });
   startConnector();
 }

@@ -5,6 +5,7 @@
  */
 
 import { dirname, join } from "node:path";
+import { open } from "node:fs/promises";
 import type { Runtime } from "../runtime/types.ts";
 import { logger } from "../utils/logger.ts";
 import {
@@ -17,6 +18,55 @@ import { getPlatform, getEnv, exit } from "../utils/os.ts";
 
 // Regex to fix double backslashes that might occur during Windows path string processing
 const DOUBLE_BACKSLASH_REGEX = /\\\\/g;
+
+/**
+ * Check whether a file's first bytes are the magic of a native executable
+ * (ELF / Mach-O / PE-COFF). Used to short-circuit the trace-wrapper script-
+ * path detection: Anthropic's `curl https://claude.ai/install.sh | bash`
+ * installer drops a standalone ELF/Mach-O/PE binary that never invokes
+ * node, so the PATH-wrapping trace approach (which looks for traced node
+ * calls) always returns an empty trace and falls back to the executable
+ * with a scary "may not work properly" warning. The fallback actually
+ * does work — the Claude Agent SDK's pathToClaudeCodeExecutable accepts
+ * native binaries directly — so the warning is misleading. Detect the
+ * native-binary case up-front and return early without the noise.
+ */
+async function isNativeExecutable(path: string): Promise<boolean> {
+  try {
+    const fd = await open(path, "r");
+    try {
+      const buf = Buffer.alloc(4);
+      await fd.read(buf, 0, 4, 0);
+      // ELF: 7F 45 4C 46
+      if (
+        buf[0] === 0x7f &&
+        buf[1] === 0x45 &&
+        buf[2] === 0x4c &&
+        buf[3] === 0x46
+      ) {
+        return true;
+      }
+      // Mach-O (32/64-bit, LE/BE) and fat binaries
+      const m = buf.readUInt32BE(0);
+      if (
+        m === 0xfeedfacf ||
+        m === 0xcffaedfe ||
+        m === 0xfeedface ||
+        m === 0xcefaedfe ||
+        m === 0xcafebabe
+      ) {
+        return true;
+      }
+      // PE/COFF (Windows): MZ
+      if (buf[0] === 0x4d && buf[1] === 0x5a) return true;
+      return false;
+    } finally {
+      await fd.close();
+    }
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Parses Windows .cmd script to extract the actual CLI script path
@@ -309,6 +359,30 @@ export async function validateClaudeCli(
       logger.cli.debug(
         "Detected Windows .cmd file - fallback parsing available if needed",
       );
+    }
+
+    // Short-circuit for native-binary Claude installs (claude.ai/install.sh
+    // drops a single ELF/Mach-O/PE binary — no JS shim, no node invocation).
+    // The trace-wrapper approach below scrapes node argv after running
+    // `claude --version`, which never produces output for a native binary
+    // — leading to a "script detection failed, may not work properly"
+    // warning even though the SDK handles native binaries fine. Read the
+    // file's magic bytes; if it looks executable, use it directly.
+    if (await isNativeExecutable(claudePath)) {
+      logger.cli.info(`✅ Claude CLI is a native binary: ${claudePath}`);
+      try {
+        const versionResult = await runtime.runCommand(claudePath, [
+          "--version",
+        ]);
+        if (versionResult.success) {
+          logger.cli.info(
+            `✅ Claude CLI found: ${versionResult.stdout.trim()}`,
+          );
+        }
+      } catch {
+        // Version is informational only; absence is fine.
+      }
+      return claudePath;
     }
 
     // Detect the actual CLI script path using tracing approach
