@@ -3,6 +3,7 @@ import {
   PlusIcon,
   CommandLineIcon,
   FolderIcon,
+  ArrowDownTrayIcon,
 } from "@heroicons/react/24/outline";
 import type { ClaudeSessionRow } from "../../../shared/types";
 import { getClaudeSessionsUrl } from "../config/api";
@@ -166,16 +167,28 @@ export function SessionPickerModal({
                   ? `${s.userTurnCount}↔${s.assistantTurnCount ?? 0}`
                   : `${s.messageCount}msg`;
               return (
-                <button
+                <div
                   key={s.sessionId}
+                  role="button"
+                  tabIndex={0}
                   onClick={() => handlePick(s)}
-                  className={`w-full text-left px-4 py-3 border-b border-slate-100 dark:border-slate-800 transition-colors ${
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      handlePick(s);
+                    }
+                  }}
+                  className={`group relative w-full text-left px-4 py-3 border-b border-slate-100 dark:border-slate-800 transition-colors cursor-pointer ${
                     isCurrent
                       ? "bg-amber-50 dark:bg-amber-900/20"
                       : "hover:bg-slate-50 dark:hover:bg-slate-800/50"
                   }`}
                 >
-                  {/* Row 1: source badge + project + timestamp */}
+                  {/* Row 1: source badge + project + timestamp + download icon.
+                      Download is a real <button> nested inside a div-with-role
+                      (the row); clicking it stops propagation so the session
+                      isn't resumed. We also keep the icon hidden until row
+                      hover/focus so it doesn't clutter at-rest visuals. */}
                   <div className="flex items-center gap-2 mb-1">
                     {isSpaiglass ? (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-emerald-500 text-white shadow-sm dark:bg-emerald-600">
@@ -196,6 +209,37 @@ export function SessionPickerModal({
                     <span className="text-[11px] text-slate-400 dark:text-slate-500 ml-auto whitespace-nowrap">
                       {formatTimestamp(s.lastTime)}
                     </span>
+                    <button
+                      type="button"
+                      title="Download session log (Markdown)"
+                      aria-label="Download session log"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const params = new URLSearchParams({ format: "md" });
+                        if (!isSpaiglass && s.encodedProject) {
+                          params.set("project", s.encodedProject);
+                        }
+                        const slug = connectorSlug || "";
+                        const url = slug
+                          ? `/vm/${slug}/api/sessions/${encodeURIComponent(
+                              s.sessionId,
+                            )}/download?${params.toString()}`
+                          : `/api/sessions/${encodeURIComponent(
+                              s.sessionId,
+                            )}/download?${params.toString()}`;
+                        // Browser handles the download response. Anchor +
+                        // click avoids navigation away from the modal.
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.rel = "noopener";
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                      }}
+                      className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100"
+                    >
+                      <ArrowDownTrayIcon className="w-4 h-4" />
+                    </button>
                   </div>
 
                   {/* Row 2: last user message preview */}
@@ -225,7 +269,7 @@ export function SessionPickerModal({
                       </>
                     )}
                   </div>
-                </button>
+                </div>
               );
             })
           )}
