@@ -54,20 +54,21 @@ export function OutdatedBanner() {
   };
 
   return (
-    <div className="flex items-center gap-3 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-800/30 text-xs">
-      <span className="text-amber-700 dark:text-amber-300 font-medium flex-shrink-0">
-        Update available:
+    <div className="flex items-center gap-3 px-3 py-2 bg-amber-100 dark:bg-amber-500/25 border-b border-amber-300 dark:border-amber-500/50 text-xs">
+      <span className="text-amber-900 dark:text-amber-100 font-semibold flex-shrink-0">
+        ⚠ Update available:
       </span>
-      <span className="text-amber-700 dark:text-amber-300 flex-shrink-0">
+      <span className="text-amber-900 dark:text-amber-100 flex-shrink-0">
         VM is on{" "}
-        <code className="font-mono">{spaiglassVersion}</code>, latest is{" "}
-        <code className="font-mono">{latestSpaiglassVersion}</code>. Re-run the
-        installer on the VM:
+        <code className="font-mono font-semibold">{spaiglassVersion}</code>,
+        latest is{" "}
+        <code className="font-mono font-semibold">{latestSpaiglassVersion}</code>.
+        Re-run the installer on the VM:
       </span>
-      <code className="font-mono px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-900 dark:text-amber-100 truncate">
+      <code className="font-mono px-2 py-0.5 rounded bg-amber-200 dark:bg-amber-900/60 text-amber-900 dark:text-amber-50 truncate">
         curl -fsSL https://spaiglass.xyz/install.sh | bash
       </code>
-      <span className="text-amber-600 dark:text-amber-400 flex-shrink-0">
+      <span className="text-amber-800 dark:text-amber-200 flex-shrink-0">
         (Windows:{" "}
         <code className="font-mono">
           iwr https://spaiglass.xyz/install.ps1 -useb | iex
@@ -76,7 +77,7 @@ export function OutdatedBanner() {
       </span>
       <button
         onClick={dismiss}
-        className="ml-auto text-amber-500 hover:text-amber-700 dark:hover:text-amber-300 flex-shrink-0"
+        className="ml-auto text-amber-700 hover:text-amber-900 dark:text-amber-200 dark:hover:text-amber-50 flex-shrink-0 font-bold"
         title="Dismiss until next release"
       >
         ✕
