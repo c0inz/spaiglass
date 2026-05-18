@@ -3171,6 +3171,9 @@ app.get("/vm/:slug/api/__relay/fleet", async (c) => {
   const sharedConns = getSharedConnectorsForUser(user.id);
   const cm = getChannelManager();
 
+  const versionFor = (conn: { id: string; spaiglass_version: string | null }) =>
+    cm.getVersion(conn.id) ?? conn.spaiglass_version;
+
   const allConns = [
     ...ownedConns.map((conn) => ({
       id: conn.id,
@@ -3178,6 +3181,7 @@ app.get("/vm/:slug/api/__relay/fleet", async (c) => {
       displayName: connectorDisplayName(conn),
       role: "owner" as const,
       online: cm.isOnline(conn.id),
+      spaiglassVersion: versionFor(conn),
     })),
     ...sharedConns.map((conn) => ({
       id: conn.id,
@@ -3185,10 +3189,14 @@ app.get("/vm/:slug/api/__relay/fleet", async (c) => {
       displayName: connectorDisplayName(conn),
       role: conn.role,
       online: cm.isOnline(conn.id),
+      spaiglassVersion: versionFor(conn),
     })),
   ];
 
-  return c.json({ connectors: allConns });
+  return c.json({
+    connectors: allConns,
+    latestSpaiglassVersion: getLatestSpAIglassVersion(),
+  });
 });
 
 // Read the current connector's id, name, and custom display name. The chat
@@ -3199,6 +3207,12 @@ app.get("/vm/:slug/api/__relay/self", async (c) => {
   const auth = await vmAuth(c);
   if (auth instanceof Response) return auth;
   const { user, connector, role } = auth;
+  // Version: prefer the live in-memory version (freshest); fall back to the
+  // last-persisted DB value so a temporarily-offline VM still surfaces a
+  // banner when it's behind. Compare against the relay's latest release.
+  const cm = getChannelManager();
+  const spaiglassVersion =
+    cm.getVersion(connector.id) ?? connector.spaiglass_version;
   return c.json({
     id: connector.id,
     name: connector.name,
@@ -3209,6 +3223,8 @@ app.get("/vm/:slug/api/__relay/self", async (c) => {
     customDisplayName: connector.display_name ?? null,
     role,
     ownerLogin: user.github_login,
+    spaiglassVersion,
+    latestSpaiglassVersion: getLatestSpAIglassVersion(),
   });
 });
 

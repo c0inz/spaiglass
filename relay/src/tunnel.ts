@@ -15,6 +15,7 @@ import {
   getConnectorById,
   touchConnector,
   updateConnectorHints,
+  updateConnectorVersion,
   getConnectorAccess,
   type ConnectorRole,
 } from "./db.ts";
@@ -379,9 +380,13 @@ export function handleConnectorWs() {
 
         // Register the connector channel; record the spaiglass install version
         // the VM is running so the dashboard can show an out-of-date banner.
+        // Persist the version to the DB too so offline VMs still surface as
+        // "out of date" — the in-memory ConnectorManager forgets the version
+        // on disconnect.
         const version = (typeof msg.spaiglassVersion === "string" && msg.spaiglassVersion) || "unknown";
         cm.register(connector.id, connector.user_id, ws, version);
         touchConnector(connector.id);
+        updateConnectorVersion(connector.id, version);
 
         // Persist SSH discovery hints if the connector reported them. Used by
         // the fleet-rollout script to update VMs without a hard-coded

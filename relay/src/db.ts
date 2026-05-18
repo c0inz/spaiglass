@@ -117,11 +117,15 @@ export function initDb(path = "./relay.db"): Database.Database {
   }
   // SSH discovery hints — populated by the connector on auth so the
   // fleet-rollout script can SSH into VMs without a hard-coded inventory.
+  // spaiglass_version is the install version the connector last reported
+  // (also captured in-memory by ConnectorManager for online VMs, but
+  // persisted here so the dashboard can flag offline VMs as out of date).
   for (const stmt of [
     "ALTER TABLE connectors ADD COLUMN vm_lan_ip TEXT",
     "ALTER TABLE connectors ADD COLUMN vm_hostname TEXT",
     "ALTER TABLE connectors ADD COLUMN vm_ssh_user TEXT",
     "ALTER TABLE connectors ADD COLUMN vm_platform TEXT",
+    "ALTER TABLE connectors ADD COLUMN spaiglass_version TEXT",
   ]) {
     try {
       db.exec(stmt);
@@ -231,6 +235,11 @@ export interface Connector {
   vm_port: number;
   last_seen: string | null;
   created_at: string;
+  /** SpAIglass install version the connector reported on its last auth.
+   *  Null for connectors that have never connected (or only connected on
+   *  pre-version-tracking relay builds). Online version always comes from
+   *  ConnectorManager — this column is the offline fallback. */
+  spaiglass_version: string | null;
 }
 
 /** Returns display_name if set, otherwise falls back to name. */
@@ -245,7 +254,7 @@ export function createConnector(userId: string, name: string): Connector & { raw
   getDb().prepare("INSERT INTO connectors (id, user_id, name, token) VALUES (?, ?, ?, ?)")
     .run(id, userId, name, tokenHash);
   // token column now stores the hash; rawToken is returned once for display
-  return { id, user_id: userId, name, display_name: null, token: tokenHash, rawToken, vm_host: null, vm_port: 8080, last_seen: null, created_at: new Date().toISOString() };
+  return { id, user_id: userId, name, display_name: null, token: tokenHash, rawToken, vm_host: null, vm_port: 8080, last_seen: null, created_at: new Date().toISOString(), spaiglass_version: null };
 }
 
 /** Update the user-editable display name. Null clears it (falls back to name). */
@@ -354,6 +363,23 @@ export function updateConnectorHints(
   getDb()
     .prepare(`UPDATE connectors SET ${sets.join(", ")} WHERE id = ?`)
     .run(...args);
+}
+
+/**
+ * Persist the spaiglass install version reported by a connector on auth.
+ * Online version is also held in-memory by ConnectorManager — this column
+ * is the offline fallback so the fleet dashboard can flag "out of date"
+ * for VMs that aren't currently connected.
+ *
+ * "unknown" is treated as no-update — pre-version-tracking installs report
+ * this string, and we'd rather keep a previously-known version than blow
+ * it away with a placeholder.
+ */
+export function updateConnectorVersion(id: string, version: string): void {
+  if (!version || version === "unknown") return;
+  getDb()
+    .prepare("UPDATE connectors SET spaiglass_version = ? WHERE id = ?")
+    .run(version, id);
 }
 
 // --- Agent Keys ---

@@ -2,6 +2,7 @@ import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import { ChatPage } from "./components/ChatPage";
 import { RoleResolver } from "./components/RoleResolver";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { OutdatedBanner } from "./components/OutdatedBanner";
 import { SettingsProvider } from "./contexts/SettingsContext";
 
 // Routing notes:
@@ -21,6 +22,7 @@ function App() {
         <Router
           basename={(window as Window & { __SG_BASE?: string }).__SG_BASE || ""}
         >
+          <OutdatedBanner />
           <Routes>
             <Route path="/projects/*" element={<ChatPage />} />
             <Route path="*" element={<RoleResolver />} />

@@ -49,6 +49,12 @@ export function connectorRoutes(): Hono<RelayEnv> {
     const shared = getSharedConnectorsForUser(user.id);
     const cm = getChannelManager();
 
+    // Version precedence: in-memory (current auth, freshest) → DB column
+    // (last reported, survives offline). Null only when a connector has
+    // never authenticated.
+    const versionFor = (conn: { id: string; spaiglass_version: string | null }) =>
+      cm.getVersion(conn.id) ?? conn.spaiglass_version;
+
     const owned = connectors.map((conn) => ({
       id: conn.id,
       name: conn.name,
@@ -57,7 +63,7 @@ export function connectorRoutes(): Hono<RelayEnv> {
       online: cm.isOnline(conn.id),
       lastSeen: conn.last_seen,
       createdAt: conn.created_at,
-      spaiglassVersion: cm.getVersion(conn.id),
+      spaiglassVersion: versionFor(conn),
     }));
 
     const sharedOut = shared.map((conn) => ({
@@ -69,7 +75,7 @@ export function connectorRoutes(): Hono<RelayEnv> {
       online: cm.isOnline(conn.id),
       lastSeen: conn.last_seen,
       createdAt: conn.created_at,
-      spaiglassVersion: cm.getVersion(conn.id),
+      spaiglassVersion: versionFor(conn),
     }));
 
     // Backwards compat: legacy clients expect a flat array. Keep the flat
