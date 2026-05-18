@@ -3,6 +3,8 @@
  * Handles loading and parsing specific conversation files
  */
 
+import { promises as fs } from "node:fs";
+import { join } from "node:path";
 import type { RawHistoryLine } from "./parser.ts";
 import type { ConversationHistory } from "../../shared/types.ts";
 import type { Frame } from "../../shared/frames.ts";
@@ -16,9 +18,26 @@ import { validateEncodedProjectName } from "./pathUtils.ts";
 import { readTextFile, exists } from "../utils/fs.ts";
 import { getHomeDir } from "../utils/os.ts";
 import { FrameEmitter, type SdkMessageLike } from "../session/frame-emitter.ts";
+import {
+  SESSIONS_ROOT,
+  type SessionMeta,
+} from "../session/persistence.ts";
 
 /**
- * Load a specific conversation by session ID
+ * Load a specific conversation by session ID.
+ *
+ * Two-tier resolution:
+ *   1. **Spaiglass-native** (preferred). If we own this session — i.e. there
+ *      is a `~/.spaiglass/sessions/<tuple>/meta.json` whose `claudeSessionId`
+ *      matches `sessionId` — we serve the persisted Frame[] verbatim from
+ *      `frames.jsonl`. That preserves every spaiglass-emitted frame
+ *      (`file_delivery`, `context_file`, `interactive_*`, populated
+ *      `session_init`, ...) which the SDK JSONL does not carry.
+ *   2. **Claude-CLI fallback**. If no spaiglass record exists (e.g. the
+ *      session was created by `claude` directly, or pre-dates the
+ *      persistence layer), replay `~/.claude/projects/<encoded>/<id>.jsonl`
+ *      through `FrameEmitter.emitFromSdkMessage`. This loses spaiglass-only
+ *      frame types but keeps cross-tool sessions visible.
  */
 export async function loadConversation(
   encodedProjectName: string,
@@ -33,30 +52,113 @@ export async function loadConversation(
     throw new Error("Invalid session ID format");
   }
 
-  // Get home directory
+  // Tier 1: spaiglass-native frames.jsonl, if we own this session.
+  const spaiglassNative = await loadSpaiglassNative(sessionId);
+  if (spaiglassNative) return spaiglassNative;
+
+  // Tier 2: Claude-CLI JSONL replay (legacy / non-owned sessions).
   const homeDir = getHomeDir();
   if (!homeDir) {
     throw new Error("Home directory not found");
   }
 
-  // Build file path
   const historyDir = `${homeDir}/.claude/projects/${encodedProjectName}`;
   const filePath = `${historyDir}/${sessionId}.jsonl`;
 
-  // Check if file exists before trying to read it
   if (!(await exists(filePath))) {
-    return null; // Session not found
+    return null;
   }
 
+  return parseConversationFile(filePath, sessionId);
+}
+
+/**
+ * Walk `~/.spaiglass/sessions/*` looking for a `meta.json` whose
+ * `claudeSessionId === sessionId`. If found, slurp `frames.jsonl` and
+ * hand it back as the canonical history. Returns null if no spaiglass
+ * record owns this sessionId, so callers can fall through to the
+ * SDK-replay path.
+ */
+async function loadSpaiglassNative(
+  sessionId: string,
+): Promise<ConversationHistory | null> {
+  let entries: string[];
   try {
-    const conversationHistory = await parseConversationFile(
-      filePath,
-      sessionId,
-    );
-    return conversationHistory;
-  } catch (error) {
-    throw error; // Re-throw any parsing errors
+    entries = await fs.readdir(SESSIONS_ROOT);
+  } catch {
+    return null;
   }
+
+  for (const entry of entries) {
+    const metaPath = join(SESSIONS_ROOT, entry, "meta.json");
+    let meta: SessionMeta;
+    try {
+      const raw = await fs.readFile(metaPath, "utf8");
+      meta = JSON.parse(raw) as SessionMeta;
+    } catch {
+      continue;
+    }
+    if (meta.claudeSessionId !== sessionId) continue;
+
+    // Match. Read the persisted frames.
+    const framesPath = join(SESSIONS_ROOT, entry, "frames.jsonl");
+    let raw: string;
+    try {
+      raw = await fs.readFile(framesPath, "utf8");
+    } catch {
+      // Meta exists but no frames yet — treat as empty session, not as
+      // "not found", so the caller doesn't fall back to the SDK replay
+      // (which would risk producing a divergent shape).
+      return {
+        sessionId,
+        frames: [],
+        metadata: {
+          startTime: new Date(meta.createdAt).toISOString(),
+          endTime: new Date(meta.lastActivity).toISOString(),
+          messageCount: 0,
+        },
+      };
+    }
+
+    const frames: Frame[] = [];
+    let messageCount = 0;
+    let firstTs: number | null = null;
+    let lastTs: number | null = null;
+
+    for (const line of raw.split("\n")) {
+      if (!line) continue;
+      let f: Frame;
+      try {
+        f = JSON.parse(line) as Frame;
+      } catch (err) {
+        logger.history.error("Skipping malformed frame in {path}: {msg}", {
+          path: framesPath,
+          msg: String(err),
+        });
+        continue;
+      }
+      frames.push(f);
+      if (typeof f.ts === "number") {
+        if (firstTs === null || f.ts < firstTs) firstTs = f.ts;
+        if (lastTs === null || f.ts > lastTs) lastTs = f.ts;
+      }
+      if (f.type === "user_message" || f.type === "assistant_message") {
+        messageCount++;
+      }
+    }
+
+    return {
+      sessionId,
+      frames: frames as unknown[],
+      metadata: {
+        startTime: new Date(firstTs ?? meta.createdAt).toISOString(),
+        endTime: new Date(lastTs ?? meta.lastActivity).toISOString(),
+        messageCount,
+      },
+    };
+  }
+
+  return null;
 }
 
 /**

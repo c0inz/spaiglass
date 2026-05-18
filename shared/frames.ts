@@ -54,6 +54,22 @@ export interface SessionInitFrame extends BaseFrame {
   roleFile: string | null;
   workingDirectory: string;
   slashCommands: string[];
+  /** Current branch of the workingDirectory git repo, if any. Computed at
+   *  session-start; not refreshed mid-session. Used by the chat header
+   *  status badge to mirror the CLI's status-line readout. */
+  gitBranch?: string;
+  /** Output-style override declared in the role frontmatter (or settings),
+   *  if any. Same purpose as `outputStyle` in the CLI status line. */
+  outputStyle?: string;
+  /** The actual SDK `thinking` config the backend resolved to and spawned
+   *  the SDK with — after merging the user's UI thinkingLevel ("auto"
+   *  defers to ~/.claude/settings.json: alwaysThinkingEnabled +
+   *  MAX_THINKING_TOKENS). The header badge displays this so the user sees
+   *  the effective budget, not just the UI label. */
+  resolvedThinking?: {
+    type: "adaptive" | "enabled" | "disabled";
+    budgetTokens?: number;
+  };
 }
 
 /**
@@ -90,6 +106,16 @@ export type UserContentBlock =
 export interface UserMessageFrame extends BaseFrame {
   type: "user_message";
   content: UserContentBlock[];
+  /**
+   * Echo of the originating client's local id, when the message was sent
+   * from a SpaiGlass UI. The sending client uses this to deduplicate its
+   * own optimistic local frame against the round-tripped echo. Other
+   * clients sharing the same session ignore the field and render the
+   * frame normally — that's how multi-device session mirroring works.
+   * Absent for messages that did not originate in a UI (e.g. a queued
+   * prompt drained server-side, or a hidden continuation).
+   */
+  clientMessageId?: string;
 }
 
 // ---------------------------------------------------------------------------

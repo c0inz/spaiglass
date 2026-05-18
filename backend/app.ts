@@ -16,6 +16,7 @@ import { handleProjectsRequest } from "./handlers/projects.ts";
 import { handleHistoriesRequest } from "./handlers/histories.ts";
 import { handleClaudeSessionsRequest } from "./handlers/claude-sessions.ts";
 import { handleConversationRequest } from "./handlers/conversations.ts";
+import { handleSessionDownloadRequest } from "./handlers/session-download.ts";
 import { handleChatRequest } from "./handlers/chat.ts";
 import { handleAbortRequest } from "./handlers/abort.ts";
 import { handleConfigRequest, handleHealthRequest } from "./handlers/config.ts";
@@ -54,6 +55,7 @@ import {
   handleUpdateRole,
   handleDeleteRole,
 } from "./handlers/roles.ts";
+import { handleGetSkills } from "./handlers/skills.ts";
 import { handleRegisterProject } from "./handlers/register.ts";
 import { handleUnregisterProject } from "./handlers/unregister.ts";
 import { handleDoctorRequest } from "./handlers/doctor.ts";
@@ -158,6 +160,12 @@ export function createApp(
     handleSessionContextFilesRequest(c),
   );
 
+  // Session-log download — Markdown transcript or raw frames.jsonl.
+  // Triggered from the Session Picker's per-row download button.
+  app.get("/api/sessions/:sessionId/download", (c) =>
+    handleSessionDownloadRequest(c),
+  );
+
   // Queue — per-project prompt scratchpad
   app.get("/api/session/queue", (c) => handleSessionQueueListRequest(c));
   app.post("/api/session/queue", (c) => handleSessionQueueAddRequest(c));
@@ -176,6 +184,11 @@ export function createApp(
 
   // Plugins & roles
   app.get("/api/plugins", (c) => handleGetPlugins(c));
+
+  // Plugin skills — read frontmatter of every user-invocable SKILL.md
+  // under ~/.claude/plugins/marketplaces/. Powers the chip row above the
+  // chat input.
+  app.get("/api/skills", (c) => handleGetSkills(c));
   app.get("/api/roles", (c) => handleGetRoles(c));
   app.post("/api/roles", (c) => handleCreateRole(c));
   app.put("/api/roles/:name", (c) => handleUpdateRole(c));

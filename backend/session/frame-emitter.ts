@@ -64,6 +64,26 @@ export interface EmitContext {
   nextSeq: () => number;
   /** Wall-clock ms stamped on every frame from this call. */
   ts: number;
+  /**
+   * For SDK "user" messages echoed back after we queued an input, this is
+   * the originating UI's local message id (so the originating client can
+   * dedupe its optimistic add against the echo). Only set on the call that
+   * processes that specific user echo; ignored elsewhere.
+   */
+  userClientMessageId?: string;
+  /**
+   * Set to true when this emitter call comes from the live SDK consumption
+   * loop in SessionManager. `SessionManager.sendMessage` is the
+   * authoritative emitter of UserMessageFrame on the live path (so every
+   * prompt lands in frames.jsonl and broadcasts to all consumers at queue
+   * time, not whenever-the-SDK-echoes-it). In that case the SDK-echo
+   * user_message emission below would just produce a duplicate row.
+   *
+   * Left false/undefined for history replay (`parseConversationFile`) and
+   * unit tests, where the SDK JSONL is the only source of truth for user
+   * turns and the echo path MUST emit.
+   */
+  liveSdkPath?: boolean;
 }
 
 /**
@@ -480,6 +500,11 @@ export class FrameEmitter {
     // Claude). Handle both.
 
     if (typeof rawContent === "string") {
+      // On the live SDK path, SessionManager.sendMessage already emitted the
+      // canonical UserMessageFrame at queue time — emitting another here
+      // would duplicate the row. On replay (and in unit tests) there is no
+      // such upstream emit, so the SDK echo is our only source of truth.
+      if (ctx.liveSdkPath) return frames;
       const frame: UserMessageFrame = {
         id: shortId(),
         seq: ctx.nextSeq(),
@@ -515,7 +540,10 @@ export class FrameEmitter {
       // for when we wire them.
     }
 
-    if (userBlocks.length > 0) {
+    // Same reasoning as the string-content branch: on live SDK consumption
+    // the canonical UserMessageFrame already came from sendMessage; emitting
+    // a second one here would duplicate. On replay / tests we must emit.
+    if (!ctx.liveSdkPath && userBlocks.length > 0) {
       const userFrame: UserMessageFrame = {
         id: shortId(),
         seq: ctx.nextSeq(),
@@ -611,6 +639,9 @@ export class FrameEmitter {
       roleFile: string | null;
       workingDirectory: string;
       slashCommands: string[];
+      gitBranch?: string;
+      outputStyle?: string;
+      resolvedThinking?: SessionInitFrame["resolvedThinking"];
     },
     ctx: EmitContext,
   ): SessionInitFrame {
@@ -653,6 +684,43 @@ export class FrameEmitter {
       category,
       message,
       scopeId,
+    };
+  }
+
+  /**
+   * Manually emit a UserMessageFrame for a UI-originated input. Called by
+   * `SessionManager.sendMessage` so every typed prompt is persisted to
+   * `frames.jsonl` and broadcast to all session consumers — cross-device
+   * mirroring + reload-survives-history both depend on this.
+   *
+   * The Claude Code SDK does not reliably echo string-content user inputs
+   * back through `emitFromSdkMessage`, so we cannot rely on the SDK round
+   * trip to produce these frames. This is the authoritative source.
+   */
+  public emitUiUserMessage(
+    text: string,
+    attachments: { path: string; filename: string; sizeBytes?: number }[],
+    ctx: EmitContext,
+    clientMessageId?: string,
+  ): UserMessageFrame {
+    const content: UserMessageFrame["content"] = [];
+    const trimmed = text.trim();
+    if (trimmed) content.push({ type: "text", text: trimmed });
+    for (const a of attachments) {
+      content.push({
+        type: "file",
+        path: a.path,
+        filename: a.filename,
+        ...(a.sizeBytes !== undefined ? { sizeBytes: a.sizeBytes } : {}),
+      });
+    }
+    return {
+      id: shortId(),
+      seq: ctx.nextSeq(),
+      ts: ctx.ts,
+      type: "user_message",
+      content,
+      ...(clientMessageId ? { clientMessageId } : {}),
     };
   }
 

@@ -142,6 +142,29 @@ export function createWSHandler(sessionManager: SessionManager) {
 // State storage — Hono WS contexts don't have a state property
 const wsStateMap = new WeakMap<WSContext, WSState>();
 
+type PermissionModeWire =
+  | "default"
+  | "plan"
+  | "acceptEdits"
+  | "bypassPermissions";
+type ThinkingLevelWire = "off" | "brief" | "extended";
+
+function parsePermissionMode(v: unknown): PermissionModeWire | undefined {
+  if (
+    v === "default" ||
+    v === "plan" ||
+    v === "acceptEdits" ||
+    v === "bypassPermissions"
+  )
+    return v;
+  return undefined;
+}
+
+function parseThinkingLevel(v: unknown): ThinkingLevelWire | undefined {
+  if (v === "off" || v === "brief" || v === "extended") return v;
+  return undefined;
+}
+
 async function handleSessionStart(
   ws: WSContext,
   state: WSState,
@@ -155,6 +178,8 @@ async function handleSessionStart(
   const workingDirectory = msg.workingDirectory as string;
   const contextContent = msg.contextContent as string | undefined;
   const resumeSessionId = msg.resumeSessionId as string | undefined;
+  const permissionMode = parsePermissionMode(msg.permissionMode);
+  const thinkingLevel = parseThinkingLevel(msg.thinkingLevel);
 
   if (!workingDirectory) {
     ws.send(
@@ -194,6 +219,7 @@ async function handleSessionStart(
     consumer,
     contextContent,
     resumeSessionId,
+    { permissionMode, thinkingLevel },
   );
 
   // Session info is also sent by the manager when it receives the init message,
@@ -245,11 +271,15 @@ async function handleSessionRestart(
     },
   };
 
+  const permissionMode = parsePermissionMode(msg.permissionMode);
+  const thinkingLevel = parseThinkingLevel(msg.thinkingLevel);
+
   const info = await sessionManager.restartSession(
     state.userId,
     workingDirectory,
     roleFile,
     consumer,
+    { permissionMode, thinkingLevel },
   );
 
   ws.send(
@@ -377,6 +407,9 @@ async function handleMessage(
 
   const content = (msg.content as string) || "";
   const attachments = (msg.attachments as string[]) || undefined;
+  const clientMessageId =
+    typeof msg.clientMessageId === "string" ? msg.clientMessageId : undefined;
+  const hideUserMessage = msg.hideUserMessage === true;
 
   logger.app.info(
     "WS message received: consumer={consumerId} len={len} attachments={count}",
@@ -393,5 +426,7 @@ async function handleMessage(
     state.roleFile ?? "",
     content,
     attachments,
+    clientMessageId,
+    hideUserMessage,
   );
 }

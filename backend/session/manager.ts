@@ -23,7 +23,9 @@ const { startup } =
     }>;
   };
 import { randomUUID } from "node:crypto";
-import { promises as fs } from "node:fs";
+import { promises as fs, statSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { homedir } from "node:os";
 import {
   basename,
   extname,
@@ -74,6 +76,83 @@ interface PendingToolEntry {
 
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 
+/**
+ * Resolve the SDK `thinking` config from the user's ~/.claude/settings.json.
+ * Used when the SpaiGlass UI thinkingLevel is "auto" — defers to whatever
+ * the fleet-wide settings baseline declares.
+ *
+ * Resolution order (mirrors what the Claude Code CLI itself does when no
+ * explicit `thinking` option is passed):
+ *   1. settings.json env.MAX_THINKING_TOKENS > 0 → enabled with that budget
+ *   2. settings.json alwaysThinkingEnabled === true → adaptive
+ *   3. neither → disabled
+ */
+function resolveThinkingFromSettings(): {
+  type: "adaptive" | "enabled" | "disabled";
+  budgetTokens?: number;
+} {
+  try {
+    const raw = readFileSync(
+      `${homedir()}/.claude/settings.json`,
+      "utf8",
+    );
+    const cfg = JSON.parse(raw) as {
+      alwaysThinkingEnabled?: boolean;
+      env?: { MAX_THINKING_TOKENS?: string | number };
+    };
+    const envBudget = cfg.env?.MAX_THINKING_TOKENS;
+    const budget =
+      typeof envBudget === "string"
+        ? parseInt(envBudget, 10)
+        : typeof envBudget === "number"
+          ? envBudget
+          : NaN;
+    if (Number.isFinite(budget) && budget > 0) {
+      return { type: "enabled", budgetTokens: budget };
+    }
+    if (cfg.alwaysThinkingEnabled === true) {
+      return { type: "adaptive" };
+    }
+  } catch {
+    // settings.json missing or unparsable — fall through to disabled.
+  }
+  return { type: "disabled" };
+}
+
+/**
+ * Best-effort current git branch for `cwd`. Returns undefined if cwd isn't
+ * a git working tree or git is unavailable. Surfaced on session_init so the
+ * SpaiGlass header status badge can mirror the CLI status-line readout.
+ */
+function computeGitBranch(cwd: string): string | undefined {
+  try {
+    // `symbolic-ref --short HEAD` returns the branch name on a normal
+    // checkout, fails on detached-HEAD; fall back to a short SHA in that
+    // case so the badge still shows something useful.
+    return execFileSync("git", ["-C", cwd, "symbolic-ref", "--short", "HEAD"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 1500,
+    }).trim() || undefined;
+  } catch {
+    try {
+      return (
+        execFileSync(
+          "git",
+          ["-C", cwd, "rev-parse", "--short", "HEAD"],
+          {
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"],
+            timeout: 1500,
+          },
+        ).trim() || undefined
+      );
+    } catch {
+      return undefined;
+    }
+  }
+}
+
 function mediaTypeForExt(ext: string): string {
   const map: Record<string, string> = {
     ".png": "image/png",
@@ -102,6 +181,27 @@ export interface SessionInfo {
   consumerCount: number;
 }
 
+/**
+ * Per-session UI preferences forwarded from the frontend on session_start
+ * and session_restart. Used to configure the SDK at startup time. Mid-
+ * session reconfiguration isn't supported by the SDK — a /reset / explicit
+ * restart applies new values; the frontend emits a notice on toggle.
+ */
+export interface SessionPrefs {
+  permissionMode?: "default" | "plan" | "acceptEdits" | "bypassPermissions";
+  /**
+   * - off       → SDK thinking disabled
+   * - brief     → SDK thinking enabled, 5k token budget
+   * - extended  → SDK thinking enabled, 32k token budget
+   * - auto      → derived from ~/.claude/settings.json: env.MAX_THINKING_TOKENS
+   *               (if >0) becomes a fixed budget, else alwaysThinkingEnabled
+   *               flips on adaptive, else disabled. This is the default UI
+   *               value so the fleet-wide settings.json baseline reaches
+   *               SpaiGlass users by default.
+   */
+  thinkingLevel?: "off" | "brief" | "extended" | "auto";
+}
+
 interface Session {
   id: string;
   userId: string;
@@ -126,6 +226,26 @@ interface Session {
   // --- On-disk transcript (frames.jsonl + meta.json). May be null only
   //     while async open is still in flight; broadcastFrame tolerates that.
   persist: SessionPersistence | null;
+  /**
+   * Pending client-message-ids keyed by SDKUserMessage.uuid. Populated
+   * when a UI sends a message; consumed on the SDK echo so the resulting
+   * UserMessageFrame can carry the client id back. Multi-device session
+   * mirroring uses the id to dedupe each client's local optimistic add
+   * against its own echo while still rendering echoes from other clients.
+   */
+  pendingClientMessageIds: Map<string, string>;
+  /** SDK thinking config the manager resolved at startup. Surfaced on
+   *  the session_init frame so the SpaiGlass header can show the actual
+   *  budget the SDK is running with (matters when thinkingLevel="auto"
+   *  and we derived the value from ~/.claude/settings.json). */
+  resolvedThinking?: {
+    type: "adaptive" | "enabled" | "disabled";
+    budgetTokens?: number;
+  };
+  /** Current git branch of workingDirectory (computed once at startSession). */
+  gitBranch?: string;
+  /** Output style override from role frontmatter (computed at startSession). */
+  outputStyle?: string;
 }
 
 export class SessionManager {
@@ -159,6 +279,7 @@ export class SessionManager {
     consumer: SessionConsumer,
     contextContent?: string,
     resumeSessionId?: string,
+    prefs?: SessionPrefs,
   ): Promise<SessionInfo> {
     const key = this.sessionKey(userId, workingDirectory, roleFile);
 
@@ -174,6 +295,7 @@ export class SessionManager {
         consumer,
         contextContent,
         resumeSessionId,
+        prefs,
       );
     }
 
@@ -259,6 +381,7 @@ export class SessionManager {
       pendingToolRequests: new Map(),
       emitter: new FrameEmitter(),
       persist: null,
+      pendingClientMessageIds: new Map(),
     };
 
     this.sessions.set(key, session);
@@ -291,6 +414,7 @@ export class SessionManager {
       workingDirectory,
       contextContent,
       resumeSessionId,
+      prefs,
     );
 
     const info = this.toSessionInfo(session);
@@ -320,6 +444,7 @@ export class SessionManager {
     workingDirectory: string,
     contextContent?: string,
     resumeSessionId?: string,
+    prefs?: SessionPrefs,
   ): Promise<void> {
     try {
       logger.app.info("Starting warm session for {sessionId}...", {
@@ -370,14 +495,57 @@ export class SessionManager {
       // behaviour. If the transcript ends on an unanswered user turn, Claude
       // will answer it on attach; that's the same as the terminal and the
       // user explicitly signed off on this (2026-04-24).
+      // Resolve the effective permission mode. Precedence: explicit user
+      // pref from this WS session > role-file frontmatter > "bypassPermissions"
+      // (legacy default — fleet was provisioned this way).
+      const effectivePermissionMode: SessionPrefs["permissionMode"] =
+        prefs?.permissionMode ??
+        (fm.permissionMode as SessionPrefs["permissionMode"] | undefined) ??
+        "bypassPermissions";
+
+      // `allowDangerouslySkipPermissions` is required by the SDK only when
+      // we actually want bypassPermissions — passing it with mode="default"
+      // (or "plan"/"acceptEdits") was the bug that made the UI display
+      // "Normal mode" while behavior was still bypass. Gate it on mode.
+      const allowDangerouslySkipPermissions =
+        effectivePermissionMode === "bypassPermissions";
+
+      // Map the UI thinking level enum to the SDK's `thinking` option.
+      // - off       → disabled
+      // - brief     → enabled, 5k budget
+      // - extended  → enabled, 32k budget
+      // - auto      → derived from ~/.claude/settings.json
+      //                 (alwaysThinkingEnabled / env.MAX_THINKING_TOKENS)
+      // The default UI value is "auto", which makes the fleet-wide
+      // settings.json baseline reach SpaiGlass users without forcing them
+      // to discover the toggle. Per-session UI choice still overrides.
+      const thinkingLevel = prefs?.thinkingLevel ?? "auto";
+      const thinking =
+        thinkingLevel === "extended"
+          ? { type: "enabled" as const, budgetTokens: 32000 }
+          : thinkingLevel === "brief"
+            ? { type: "enabled" as const, budgetTokens: 5000 }
+            : thinkingLevel === "off"
+              ? ({ type: "disabled" as const })
+              : resolveThinkingFromSettings();
+      // Cache for the init-frame side-channel: the header status badge
+      // shows the actual budget, not just the UI label.
+      session.resolvedThinking = thinking;
+      // Compute git branch + output-style for the header status badge.
+      // Both are best-effort; absence is fine.
+      session.gitBranch = computeGitBranch(workingDirectory);
+      session.outputStyle =
+        typeof fm.outputStyle === "string" ? fm.outputStyle : undefined;
+
       const warmSession = await startup({
         options: {
           cwd: workingDirectory,
           pathToClaudeCodeExecutable: this.cliPath,
-          permissionMode:
-            (fm.permissionMode as "bypassPermissions" | undefined) ||
-            ("bypassPermissions" as const),
-          allowDangerouslySkipPermissions: true,
+          permissionMode: effectivePermissionMode,
+          ...(allowDangerouslySkipPermissions
+            ? { allowDangerouslySkipPermissions: true }
+            : {}),
+          thinking,
           mcpServers,
           ...(resumeSessionId ? { resume: resumeSessionId } : {}),
           ...(fm.tools ? { allowedTools: fm.tools } : {}),
@@ -471,6 +639,9 @@ export class SessionManager {
               roleFile: session.roleFile,
               workingDirectory: session.workingDirectory,
               slashCommands: session.slashCommands,
+              gitBranch: session.gitBranch,
+              outputStyle: session.outputStyle,
+              resolvedThinking: session.resolvedThinking,
             },
             initCtx,
           );
@@ -482,7 +653,26 @@ export class SessionManager {
         }
 
         // All other SDK messages go through emitFromSdkMessage.
+        // Mark this as the live SDK path so the emitter skips its own
+        // user_message emission for user-input echoes — sendMessage above
+        // already authored the canonical UserMessageFrame at queue time.
+        // Replay (parseConversationFile) and unit tests leave liveSdkPath
+        // unset so they still get user_message frames from the SDK shape.
         const ctx = this.emitContext(session);
+        ctx.liveSdkPath = true;
+        // If this is a "user" echo of a UI-originated input, attach the
+        // pending clientMessageId so the resulting frame carries the
+        // round-trip id back. Look up by SDK uuid (set when we queued).
+        if (sdkMessage.type === "user") {
+          const sdkUuid = (sdkMessage as { uuid?: string }).uuid;
+          if (sdkUuid) {
+            const clientId = session.pendingClientMessageIds.get(sdkUuid);
+            if (clientId) {
+              ctx.userClientMessageId = clientId;
+              session.pendingClientMessageIds.delete(sdkUuid);
+            }
+          }
+        }
         const frames = session.emitter.emitFromSdkMessage(
           sdkMessage as unknown as Parameters<
             FrameEmitter["emitFromSdkMessage"]
@@ -600,6 +790,8 @@ export class SessionManager {
     roleFile: string,
     content: string,
     attachments?: string[],
+    clientMessageId?: string,
+    hideUserMessage?: boolean,
   ): Promise<void> {
     const key = this.sessionKey(userId, workingDirectory, roleFile);
     const session = this.sessions.get(key);
@@ -697,6 +889,44 @@ export class SessionManager {
       uuid: randomUUID(),
       session_id: session.sessionId || session.id,
     } as SDKUserMessage;
+
+    if (clientMessageId && userMessage.uuid) {
+      session.pendingClientMessageIds.set(userMessage.uuid, clientMessageId);
+    }
+
+    // Authoritative UserMessageFrame: emit + broadcast + persist immediately
+    // when the prompt is queued. Without this, typed prompts existed only
+    // as client-side optimistic frames in the originating browser, never
+    // reached frames.jsonl, and disappeared on reload. Sibling clients
+    // (mobile/desktop mirroring) also depend on this — their reducers see
+    // the message via the broadcast, since the SDK doesn't echo string
+    // inputs back reliably.
+    //
+    // Skipped when hideUserMessage is set (permission "continue" / plan
+    // "accept" — sent silently to the SDK without rendering as a user turn).
+    if (!hideUserMessage) {
+      const attachmentEntries = (attachments ?? []).map((path) => {
+        let sizeBytes: number | undefined;
+        try {
+          sizeBytes = statSync(path).size;
+        } catch {
+          sizeBytes = undefined;
+        }
+        return {
+          path,
+          filename: basename(path),
+          ...(sizeBytes !== undefined ? { sizeBytes } : {}),
+        };
+      });
+      const ctx = this.emitContext(session);
+      const uiUserFrame = session.emitter.emitUiUserMessage(
+        content,
+        attachmentEntries,
+        ctx,
+        clientMessageId,
+      );
+      this.broadcastFrame(session, uiUserFrame);
+    }
 
     session.queue.push(userMessage);
   }
@@ -890,6 +1120,7 @@ export class SessionManager {
     workingDirectory: string,
     roleFile: string,
     consumer: SessionConsumer,
+    prefs?: SessionPrefs,
     contextContent?: string,
   ): Promise<SessionInfo> {
     const key = this.sessionKey(userId, workingDirectory, roleFile);
@@ -900,6 +1131,8 @@ export class SessionManager {
       roleFile,
       consumer,
       contextContent,
+      undefined,
+      prefs,
     );
   }
 

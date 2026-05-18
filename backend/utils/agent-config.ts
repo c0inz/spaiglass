@@ -24,6 +24,11 @@ export interface AgentFrontmatter {
   maxTurns?: number;
   /** Thinking/effort config */
   effort?: string;
+  /** Claude Code output style (e.g. "concise", "verbose"); when omitted
+   *  Claude uses the project / global default. Surfaced on session_init
+   *  so the SpaiGlass header status badge can mirror the CLI status-line
+   *  `style:<name>` segment. */
+  outputStyle?: string;
 }
 
 /** Result of parsing an agent .md file */
