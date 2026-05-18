@@ -53,22 +53,25 @@ export function OutdatedBanner() {
     setDismissed(true);
   };
 
+  // Position fixed at top so the banner overlays the ChatPage layout
+  // (which fills h-[100dvh] and would push a normal-flow banner off-screen).
+  // High z-index keeps it above the chat header strip.
   return (
-    <div className="flex items-center gap-3 px-3 py-2 bg-amber-100 dark:bg-amber-500/25 border-b border-amber-300 dark:border-amber-500/50 text-xs">
-      <span className="text-amber-900 dark:text-amber-100 font-semibold flex-shrink-0">
+    <div className="fixed top-0 left-0 right-0 z-[100] flex items-center gap-3 px-3 py-2 bg-amber-100 dark:bg-amber-500/90 border-b border-amber-300 dark:border-amber-400 text-xs shadow-md">
+      <span className="text-amber-900 dark:text-amber-950 font-semibold flex-shrink-0">
         ⚠ Update available:
       </span>
-      <span className="text-amber-900 dark:text-amber-100 flex-shrink-0">
+      <span className="text-amber-900 dark:text-amber-950 flex-shrink-0">
         VM is on{" "}
         <code className="font-mono font-semibold">{spaiglassVersion}</code>,
         latest is{" "}
         <code className="font-mono font-semibold">{latestSpaiglassVersion}</code>.
         Re-run the installer on the VM:
       </span>
-      <code className="font-mono px-2 py-0.5 rounded bg-amber-200 dark:bg-amber-900/60 text-amber-900 dark:text-amber-50 truncate">
+      <code className="font-mono px-2 py-0.5 rounded bg-amber-200 dark:bg-amber-950/40 text-amber-900 dark:text-amber-950 truncate">
         curl -fsSL https://spaiglass.xyz/install.sh | bash
       </code>
-      <span className="text-amber-800 dark:text-amber-200 flex-shrink-0">
+      <span className="text-amber-800 dark:text-amber-950/80 flex-shrink-0">
         (Windows:{" "}
         <code className="font-mono">
           iwr https://spaiglass.xyz/install.ps1 -useb | iex
@@ -77,7 +80,7 @@ export function OutdatedBanner() {
       </span>
       <button
         onClick={dismiss}
-        className="ml-auto text-amber-700 hover:text-amber-900 dark:text-amber-200 dark:hover:text-amber-50 flex-shrink-0 font-bold"
+        className="ml-auto text-amber-700 hover:text-amber-900 dark:text-amber-950 dark:hover:text-black flex-shrink-0 font-bold text-base leading-none"
         title="Dismiss until next release"
       >
         ✕
