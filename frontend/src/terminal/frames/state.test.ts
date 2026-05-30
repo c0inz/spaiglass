@@ -442,4 +442,57 @@ describe("frame state reducer", () => {
     ).toBe(true);
     expect(shouldRenderInlineToolCard({ type: "text", text: "x" })).toBe(false);
   });
+
+  it("dedups a replayed frame at the boundary seq (no duplicate row)", () => {
+    // End the live run on a USER message so the boundary frame, if wrongly
+    // re-applied, adds a VISIBLE duplicate row — user rows never merge, unlike
+    // assistant rows which accumulate by messageId. This makes the test
+    // discriminate the off-by-one in the seq <= lastSeq dedup guard.
+    resetSeq();
+    let state = initialFrameState();
+    state = applyFrame(
+      state,
+      assistantMessage("a1", [{ type: "text", text: "hi" }]),
+    ); // seq 1
+    state = applyFrame(state, userMessage("u1", "thanks")); // seq 2
+    const rowsBefore = state.rows.length;
+    expect(state.lastSeq).toBe(2);
+
+    // Resume replay re-sends the boundary frame (seq === lastSeq). It has
+    // already been applied, so it must be a no-op.
+    state = applyFrame(state, userMessage("u1", "thanks", 2));
+
+    expect(state.rows.length).toBe(rowsBefore); // no duplicate user row
+    expect(state.lastSeq).toBe(2);
+  });
+
+  it("applies only post-cursor frames when a resume replay overlaps", () => {
+    // Live up to seq 2 (ending on a user message), then a resume replay that
+    // overlaps (1,2) and extends (3,4). Exactly the two new rows should land.
+    resetSeq();
+    let state = initialFrameState();
+    state = applyFrame(
+      state,
+      assistantMessage("a1", [{ type: "text", text: "answer 1" }]),
+    ); // seq 1
+    state = applyFrame(state, userMessage("u1", "first")); // seq 2
+    const rowsAfterLive = state.rows.length;
+
+    // Resume replay: seq 1,2 (already seen) then seq 3,4 (a new user+assistant
+    // turn). The boundary frame at seq 2 is a user row, so a broken dedup would
+    // duplicate it and inflate the count.
+    state = applyFrame(
+      state,
+      assistantMessage("a1", [{ type: "text", text: "answer 1" }], 1),
+    );
+    state = applyFrame(state, userMessage("u1", "first", 2));
+    state = applyFrame(state, userMessage("u2", "second", 3));
+    state = applyFrame(
+      state,
+      assistantMessage("a2", [{ type: "text", text: "answer 2" }], 4),
+    );
+
+    expect(state.rows.length).toBe(rowsAfterLive + 2); // exactly the 2 new rows
+    expect(state.lastSeq).toBe(4);
+  });
 });
