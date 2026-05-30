@@ -89,8 +89,15 @@ export async function handleFileReadRequest(c: Context) {
     const content = await readFile(resolved, "utf-8");
     return c.json({ content, path: filePath });
   } catch (err) {
-    const msg = (err as Error).message;
+    const e = err as NodeJS.ErrnoException;
+    const msg = e.message;
     if (msg.startsWith("Access denied")) return c.json({ error: msg }, 403);
+    // A missing file is a 404, not a server error. The role display reads
+    // candidate paths (native .claude/agents/ vs legacy agents/) and one is
+    // expected to be absent; returning 500 turned that into a console error.
+    if (e.code === "ENOENT") return c.json({ error: "File not found" }, 404);
+    if (e.code === "EISDIR")
+      return c.json({ error: "Path is a directory" }, 400);
     return c.json({ error: `Failed to read file: ${msg}` }, 500);
   }
 }
