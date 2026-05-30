@@ -28,7 +28,7 @@ A code audit (2026-05-30) found the feature largely built:
 
 ## Known / suspected gaps
 
-- **G1 — Page-reload frame-gap race (suspected):** between the history-endpoint read and the `startSession` re-attach, frames the host emits in that window could be missed (history snapshot is slightly stale; startSession streams from "now"). Needs a test to confirm whether it's real.
+- **G1 — Page-reload frame-gap race (CONFIRMED 2026-05-30, frontend-only fix):** `handleSessionStart` → `getOrCreateSession` attaches the consumer for *future* frames only — it does not replay. So a fresh page load relies on the history endpoint for scrollback and then `session_start` for live frames, leaving a race: frames the host emits between the history snapshot and the attach are missed. Only bites when reloading *while the host is actively streaming* (idle reload is fine; within-lifetime reconnect is fine — it uses `resume`). **Fix (frontend-only):** on reload-rejoin, send `resume{lastCursor: maxHistorySeq}` instead of `session_start`. For a live session this routes to `resumeFromCursor`, which reads disk `seq > cursor` and *then* attaches atomically (`manager.ts:982-994`) — no gap. The backend path already exists; only ChatPage's mount flow + the WS hook's cursor seeding need changing. Deployable via `deploy-relay.sh --frontend` (no fleet bun-binary rollout).
 - **G2 — No integration test** for `resumeFromCursor` (live buffer + disk fallback + cursor slicing) or for the frontend replay→dedup path. Buffer/reducer units are tested in isolation; the wiring is not.
 - **G3 — Terminology:** backend "cursor" vs frontend/reducer "seq" are the same value; cosmetic only. Out of scope unless it obstructs a fix.
 
