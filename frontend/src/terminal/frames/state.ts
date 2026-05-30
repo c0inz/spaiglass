@@ -178,9 +178,10 @@ export interface SessionSnapshot {
   outputStyle: string | null;
   /** SDK thinking config the backend resolved at startup. Drives the
    *  header status badge's `think:<budget>` segment. */
-  resolvedThinking:
-    | { type: "adaptive" | "enabled" | "disabled"; budgetTokens?: number }
-    | null;
+  resolvedThinking: {
+    type: "adaptive" | "enabled" | "disabled";
+    budgetTokens?: number;
+  } | null;
 }
 
 function emptySession(): SessionSnapshot {
@@ -367,34 +368,30 @@ export function applyFrame(state: FrameState, frame: Frame): FrameState {
     }
 
     case "assistant_message": {
-      // Check if a row with this messageId already exists.
+      // The Claude SDK (live and in the ~/.claude transcript) delivers ONE
+      // logical assistant message as MULTIPLE frames that share a messageId,
+      // each carrying the next content block(s) as they complete — e.g.
+      // thinking, then text, then tool_use arrive as three separate same-id
+      // frames. message.ids are unique per turn; they are NOT reused across
+      // turns (verified against an 8.8k-entry real transcript). So a same-id
+      // frame is always a continuation of the same row: ACCUMULATE its blocks
+      // in order. Replacing would drop the earlier blocks (the "messages
+      // appear then disappear" bug); appending a new row would fragment one
+      // turn into several (the "duplicate assistant turns" bug). Within-block
+      // text growth is handled separately by assistant_message_delta.
       const existingIdx = state.rows.findIndex(
         (r) => r.kind === "assistant" && r.messageId === frame.messageId,
       );
       if (existingIdx >= 0) {
         const existing = state.rows[existingIdx] as AssistantRow;
-        if (!existing.complete) {
-          // Row is still streaming — update in place (e.g. content blocks
-          // growing as the SDK sends partial then final content).
-          const row: AssistantRow = {
-            kind: "assistant",
-            key: existing.key,
-            seq: existing.seq,
-            ts: existing.ts,
-            messageId: frame.messageId,
-            content: [...frame.content],
-            complete: frame.complete,
-          };
-          const nextRows = state.rows.slice();
-          nextRows[existingIdx] = row;
-          return { ...state, lastSeq, rows: nextRows };
-        }
-        // Existing row is ALREADY complete. This is a new assistant turn
-        // that happens to share the same messageId (the Claude Code SDK
-        // reuses message IDs across turns within a session). Append as a
-        // NEW row so previous text isn't destroyed. Without this, every
-        // assistant turn replaces the last — the user sees 10 messages
-        // appear and disappear, with only the final one surviving.
+        const row: AssistantRow = {
+          ...existing,
+          content: [...existing.content, ...frame.content],
+          complete: frame.complete,
+        };
+        const nextRows = state.rows.slice();
+        nextRows[existingIdx] = row;
+        return { ...state, lastSeq, rows: nextRows };
       }
       const row: AssistantRow = {
         kind: "assistant",
@@ -414,9 +411,10 @@ export function applyFrame(state: FrameState, frame: Frame): FrameState {
       // If the target row doesn't exist, drop the delta — there's nothing
       // to patch (probably a mid-replay reorder; the next full assistant
       // message will re-seed).
-      // Find the LAST matching row — with the duplicate-messageId fix
-      // above, there may be multiple rows sharing a messageId. Deltas
-      // target the most recent one.
+      // Find the matching assistant row by messageId. There is exactly one
+      // row per messageId (assistant_message accumulates same-id frames into
+      // a single row), but we scan from the end so the most recent row wins
+      // if that invariant ever changes.
       let idx = -1;
       for (let i = state.rows.length - 1; i >= 0; i--) {
         const r = state.rows[i];

@@ -285,20 +285,59 @@ describe("frame state reducer", () => {
     expect((row.content[0] as { text: string }).text).toBe("Hello world");
   });
 
-  it("assistant_message replacing an existing messageId replaces the row in place", () => {
+  it("assistant_message frames sharing a messageId accumulate into one row", () => {
+    // The Claude SDK delivers a single logical assistant message as several
+    // same-id frames, each carrying the next content block. They must merge
+    // into ONE row with blocks in arrival order — not replace (which would
+    // drop earlier blocks) and not append a second row (which would fragment
+    // the turn).
     resetSeq();
     let state = initialFrameState();
     state = applyFrame(
       state,
       assistantMessage("a1", [{ type: "text", text: "v1" }]),
     );
+    const keyAfterFirst = state.rows[0].key;
     state = applyFrame(
       state,
       assistantMessage("a1", [{ type: "text", text: "v2" }]),
     );
     expect(state.rows).toHaveLength(1);
     const row = state.rows[0] as AssistantRow;
-    expect((row.content[0] as { text: string }).text).toBe("v2");
+    expect(row.key).toBe(keyAfterFirst); // stable key — React won't remount
+    expect(row.content).toHaveLength(2);
+    expect((row.content[0] as { text: string }).text).toBe("v1");
+    expect((row.content[1] as { text: string }).text).toBe("v2");
+  });
+
+  it("real incremental delivery (thinking → text → tool_use, same id) is one ordered row", () => {
+    // Mirrors the observed ~/.claude transcript shape: one msg_ id emitted
+    // across three frames, one block each. Regression guard for the
+    // fragmentation bug where each block became its own chat row.
+    resetSeq();
+    let state = initialFrameState();
+    state = applyFrame(
+      state,
+      assistantMessage("m1", [{ type: "thinking", text: "reasoning…" }]),
+    );
+    state = applyFrame(
+      state,
+      assistantMessage("m1", [{ type: "text", text: "Here's the plan." }]),
+    );
+    state = applyFrame(
+      state,
+      assistantMessage("m1", [
+        { type: "tool_use", toolCallId: "t1", tool: "Bash", input: {} },
+      ]),
+    );
+    const assistantRows = state.rows.filter((r) => r.kind === "assistant");
+    expect(assistantRows).toHaveLength(1);
+    const row = assistantRows[0] as AssistantRow;
+    expect(row.content.map((b) => b.type)).toEqual([
+      "thinking",
+      "text",
+      "tool_use",
+    ]);
   });
 
   it("TodoWrite replaces its own card instead of stacking", () => {
