@@ -23,10 +23,7 @@ import { promises as fs } from "node:fs";
 import { join } from "node:path";
 import type { Frame } from "../../shared/frames.ts";
 import { logger } from "../utils/logger.ts";
-import {
-  SESSIONS_ROOT,
-  type SessionMeta,
-} from "../session/persistence.ts";
+import { SESSIONS_ROOT, type SessionMeta } from "../session/persistence.ts";
 import { loadConversation } from "../history/conversationLoader.ts";
 
 interface SpaiglassNative {
@@ -254,7 +251,9 @@ export async function handleSessionDownloadRequest(c: Context) {
 
     if (native) {
       const projectPath = native.meta.workingDirectory;
-      const projectFrag = safeFilenameFragment(basename(projectPath) || "session");
+      const projectFrag = safeFilenameFragment(
+        basename(projectPath) || "session",
+      );
       const sessionFrag = sessionId.slice(0, 8);
       const stamp = dateStamp(native.meta.createdAt);
       const ext = format === "jsonl" ? "jsonl" : "md";

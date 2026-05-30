@@ -18,10 +18,7 @@ import { validateEncodedProjectName } from "./pathUtils.ts";
 import { readTextFile, exists } from "../utils/fs.ts";
 import { getHomeDir } from "../utils/os.ts";
 import { FrameEmitter, type SdkMessageLike } from "../session/frame-emitter.ts";
-import {
-  SESSIONS_ROOT,
-  type SessionMeta,
-} from "../session/persistence.ts";
+import { SESSIONS_ROOT, type SessionMeta } from "../session/persistence.ts";
 
 /**
  * Load a specific conversation by session ID.

@@ -307,7 +307,9 @@ function stripTrailingSlash(p: string): string {
  * against a registered directory path that the SDK had encoded.
  */
 function lossyPathSig(p: string): string {
-  return stripTrailingSlash(p).replace(/[/\\:._]/g, "-").toLowerCase();
+  return stripTrailingSlash(p)
+    .replace(/[/\\:._]/g, "-")
+    .toLowerCase();
 }
 
 function relativeTime(iso: string): string {
@@ -426,9 +428,7 @@ export function AgentPickerFullPage({
             s.spaiglassWorkingDirectory,
             s.projectPath,
             s.cwd,
-          ].filter(
-            (p): p is string => typeof p === "string" && p.length > 0,
-          );
+          ].filter((p): p is string => typeof p === "string" && p.length > 0);
           for (const p of candidates) {
             if (stripTrailingSlash(p) === cwdExact) return true;
           }

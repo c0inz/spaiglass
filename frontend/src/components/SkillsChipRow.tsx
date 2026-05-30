@@ -10,11 +10,7 @@
  */
 
 import { useMemo, useState } from "react";
-import {
-  PlusIcon,
-  XMarkIcon,
-  SparklesIcon,
-} from "@heroicons/react/24/outline";
+import { PlusIcon, XMarkIcon, SparklesIcon } from "@heroicons/react/24/outline";
 import { useSkills, type SkillInfo } from "../hooks/useSkills";
 import { usePinnedSkills } from "../hooks/usePinnedSkills";
 import { SkillsPickerModal } from "./SkillsPickerModal";
@@ -37,7 +33,9 @@ export function SkillsChipRow({ onInvoke }: SkillsChipRowProps) {
   // (plugin uninstalled, skill renamed) → silently dropped.
   const pinnedSkills: SkillInfo[] = useMemo(() => {
     const map = new Map(skills.map((s) => [s.id, s]));
-    return pinnedIds.map((id) => map.get(id)).filter((s): s is SkillInfo => !!s);
+    return pinnedIds
+      .map((id) => map.get(id))
+      .filter((s): s is SkillInfo => !!s);
   }, [skills, pinnedIds]);
 
   // Hide the row entirely on hosts with no installed skills — there's

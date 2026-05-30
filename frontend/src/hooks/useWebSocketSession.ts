@@ -558,7 +558,11 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
       contextContent?: string,
       resumeSessionId?: string,
       opts?: {
-        permissionMode?: "default" | "plan" | "acceptEdits" | "bypassPermissions";
+        permissionMode?:
+          | "default"
+          | "plan"
+          | "acceptEdits"
+          | "bypassPermissions";
         thinkingLevel?: "off" | "brief" | "extended" | "auto";
       },
     ) => {
@@ -578,7 +582,9 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
           workingDirectory,
           contextContent,
           ...(resumeSessionId ? { resumeSessionId } : {}),
-          ...(opts?.permissionMode ? { permissionMode: opts.permissionMode } : {}),
+          ...(opts?.permissionMode
+            ? { permissionMode: opts.permissionMode }
+            : {}),
           ...(opts?.thinkingLevel ? { thinkingLevel: opts.thinkingLevel } : {}),
         }),
       );
@@ -594,7 +600,11 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
       roleFile: string,
       workingDirectory: string,
       opts?: {
-        permissionMode?: "default" | "plan" | "acceptEdits" | "bypassPermissions";
+        permissionMode?:
+          | "default"
+          | "plan"
+          | "acceptEdits"
+          | "bypassPermissions";
         thinkingLevel?: "off" | "brief" | "extended" | "auto";
       },
     ) => {
@@ -608,7 +618,9 @@ export function useWebSocketSession(options: WSSessionOptions = {}) {
           type: "session_restart",
           roleFile,
           workingDirectory,
-          ...(opts?.permissionMode ? { permissionMode: opts.permissionMode } : {}),
+          ...(opts?.permissionMode
+            ? { permissionMode: opts.permissionMode }
+            : {}),
           ...(opts?.thinkingLevel ? { thinkingLevel: opts.thinkingLevel } : {}),
         }),
       );

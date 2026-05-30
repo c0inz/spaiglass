@@ -92,10 +92,7 @@ function resolveThinkingFromSettings(): {
   budgetTokens?: number;
 } {
   try {
-    const raw = readFileSync(
-      `${homedir()}/.claude/settings.json`,
-      "utf8",
-    );
+    const raw = readFileSync(`${homedir()}/.claude/settings.json`, "utf8");
     const cfg = JSON.parse(raw) as {
       alwaysThinkingEnabled?: boolean;
       env?: { MAX_THINKING_TOKENS?: string | number };
@@ -129,23 +126,21 @@ function computeGitBranch(cwd: string): string | undefined {
     // `symbolic-ref --short HEAD` returns the branch name on a normal
     // checkout, fails on detached-HEAD; fall back to a short SHA in that
     // case so the badge still shows something useful.
-    return execFileSync("git", ["-C", cwd, "symbolic-ref", "--short", "HEAD"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 1500,
-    }).trim() || undefined;
+    return (
+      execFileSync("git", ["-C", cwd, "symbolic-ref", "--short", "HEAD"], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 1500,
+      }).trim() || undefined
+    );
   } catch {
     try {
       return (
-        execFileSync(
-          "git",
-          ["-C", cwd, "rev-parse", "--short", "HEAD"],
-          {
-            encoding: "utf8",
-            stdio: ["ignore", "pipe", "ignore"],
-            timeout: 1500,
-          },
-        ).trim() || undefined
+        execFileSync("git", ["-C", cwd, "rev-parse", "--short", "HEAD"], {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+          timeout: 1500,
+        }).trim() || undefined
       );
     } catch {
       return undefined;
@@ -526,7 +521,7 @@ export class SessionManager {
           : thinkingLevel === "brief"
             ? { type: "enabled" as const, budgetTokens: 5000 }
             : thinkingLevel === "off"
-              ? ({ type: "disabled" as const })
+              ? { type: "disabled" as const }
               : resolveThinkingFromSettings();
       // Cache for the init-frame side-channel: the header status badge
       // shows the actual budget, not just the UI label.

@@ -753,7 +753,10 @@ export function ChatPage() {
   const handleNewSession = useCallback(() => {
     frameChat.resetFrames();
     if (roleFile && workingDirectory) {
-      ws.restartSession(roleFile, workingDirectory, { permissionMode, thinkingLevel });
+      ws.restartSession(roleFile, workingDirectory, {
+        permissionMode,
+        thinkingLevel,
+      });
     }
     announcedModeRef.current = false; // re-announce mode on the next attach
     emitLocalNotice("New session started.");
@@ -782,7 +785,10 @@ export function ChatPage() {
         clearInput();
         frameChat.resetFrames();
         if (roleFile && workingDirectory) {
-          ws.restartSession(roleFile, workingDirectory, { permissionMode, thinkingLevel });
+          ws.restartSession(roleFile, workingDirectory, {
+            permissionMode,
+            thinkingLevel,
+          });
         }
         emitLocalNotice("New session started.");
         return;
@@ -1434,8 +1440,8 @@ export function ChatPage() {
 
                 <SkillsChipRow
                   onInvoke={(slash) => {
-                    chatInputRef.current?.setValue(
-                      (prev) => (prev ? `${prev}\n${slash}` : slash),
+                    chatInputRef.current?.setValue((prev) =>
+                      prev ? `${prev}\n${slash}` : slash,
                     );
                     chatInputRef.current?.focus();
                   }}

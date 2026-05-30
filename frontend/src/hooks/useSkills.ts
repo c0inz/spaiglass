@@ -10,12 +10,12 @@
 import { useEffect, useState } from "react";
 
 export interface SkillInfo {
-  id: string;            // "<plugin>:<skill>" — also the slash-command form
+  id: string; // "<plugin>:<skill>" — also the slash-command form
   pluginId: string;
   marketplace: string;
   name: string;
   description: string;
-  slashCommand: string;  // e.g. "/superpowers:brainstorming"
+  slashCommand: string; // e.g. "/superpowers:brainstorming"
 }
 
 export interface UseSkillsResult {

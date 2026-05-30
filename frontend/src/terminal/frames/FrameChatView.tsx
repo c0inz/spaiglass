@@ -83,20 +83,22 @@ interface FrameChatViewProps {
   onSubmitText?: (text: string) => void;
 }
 
-export const FrameChatView = forwardRef<FrameChatViewHandle, FrameChatViewProps>(
-  function FrameChatView(
-    {
-      rows,
-      toolCalls,
-      isLoading,
-      currentStatus,
-      userLogin,
-      onOpenFile,
-      onToolResult,
-      onSubmitText,
-    },
-    ref,
-  ) {
+export const FrameChatView = forwardRef<
+  FrameChatViewHandle,
+  FrameChatViewProps
+>(function FrameChatView(
+  {
+    rows,
+    toolCalls,
+    isLoading,
+    currentStatus,
+    userLogin,
+    onOpenFile,
+    onToolResult,
+    onSubmitText,
+  },
+  ref,
+) {
   // Compute which assistant rows are "stale tool-only" and should be hidden.
   // A tool-only row (no text, just tool_use blocks) is hidden when ALL its
   // tools have completed ok AND a later tool-only assistant row exists.

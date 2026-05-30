@@ -65,8 +65,10 @@ export function OutdatedBanner() {
         VM is on{" "}
         <code className="font-mono font-semibold">{spaiglassVersion}</code>,
         latest is{" "}
-        <code className="font-mono font-semibold">{latestSpaiglassVersion}</code>.
-        Re-run the installer on the VM:
+        <code className="font-mono font-semibold">
+          {latestSpaiglassVersion}
+        </code>
+        . Re-run the installer on the VM:
       </span>
       <code className="font-mono px-2 py-0.5 rounded bg-amber-200 dark:bg-amber-950/40 text-amber-900 dark:text-amber-950 truncate">
         curl -fsSL https://spaiglass.xyz/install.sh | bash

@@ -14,7 +14,9 @@ function load(): string[] {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter((x) => typeof x === "string") : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((x) => typeof x === "string")
+      : [];
   } catch {
     return [];
   }
@@ -52,10 +54,7 @@ export function usePinnedSkills(): UsePinnedSkillsResult {
     return () => window.removeEventListener("storage", handler);
   }, []);
 
-  const isPinned = useCallback(
-    (id: string) => ids.includes(id),
-    [ids],
-  );
+  const isPinned = useCallback((id: string) => ids.includes(id), [ids]);
 
   const pin = useCallback((id: string) => {
     setIds((prev) => {

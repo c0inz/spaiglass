@@ -330,9 +330,10 @@ function PromptRow({
   onClick: () => void;
   highlight?: string;
 }) {
-  const snippet = prompt.text.length > 120
-    ? prompt.text.slice(0, 117).trimEnd() + "…"
-    : prompt.text;
+  const snippet =
+    prompt.text.length > 120
+      ? prompt.text.slice(0, 117).trimEnd() + "…"
+      : prompt.text;
   return (
     <button
       onClick={onClick}
